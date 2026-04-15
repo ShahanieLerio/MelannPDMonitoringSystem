@@ -1,0 +1,1025 @@
+
+import React, { useState, useMemo, useEffect } from 'react';
+import { store } from '../services/dataStore.ts';
+import { DemandLetter, DemandLetterType, DemandLetterStatus, PriorityLevel, Branch, User } from '../types.ts';
+import ConfirmationModal from './ConfirmationModal.tsx';
+import SuccessModal from './SuccessModal.tsx';
+
+interface DemandLetterComponentProps {
+    currentUser: User;
+    selectedBranch: Branch;
+}
+
+const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUser, selectedBranch }) => {
+    const [demandLetters, setDemandLetters] = useState(store.getDemandLetters(selectedBranch));
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterCollector, setFilterCollector] = useState('');
+    const [filterType, setFilterType] = useState<DemandLetterType | 'For Legal Action'>(DemandLetterType.FIRST);
+    const [filterStatus, setFilterStatus] = useState('');
+
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingDL, setEditingDL] = useState<DemandLetter | null>(null);
+    const [visitingDL, setVisitingDL] = useState<any | null>(null);
+    const [initialData, setInitialData] = useState<Partial<DemandLetter> | undefined>(undefined);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+    const [confirmConfig, setConfirmConfig] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        type?: 'danger' | 'warning' | 'info';
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+    });
+
+    const closeConfirm = () => setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+
+    const askConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'warning') => {
+        setConfirmConfig({
+            isOpen: true,
+            title,
+            message,
+            onConfirm: () => {
+                onConfirm();
+                closeConfirm();
+            },
+            type
+        });
+    };
+
+    const refreshData = () => {
+        setDemandLetters(store.getDemandLetters(selectedBranch));
+    };
+
+    useEffect(() => {
+        refreshData();
+        const unsubscribe = store.subscribe(refreshData);
+        return () => unsubscribe();
+    }, [selectedBranch]);
+
+    const collectors = Array.from(new Set(store.getLoans(selectedBranch).map(l => l.collector))).sort();
+    const loans = store.getLoans(selectedBranch);
+
+    const augmentedDLs = useMemo(() => {
+        return demandLetters.map(dl => {
+            const loan = loans.find(l => l.id === dl.loanId);
+            const now = new Date();
+            const datePrepared = new Date(dl.datePrepared);
+            const daysSince3rdDemand = Math.floor((now.getTime() - datePrepared.getTime()) / (1000 * 3600 * 24));
+            
+            let hasPaymentAfter3rd = false;
+            let lastActivityDate = datePrepared;
+
+            if (loan) {
+                const payments = loan.payments || [];
+                const validPayments = payments.filter(p => p.status === 'GOOD');
+                for (const p of validPayments) {
+                    const pDate = new Date(p.date);
+                    if (pDate > datePrepared) {
+                        hasPaymentAfter3rd = true;
+                    }
+                    if (pDate > lastActivityDate) {
+                        lastActivityDate = pDate;
+                    }
+                }
+
+                const remarks = loan.remarks || [];
+                for (const r of remarks) {
+                    const rDate = new Date(r.timestamp);
+                    if (rDate > lastActivityDate) {
+                        lastActivityDate = rDate;
+                    }
+                }
+            }
+
+            const daysSinceLastAction = Math.floor((now.getTime() - lastActivityDate.getTime()) / (1000 * 3600 * 24));
+
+            let autoEscalationStatus: string | null = null;
+            if (dl.type === DemandLetterType.THIRD && !hasPaymentAfter3rd && daysSince3rdDemand >= 7) {
+                if (daysSince3rdDemand >= 14) {
+                    autoEscalationStatus = 'Ready for Legal Action';
+                } else {
+                    autoEscalationStatus = 'For Legal Review';
+                }
+            }
+
+            return {
+                ...dl,
+                loan,
+                daysSince3rdDemand,
+                hasPaymentAfter3rd,
+                lastActivityDate,
+                daysSinceLastAction,
+                autoEscalationStatus
+            };
+        });
+    }, [demandLetters, loans]);
+
+    const filteredDLs = useMemo(() => {
+        return augmentedDLs.filter(dl => {
+            const matchSearch = dl.borrowerName.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchCollector = filterCollector === '' || dl.collectorName === filterCollector;
+            
+            let matchType = false;
+            if (filterType === 'For Legal Action') {
+                matchType = dl.type === DemandLetterType.THIRD && !dl.hasPaymentAfter3rd && dl.daysSince3rdDemand >= 7;
+            } else {
+                matchType = dl.type === filterType;
+            }
+
+            const activeStatus = dl.autoEscalationStatus || dl.status;
+            const matchStatus = filterStatus === '' || activeStatus === filterStatus;
+            
+            return matchSearch && matchCollector && matchType && matchStatus;
+        });
+    }, [augmentedDLs, searchTerm, filterCollector, filterType, filterStatus]);
+
+    const handleOpenAddModal = () => {
+        setEditingDL(null);
+        setInitialData(undefined);
+        setIsModalOpen(true);
+    };
+
+    const handleEdit = (dl: DemandLetter) => {
+        askConfirm(
+            "Are you sure you want to edit this record?",
+            `You are modifying the legal stage or status for ${dl.borrowerName}.`,
+            () => {
+                setEditingDL(dl);
+                setInitialData(undefined);
+                setIsModalOpen(true);
+            }
+        );
+    };
+
+    const handleProceedToSecond = (dl: DemandLetter) => {
+        setEditingDL(null);
+        setInitialData({
+            collectorName: dl.collectorName,
+            loanId: dl.loanId,
+            borrowerName: dl.borrowerName,
+            type: DemandLetterType.SECOND,
+            datePrepared: new Date().toISOString().split('T')[0],
+            status: DemandLetterStatus.PENDING,
+            remarks: dl.remarks,
+            followUpDate: dl.followUpDate,
+            branch: dl.branch
+        });
+        setIsModalOpen(true);
+    };
+
+    const handleProceedToThird = (dl: DemandLetter) => {
+        setEditingDL(null);
+        setInitialData({
+            collectorName: dl.collectorName,
+            loanId: dl.loanId,
+            borrowerName: dl.borrowerName,
+            type: DemandLetterType.THIRD,
+            datePrepared: new Date().toISOString().split('T')[0],
+            status: DemandLetterStatus.PENDING,
+            remarks: dl.remarks,
+            followUpDate: dl.followUpDate,
+            branch: dl.branch
+        });
+        setIsModalOpen(true);
+    };
+
+    const handleAssignFieldVisit = (dl: any) => {
+        setVisitingDL(dl);
+    };
+
+    return (
+        <div className="space-y-6 animate-fadeIn transition-colors duration-300">
+            <div className="flex justify-between items-center transition-colors duration-300">
+                <div>
+                    <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight transition-colors duration-300">Legal Demand Letters</h2>
+                    <p className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest mt-1 transition-colors duration-300">
+                        Tracking for: <span className="font-black text-slate-800 dark:text-slate-200">{selectedBranch}</span>
+                    </p>
+                </div>
+                <button
+                    onClick={handleOpenAddModal}
+                    className="bg-emerald-600 dark:bg-emerald-500 hover:bg-emerald-700 dark:hover:bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-md shadow-emerald-900/10 dark:shadow-emerald-900/50 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl active:scale-95"
+                >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                    New Legal Action
+                </button>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 transition-colors duration-300">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="relative">
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-1 px-1 transition-colors duration-300">Search Profile</label>
+                        <input
+                            type="text"
+                            placeholder="Find by name..."
+                            className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-emerald-500 text-sm font-bold text-slate-800 dark:text-white transition-colors duration-300"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        <svg className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-4 top-10 transition-colors duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-1 px-1 transition-colors duration-300">Collector</label>
+                        <select className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-2xl font-bold appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300" value={filterCollector} onChange={e => setFilterCollector(e.target.value)}>
+                            <option value="">All Field Agents</option>
+                            {collectors.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-1 px-1 transition-colors duration-300">Case Status</label>
+                        <select className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-2xl font-bold appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                            <option value="">All Statuses</option>
+                            {Object.values(DemandLetterStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl max-w-2xl mx-auto shadow-inner mb-6 transition-colors duration-300">
+                {[...Object.values(DemandLetterType), 'For Legal Action'].map((type) => (
+                    <button
+                        key={type}
+                        onClick={() => setFilterType(type as any)}
+                        className={`flex-1 py-3 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                            filterType === type 
+                            ? 'bg-white dark:bg-slate-700 text-emerald-700 dark:text-emerald-400 shadow-sm border border-slate-200/60 dark:border-slate-600/60' 
+                            : 'text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-white/50 dark:hover:bg-slate-700/50'
+                        }`}
+                    >
+                        {type === 'For Legal Action' ? <span className="text-red-500 dark:text-red-400">{type}</span> : type}
+                    </button>
+                ))}
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors duration-300">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left border-collapse">
+                        <thead className="bg-slate-50/80 dark:bg-slate-900/50 shadow-sm text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">
+                            <tr>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Collector</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Borrower Identity</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Legal Type</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Prepared</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50 border-l border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10">Date Received</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Follow-up</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Last Action</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Remarks</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50 text-center">Status</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Priority</th>
+                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50 text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50 transition-colors duration-300">
+                            {filteredDLs.length === 0 ? (
+                                <tr>
+                                    <td colSpan={10} className="py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px]">No legal records found in this branch.</td>
+                                </tr>
+                            ) : filteredDLs.map((dl) => {
+                                const todayStr = new Date().toISOString().split('T')[0];
+                                const isOverdue = dl.followUpDate && dl.followUpDate <= todayStr;
+                                const isThirdDL = dl.type === DemandLetterType.THIRD;
+                                const isSettled = dl.status === DemandLetterStatus.SETTLED;
+
+                                const hasSecond = demandLetters.some(d => d.loanId === dl.loanId && d.type === DemandLetterType.SECOND);
+                                const hasThird = demandLetters.some(d => d.loanId === dl.loanId && d.type === DemandLetterType.THIRD);
+
+                                const priority = isSettled ? PriorityLevel.LOWEST :
+                                    (isOverdue || isThirdDL ? PriorityLevel.TOP : PriorityLevel.FOLLOW_UP);
+
+                                return (
+                                    <tr key={dl.id} className="group hover:bg-emerald-50 dark:hover:bg-slate-700/50 transition-all duration-300">
+                                        <td className="px-8 py-5 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] tracking-widest transition-colors duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400">{dl.collectorName}</td>
+                                        <td className="px-8 py-5 font-bold text-slate-700 dark:text-slate-300 text-base transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:font-black group-hover:underline decoration-emerald-500/30 underline-offset-4">{dl.borrowerName}</td>
+                                        <td className="px-8 py-5">
+                                            <span className="text-emerald-700 dark:text-emerald-400 font-black text-[10px] uppercase tracking-widest bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded transition-colors duration-300">
+                                                {dl.type}
+                                            </span>
+                                        </td>
+                                        <td className="px-8 py-5 text-slate-500 dark:text-slate-400 font-medium transition-colors duration-300">{dl.datePrepared}</td>
+                                        <td className="px-8 py-5 text-slate-600 dark:text-slate-300 font-bold border-l border-emerald-50/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10 transition-colors duration-300">
+                                            {dl.dateReceived || <span className="text-slate-300 dark:text-slate-600 italic font-medium">Pending</span>}
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <span className={`font-black uppercase text-[10px] tracking-widest transition-colors duration-300 ${priority === PriorityLevel.TOP ? 'text-red-500 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                                                {dl.followUpDate || '-'}
+                                            </span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <div className="flex flex-col">
+                                                <span className={`font-black text-xs ${
+                                                    dl.daysSinceLastAction >= 8 ? 'text-red-600 dark:text-red-400' :
+                                                    dl.daysSinceLastAction >= 4 ? 'text-amber-500 dark:text-amber-400' :
+                                                    'text-emerald-600 dark:text-emerald-400'
+                                                }`}>
+                                                    {dl.daysSinceLastAction} days ago
+                                                </span>
+                                                <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">{dl.lastActivityDate.toISOString().split('T')[0]}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5 max-w-[200px]">
+                                            <div className="group/tooltip relative">
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate italic cursor-help transition-colors duration-300">
+                                                    {dl.remarks ? `"${dl.remarks}"` : <span className="text-slate-300 dark:text-slate-600">No remarks</span>}
+                                                </p>
+                                                {dl.remarks && (
+                                                    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[250px] p-3 bg-slate-800 dark:bg-slate-700 text-white text-xs rounded-xl shadow-xl opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none whitespace-normal break-words">
+                                                        {dl.remarks}
+                                                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800 dark:border-t-slate-700"></div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5 text-center">
+                                            <span className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors duration-300 ${
+                                                dl.autoEscalationStatus === 'Ready for Legal Action' ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400' :
+                                                dl.autoEscalationStatus === 'For Legal Review' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400' :
+                                                dl.status === DemandLetterStatus.SETTLED ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400' :
+                                                dl.status === DemandLetterStatus.FOLLOW_UP ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400' :
+                                                    'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold'
+                                                }`}>
+                                                {dl.autoEscalationStatus || dl.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <PriorityBadge level={priority} />
+                                        </td>
+                                        <td className="px-8 py-5 text-center">
+                                            <div className="flex items-center justify-center gap-2">
+                                                {dl.type === DemandLetterType.FIRST && (
+                                                    hasThird ? (
+                                                        <span className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
+                                                            Ongoing 3rd
+                                                        </span>
+                                                    ) : hasSecond ? (
+                                                        <span className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
+                                                            Ongoing 2nd
+                                                        </span>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => handleProceedToSecond(dl)}
+                                                            title="Proceed to 2nd Demand Letter"
+                                                            className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-emerald-200 dark:border-emerald-800 whitespace-nowrap"
+                                                        >
+                                                            Proceed to 2nd
+                                                        </button>
+                                                    )
+                                                )}
+                                                {dl.type === DemandLetterType.SECOND && (
+                                                    hasThird ? (
+                                                        <span className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
+                                                            Ongoing 3rd
+                                                        </span>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => handleProceedToThird(dl)}
+                                                            title="Proceed to 3rd Demand Letter"
+                                                            className="px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-indigo-200 dark:border-indigo-800 whitespace-nowrap"
+                                                        >
+                                                            Proceed to 3rd
+                                                        </button>
+                                                    )
+                                                )}
+                                                {dl.type === DemandLetterType.THIRD && (
+                                                    <button
+                                                        onClick={() => handleAssignFieldVisit(dl)}
+                                                        title="Assign Field Visit"
+                                                        className="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 dark:bg-orange-900/40 dark:hover:bg-orange-900/60 text-orange-700 dark:text-orange-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-orange-200 dark:border-orange-800 whitespace-nowrap"
+                                                    >
+                                                        Field Visit
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => handleEdit(dl)}
+                                                    className="p-2 text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-slate-700/50 rounded-xl transition-all active:scale-90"
+                                                >
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {isModalOpen && (
+                <DemandLetterModal
+                    dl={editingDL}
+                    initialData={initialData}
+                    currentUser={currentUser}
+                    selectedBranch={selectedBranch}
+                    onClose={() => { setIsModalOpen(false); refreshData(); setInitialData(undefined); }}
+                    onSuccess={(msg) => setSuccessMessage(msg)}
+                />
+            )}
+            <SuccessModal
+                isOpen={!!successMessage}
+                title="Success"
+                message={successMessage || ''}
+                onConfirm={() => setSuccessMessage(null)}
+            />
+            <ConfirmationModal
+                isOpen={confirmConfig.isOpen}
+                title={confirmConfig.title}
+                message={confirmConfig.message}
+                onConfirm={confirmConfig.onConfirm}
+                onCancel={closeConfirm}
+                type={confirmConfig.type}
+            />
+            {visitingDL && (
+                <FieldVisitModal 
+                    dl={visitingDL}
+                    currentUser={currentUser}
+                    onClose={() => { setVisitingDL(null); refreshData(); }}
+                    onSuccess={(msg) => setSuccessMessage(msg)}
+                />
+            )}
+        </div>
+    );
+};
+
+const PriorityBadge: React.FC<{ level: PriorityLevel }> = ({ level }) => {
+    const styles = {
+        [PriorityLevel.TOP]: 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-100 dark:border-red-900/50',
+        [PriorityLevel.FOLLOW_UP]: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-900/50',
+        [PriorityLevel.MONITOR]: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-900/50',
+        [PriorityLevel.LOWEST]: 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-700',
+    };
+    return (
+        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight border transition-colors duration-300 ${styles[level]}`}>
+            {level === PriorityLevel.MONITOR ? 'Urgent Follow-up' : level}
+        </span>
+    );
+};
+
+interface FieldVisitModalProps {
+    dl: any;
+    currentUser: User;
+    onClose: () => void;
+    onSuccess?: (message: string) => void;
+}
+
+const FieldVisitModal: React.FC<FieldVisitModalProps> = ({ dl, currentUser, onClose, onSuccess }) => {
+    const [visitData, setVisitData] = useState({
+        visitDate: new Date().toISOString().split('T')[0],
+        assignedCollector: dl.collectorName,
+        result: '',
+        remarks: ''
+    });
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        let priority = PriorityLevel.FOLLOW_UP;
+        if (visitData.result === 'Promise to Pay') priority = PriorityLevel.TOP;
+        if (visitData.result === 'Refused') priority = PriorityLevel.NEED_ATTENTION;
+
+        const remarkText = `[Field Visit] ${visitData.result} - ${visitData.remarks}`;
+        
+        await store.addRemark(dl.loanId, remarkText, dl.collectorName, priority, currentUser.username, currentUser.role);
+        
+        if (onSuccess) onSuccess("Field visit successfully logged.");
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn transition-colors duration-300">
+            <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-lg overflow-hidden animate-slideUp border border-white/20 dark:border-slate-700 transition-colors duration-300">
+                <div className="p-8 border-b border-orange-50 dark:border-orange-900/50 flex justify-between items-center bg-[#ea580c] dark:bg-slate-800 text-white transition-colors duration-300">
+                    <div>
+                        <h3 className="text-2xl font-black tracking-tight">Log Field Visit</h3>
+                        <p className="text-orange-100/60 dark:text-orange-400/60 font-bold text-xs uppercase tracking-widest mt-1 transition-colors duration-300">Client: {dl.borrowerName}</p>
+                    </div>
+                    <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all">
+                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <form onSubmit={handleSubmit} className="p-8 space-y-6">
+                    <div>
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Visit Date</label>
+                        <input
+                            type="date"
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-orange-500 font-bold text-slate-800 dark:text-white outline-none transition-colors duration-300"
+                            value={visitData.visitDate}
+                            onChange={e => setVisitData({ ...visitData, visitDate: e.target.value })}
+                            required
+                        />
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Visit Result</label>
+                        <select
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-orange-500 font-black text-slate-800 dark:text-white appearance-none outline-none transition-colors duration-300"
+                            value={visitData.result}
+                            onChange={e => setVisitData({ ...visitData, result: e.target.value })}
+                            required
+                        >
+                            <option value="" disabled>Select Result...</option>
+                            <option value="Promise to Pay">Promise to Pay</option>
+                            <option value="Refused">Refused</option>
+                            <option value="No Show / Not Found">No Show / Not Found</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block px-1 transition-colors duration-300">Detailed Remarks</label>
+                        <textarea
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-3xl px-6 py-5 focus:ring-2 focus:ring-orange-500 font-medium text-slate-700 dark:text-slate-300 h-32 outline-none resize-none transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                            placeholder="Condition of premises, discussions held..."
+                            value={visitData.remarks}
+                            onChange={e => setVisitData({ ...visitData, remarks: e.target.value })}
+                            required
+                        ></textarea>
+                    </div>
+
+                    <div className="flex gap-4 pt-2">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="flex-1 px-6 py-4 rounded-2xl font-black text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all uppercase tracking-widest text-[10px]"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            className="flex-1 bg-orange-600 dark:bg-orange-500 hover:bg-orange-700 dark:hover:bg-orange-600 text-white px-6 py-4 rounded-2xl font-black shadow-md shadow-orange-900/20 dark:shadow-orange-900/40 transition-all hover:-translate-y-0.5 hover:shadow-xl uppercase tracking-widest text-[10px]"
+                        >
+                            Save Log
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+interface DemandLetterModalProps {
+    dl?: DemandLetter | null;
+    initialData?: Partial<DemandLetter>;
+    currentUser: User;
+    selectedBranch: Branch;
+    onClose: () => void;
+    onSuccess?: (message: string) => void;
+}
+
+const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, currentUser, selectedBranch, onClose, onSuccess }) => {
+    const loans = store.getLoans(selectedBranch);
+    const [formData, setFormData] = useState<Partial<DemandLetter>>(dl || initialData || {
+        collectorName: '',
+        loanId: '',
+        borrowerName: '',
+        type: DemandLetterType.FIRST,
+        datePrepared: new Date().toISOString().split('T')[0],
+        status: DemandLetterStatus.PENDING,
+        remarks: '',
+        branch: selectedBranch !== 'All Branches' ? selectedBranch : undefined as any
+    });
+
+    const [penaltyData, setPenaltyData] = useState<{ penalty: number, newBalance: number, history: any[] } | null>(null);
+
+    // Auto-compute follow-up date based on date received and legal stage
+    useEffect(() => {
+        if (formData.dateReceived) {
+            const received = new Date(formData.dateReceived);
+            if (formData.type === DemandLetterType.FIRST || formData.type === DemandLetterType.SECOND) {
+                received.setDate(received.getDate() + 10);
+            } else if (formData.type === DemandLetterType.THIRD) {
+                received.setDate(received.getDate() + 5);
+            }
+            const computedFollowUp = received.toISOString().split('T')[0];
+            if (formData.followUpDate !== computedFollowUp) {
+                setFormData(prev => ({ ...prev, followUpDate: computedFollowUp }));
+            }
+        } else if (formData.followUpDate) {
+            // Need to wrap in prev check to avoid warnings if no change
+            setFormData(prev => prev.followUpDate ? { ...prev, followUpDate: undefined } : prev);
+        }
+    }, [formData.dateReceived, formData.type]);
+
+    // Penalty Calculation Logic
+    useEffect(() => {
+        if (!formData.loanId) {
+            setPenaltyData(null);
+            return;
+        }
+
+        const loan = loans.find(l => l.id === formData.loanId);
+        if (!loan || !loan.dueDate) return;
+
+        const dueDate = new Date(loan.dueDate);
+        const now = new Date();
+
+        // If today is before due date, no penalty
+        if (now <= dueDate) {
+            setPenaltyData({ penalty: 0, newBalance: loan.runningBalance });
+            return;
+        }
+
+        const sortedPayments = [...(loan.payments || [])]
+            .filter(p => p.status === 'GOOD')
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // 1. Base reference: balance on due date
+        let currentBal = loan.outstandingBalance;
+        const paymentsBeforeOrOnDue = sortedPayments.filter(p => new Date(p.date) <= dueDate);
+        for (const p of paymentsBeforeOrOnDue) {
+            currentBal -= p.amount;
+        }
+        if (currentBal <= 0) {
+            setPenaltyData({ penalty: 0, newBalance: 0 });
+            return;
+        }
+
+        // 2. Loop month-by-month
+        let loopDate = new Date(dueDate.getFullYear(), dueDate.getMonth(), 1); 
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        let totalPenaltyCalculated = 0;
+        const history: any[] = [];
+
+        while (loopDate <= currentMonthStart) {
+            const year = loopDate.getFullYear();
+            const month = loopDate.getMonth();
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            const monthStr = `${monthNames[month]} ${year}`;
+
+            let monthPayments = 0;
+            if (year === dueDate.getFullYear() && month === dueDate.getMonth()) {
+                // First month: payments AFTER due date up to end of calendar month
+                monthPayments = sortedPayments.filter(p => {
+                    const d = new Date(p.date);
+                    return d > dueDate && d.getFullYear() === year && d.getMonth() === month;
+                }).reduce((sum, p) => sum + p.amount, 0);
+            } else {
+                // Subsequent months: all payments in the month
+                monthPayments = sortedPayments.filter(p => {
+                    const d = new Date(p.date);
+                    return d.getFullYear() === year && d.getMonth() === month;
+                }).reduce((sum, p) => sum + p.amount, 0);
+            }
+
+            const beginningBalance = currentBal;
+            currentBal -= monthPayments;
+            if (currentBal < 0) currentBal = 0;
+
+            let penalty = 0;
+            if (currentBal > 0) {
+                penalty = currentBal * 0.05;
+                totalPenaltyCalculated += penalty;
+                currentBal += penalty;
+            }
+
+            history.push({
+                month: monthStr,
+                beginningBalance: beginningBalance,
+                paymentsMade: monthPayments,
+                penaltyRate: '5%',
+                penaltyAmount: penalty,
+                endingBalance: currentBal
+            });
+
+            // Advance one month
+            loopDate.setMonth(loopDate.getMonth() + 1);
+        }
+
+        setPenaltyData({
+            penalty: totalPenaltyCalculated,
+            newBalance: currentBal,
+            history
+        });
+
+    }, [formData.loanId, loans]);
+
+    const handlePrintPenalty = () => {
+        if (!penaltyData || !formData.loanId) return;
+        const loan = loans.find(l => l.id === formData.loanId);
+        if (!loan) return;
+
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+
+        const tableRows = penaltyData.history.map((step: any) => `
+            <tr>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; border-left: none;">${step.month}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right;">₱${step.beginningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right; color: #166534;">${step.paymentsMade > 0 ? '-₱' + step.paymentsMade.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: center;">${step.penaltyRate}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right; color: #9f1239;">₱${step.penaltyAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; border-right: none; text-align: right; font-weight: bold;">₱${step.endingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            </tr>
+        `).join('');
+
+        const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Penalty Computation - ${loan.borrowerName}</title>
+                <style>
+                    body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #1e293b; max-width: 100%; margin: 0 auto; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                    .header { text-align: center; margin-bottom: 10px; border-bottom: 2px solid #064e3b; padding-bottom: 5px; }
+                    .header h1 { margin: 0 0 2px 0; color: #064e3b; font-size: 20px; text-transform: uppercase; letter-spacing: 1px; }
+                    .header p { margin: 0; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+                    .info-section { margin-bottom: 10px; display: flex; justify-content: space-between; gap: 20px; }
+                    .info-box { flex: 1; }
+                    .info-box p { margin: 2px 0; font-size: 12px; display: flex; justify-content: space-between; border-bottom: 1px dotted #cbd5e1; padding-bottom: 2px; }
+                    .info-box strong { color: #475569; }
+                    h2 { color: #0f172a; font-size: 14px; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 11px; border: 1px solid #e2e8f0; border-left: none; border-right: none; }
+                    th { background: #f8fafc; color: #475569; padding: 4px 8px; border: 1px solid #cbd5e1; border-top: 2px solid #cbd5e1; border-bottom: 2px solid #cbd5e1; text-align: left; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+                    th:first-child { border-left: none; width: 22%; }
+                    th:last-child { border-right: none; }
+                    th:nth-child(n+2) { text-align: right; }
+                    th:nth-child(4) { text-align: center; width: 10%; }
+                    tbody tr:nth-child(even) { background: #f8fafc; }
+                    .summary { margin-top: 15px; text-align: right; padding: 10px; background: #fffbe8; border: 1px solid #fef08a; border-radius: 4px; }
+                    .summary p { margin: 2px 0; font-size: 12px; color: #475569; }
+                    .summary h3 { margin: 5px 0 0 0; color: #9f1239; font-size: 16px; }
+                    .summary span { font-weight: normal; font-size: 11px; color: #64748b; margin-right: 10px; }
+                    
+                    @page { margin: 10mm; size: A4 portrait; }
+                    
+                    @media print {
+                        body { padding: 0; margin: 0; font-size: 11px; }
+                        table { font-size: 10px; }
+                        td, th { padding: 3px 6px; }
+                        .summary { border: 1px solid #ccc; background: transparent; padding: 5px; margin-top: 10px; }
+                        th { background: #f1f5f9 !important; }
+                        .info-section { margin-bottom: 5px; }
+                        h2 { margin-bottom: 2px; margin-top: 10px; }
+                        .header { margin-bottom: 5px; }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>Penalty Computation</h1>
+                    <p>Demand Letter Attachment Reference</p>
+                </div>
+                
+                <div class="info-section">
+                    <div class="info-box">
+                        <p><strong>Client Name:</strong> <span>${loan.borrowerName}</span></p>
+                        <p><strong>Client Address:</strong> <span>${loan.fullAddress || (loan.barangay + ', ' + loan.city)}</span></p>
+                        <p><strong>Account / Code:</strong> <span>${loan.code}</span></p>
+                    </div>
+                    <div class="info-box">
+                        <p><strong>Current Balance:</strong> <span>₱${loan.runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+                        <p><strong>Due Date:</strong> <span>${loan.dueDate}</span></p>
+                        <p><strong>Date Prepared:</strong> <span>${formData.datePrepared}</span></p>
+                    </div>
+                </div>
+
+                <h2>Detailed Computation Breakdown</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Month</th>
+                            <th>Beginning Balance</th>
+                            <th>Payments Made</th>
+                            <th>Penalty Rate</th>
+                            <th>Penalty Amount</th>
+                            <th>Ending Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableRows}
+                    </tbody>
+                </table>
+
+                <div class="summary">
+                    <p>Total Penalty Accumulated: <strong>₱${penaltyData.penalty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
+                    <h3><span>Updated Total Balance:</span> ₱${penaltyData.newBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                </div>
+            </body>
+            </html>
+        `;
+
+        if (iframe.contentDocument) {
+            iframe.contentDocument.write(html);
+            iframe.contentDocument.close();
+            
+            iframe.onload = () => {
+                iframe.contentWindow?.focus();
+                iframe.contentWindow?.print();
+                setTimeout(() => {
+                    document.body.removeChild(iframe);
+                }, 1000);
+            };
+        }
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!formData.loanId || !formData.collectorName) return;
+        
+        const submitData = { ...formData };
+        if (!submitData.branch) {
+            const loan = loans.find(l => l.id === submitData.loanId);
+            if (loan) submitData.branch = loan.branch;
+        }
+
+        if (dl) {
+            store.updateDemandLetter(dl.id, submitData, currentUser.username, currentUser.role);
+            if (onSuccess) onSuccess("Successfully updated legal action.");
+        } else {
+            store.addDemandLetter(submitData as any, currentUser.username, currentUser.role);
+            if (onSuccess) {
+                if (submitData.type === DemandLetterType.SECOND) onSuccess("Successfully created 2nd Demand Letter");
+                else if (submitData.type === DemandLetterType.THIRD) onSuccess("Successfully created 3rd Demand Letter");
+                else onSuccess("Successfully created Demand Letter");
+            }
+        }
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn transition-colors duration-300">
+            <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-slideUp border border-white/20 dark:border-slate-700 transition-colors duration-300">
+                <div className="p-10 border-b border-emerald-50 dark:border-emerald-900/50 flex justify-between items-center bg-[#064e3b] dark:bg-slate-800 text-white transition-colors duration-300">
+                    <div>
+                        <h3 className="text-2xl font-black tracking-tight">
+                            {dl ? 'Update Legal Action' : (
+                                initialData?.type === DemandLetterType.THIRD ? 'Create 3rd Demand Letter' :
+                                initialData?.type === DemandLetterType.SECOND ? 'Create 2nd Demand Letter' : 'New Demand Letter'
+                            )}
+                        </h3>
+                        <p className="text-emerald-100/60 dark:text-emerald-400/60 font-bold text-xs uppercase tracking-widest mt-1 transition-colors duration-300">Branch Context: {selectedBranch}</p>
+                    </div>
+                    <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all">
+                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <form onSubmit={handleSubmit} className="p-10 space-y-8 max-h-[70vh] overflow-y-auto">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="md:col-span-2">
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Select Client Profile</label>
+                            <select
+                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-black text-slate-800 dark:text-white appearance-none transition-all outline-none"
+                                value={formData.loanId}
+                                onChange={e => {
+                                    const loan = loans.find(l => l.id === e.target.value);
+                                    setFormData({ ...formData, loanId: e.target.value, borrowerName: loan ? loan.borrowerName : '', collectorName: loan ? loan.collector : '', branch: loan?.branch || formData.branch });
+                                }}
+                                required
+                                disabled={!!dl}
+                            >
+                                <option value="">Lookup client by code or name...</option>
+                                {loans.map(l => (
+                                    <option key={l.id} value={l.id}>[{l.code}] {l.borrowerName}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Assigned Collector</label>
+                            <input
+                                type="text"
+                                className="w-full bg-slate-100 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-slate-500 dark:text-slate-400 font-bold cursor-not-allowed outline-none transition-colors duration-300"
+                                value={formData.collectorName}
+                                readOnly
+                                placeholder="Auto-populated"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Legal Stage</label>
+                            <select
+                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-black text-slate-800 dark:text-white appearance-none outline-none transition-colors duration-300"
+                                value={formData.type}
+                                onChange={e => setFormData({ ...formData, type: e.target.value as DemandLetterType })}
+                                required
+                            >
+                                {Object.values(DemandLetterType).map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Case Status</label>
+                            <input
+                                type="text"
+                                className="w-full bg-slate-100 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-slate-500 dark:text-slate-400 font-bold cursor-not-allowed outline-none transition-colors duration-300"
+                                value={formData.status}
+                                readOnly
+                                disabled
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Date Prepared</label>
+                            <input
+                                type="date"
+                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 dark:text-white outline-none transition-colors duration-300"
+                                value={formData.datePrepared}
+                                onChange={e => setFormData({ ...formData, datePrepared: e.target.value })}
+                                required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Date Received</label>
+                            <input
+                                type="date"
+                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 dark:text-white outline-none transition-all focus:bg-white dark:focus:bg-slate-900"
+                                value={formData.dateReceived || ''}
+                                onChange={e => setFormData({ ...formData, dateReceived: e.target.value })}
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 flex items-center gap-2 transition-colors duration-300">
+                                Follow-Up Date
+                                <span className="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded text-[8px] uppercase font-black tracking-tight transition-colors duration-300">Auto</span>
+                            </label>
+                            <input
+                                type="date"
+                                className="w-full bg-slate-100/70 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 text-slate-400 dark:text-slate-500 font-black cursor-not-allowed outline-none transition-colors duration-300"
+                                value={formData.followUpDate || ''}
+                                readOnly
+                                disabled
+                            />
+                        </div>
+
+                        {/* Penalty Calculation Engine Display */}
+                        {penaltyData && (
+                            <div className="md:col-span-2 bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-900/50 p-6 rounded-3xl space-y-4 shadow-inner transition-colors duration-300">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                    <div>
+                                        <h4 className="text-rose-800 dark:text-rose-400 font-black text-lg tracking-tight flex items-center gap-2 transition-colors duration-300">
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                            Penalty Calculation
+                                        </h4>
+                                        <p className="text-rose-600/80 dark:text-rose-400/80 text-[10px] font-bold uppercase tracking-[0.2em] mt-1 transition-colors duration-300">Auto-computed (5% Monthly Compounding)</p>
+                                    </div>
+                                    <button 
+                                        type="button"
+                                        onClick={handlePrintPenalty}
+                                        className="bg-white dark:bg-slate-800 text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-slate-700 border border-rose-200 dark:border-rose-700 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-sm transition-all flex items-center gap-2 active:scale-95"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                        Print Penalty Computation
+                                    </button>
+                                </div>
+                                <div className="bg-white/80 dark:bg-slate-800/80 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 border border-rose-100/60 dark:border-slate-700 shadow-sm transition-colors duration-300">
+                                    <div className="w-full md:w-auto text-left">
+                                        <p className="text-[10px] text-slate-400 dark:text-slate-500 font-black uppercase tracking-widest transition-colors duration-300">Base Reference</p>
+                                        <p className="text-sm font-black text-slate-700 dark:text-slate-300 mt-1 transition-colors duration-300">
+                                            Current Balance: <span className="font-mono text-base ml-1 text-slate-900 dark:text-white transition-colors duration-300">₱{(loans.find(l => l.id === formData.loanId)?.runningBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </p>
+                                    </div>
+                                    <div className="w-full md:w-auto justify-end flex gap-6 md:gap-8 border-t md:border-t-0 md:border-l border-rose-200/50 dark:border-slate-700 pt-4 md:pt-0 md:pl-8 transition-colors duration-300">
+                                        <div>
+                                            <p className="text-[10px] text-rose-500 dark:text-rose-400 font-black uppercase tracking-widest mb-1 transition-colors duration-300">Calculated Penalty</p>
+                                            <p className="text-xl font-mono font-black text-rose-700 dark:text-rose-400 transition-colors duration-300">₱{penaltyData.penalty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] text-rose-600 dark:text-rose-400 font-black uppercase tracking-widest mb-1 transition-colors duration-300">Total w/ Penalty</p>
+                                            <p className="text-2xl font-mono font-black text-rose-900 dark:text-rose-300 transition-colors duration-300">₱{penaltyData.newBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block px-1 transition-colors duration-300">Case Remarks / Promise to Pay</label>
+                        <textarea
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-3xl px-6 py-5 focus:ring-2 focus:ring-emerald-500 font-medium text-slate-700 dark:text-slate-300 h-32 outline-none resize-none transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                            placeholder="Detailed notes on field interaction, legal status, or borrower promises..."
+                            value={formData.remarks}
+                            onChange={e => setFormData({ ...formData, remarks: e.target.value })}
+                        ></textarea>
+                    </div>
+
+                    <div className="flex gap-4 pt-4">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="flex-1 px-8 py-5 text-slate-400 dark:text-slate-500 font-black rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all uppercase tracking-widest text-[10px] border border-transparent hover:border-slate-100 dark:hover:border-slate-700"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            className="flex-[2] px-8 py-5 bg-emerald-600 dark:bg-emerald-500 text-white font-black rounded-3xl hover:bg-emerald-700 dark:hover:bg-emerald-600 shadow-xl shadow-emerald-900/20 dark:shadow-emerald-900/50 transition-all uppercase tracking-widest text-[10px] active:scale-95"
+                        >
+                            {dl ? 'Confirm Changes' : 'Record Legal Action'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+export default DemandLetterComponent;

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Melann Lending Past Due and Report Monitoring</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            color: #1e293b;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        html.dark body {
+            background-color: #0f172a; /* slate-900 */
+            color: #f8fafc;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        .sticky-column {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+            background: white;
+        }
+
+        /* Strict Excel-like Print Styles */
+        @media print {
+            @page {
+                size: 8.5in 13in;
+                margin: 12mm 10mm 15mm 10mm;
+
+                /* Suppress browser auto-generated date/time, URL, title headers */
+                @top-left   { content: '' !important; }
+                @top-center { content: '' !important; }
+                @top-right  { content: '' !important; }
+                @bottom-left  { content: '' !important; }
+                @bottom-right { content: '' !important; }
+                /* Keep page numbers at the bottom center */
+                @bottom-center {
+                    content: "Page " counter(page) " of " counter(pages);
+                    font-size: 8pt;
+                    color: #555;
+                }
+            }
+            body {
+                background-color: white !important;
+                margin: 0;
+                padding: 0;
+                color: black !important;
+                font-family: Arial, Helvetica, sans-serif !important;
+            }
+            #root > div > main {
+                margin-left: 0 !important;
+                padding: 0 !important;
+            }
+            header, aside, .no-print, .floating-action-bar, nav {
+                display: none !important;
+            }
+            #printable-sheet {
+                display: block !important;
+                visibility: visible !important;
+                width: 100% !important;
+            }
+
+            /* Scope table rules ONLY to printable-sheet to avoid interference */
+            #printable-sheet table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                table-layout: fixed !important;
+            }
+            #printable-sheet th,
+            #printable-sheet td {
+                border: 0.5pt solid #000 !important;
+                padding: 4px 6px !important;
+                font-size: 8pt !important;
+                border-radius: 0 !important;
+                word-wrap: break-word !important;
+                text-transform: none !important;
+            }
+
+            /* Borderless override: info table in header and footer use border:none cells */
+            #printable-sheet .cs-no-border th,
+            #printable-sheet .cs-no-border td {
+                border: none !important;
+                padding: 2px 0 !important;
+            }
+
+            #printable-sheet thead {
+                display: table-header-group;
+            }
+            #printable-sheet thead th {
+                background-color: #e5e7eb !important;
+                font-weight: bold !important;
+                text-align: center !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            #printable-sheet tr {
+                page-break-inside: avoid;
+            }
+            .group-row-city {
+                background-color: #d1d5db !important;
+                font-weight: 900 !important;
+                font-size: 9pt !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .group-row-barangay {
+                background-color: #e5e7eb !important;
+                font-weight: bold !important;
+                font-size: 8.5pt !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .no-border {
+                border: none !important;
+            }
+            .underline-cell {
+                border-bottom: 0.5pt solid #000 !important;
+                border-top: none !important;
+                border-left: none !important;
+                border-right: none !important;
+            }
+
+            /* Hide the inline page number div that shows in browsers
+               that support @page @bottom-center (avoid duplication) */
+            .print-page-number {
+                display: none !important;
+            }
+        }
+        #printable-sheet {
+            display: none;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "recharts": "https://esm.sh/recharts@^3.7.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>

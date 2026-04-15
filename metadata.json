@@ -1,0 +1,5 @@
+{
+  "name": "Melann Lending Past Due & Report Monitoring",
+  "description": "A centralized platform for monitoring past-due accounts, tracking loan statuses, recording payments, and generating performance reports for the Melann Lending System.",
+  "requestFramePermissions": []
+}
