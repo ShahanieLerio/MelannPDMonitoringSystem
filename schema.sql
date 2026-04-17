@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS loans (
     ai_priority TEXT DEFAULT 'Lowest Priority',
     promise_to_pay_date TEXT,
     follow_up_date TEXT,
+    recurring_schedule JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Loan, PriorityLevel, User, Remark } from '../types.ts';
+import { Loan, PriorityLevel, User, Remark, RecurringSchedule } from '../types.ts';
 import { store } from '../services/dataStore.ts';
 import { analyzeRemarkPriority } from '../services/geminiService.ts';
 import SuccessModal from './SuccessModal.tsx';
@@ -19,6 +19,62 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
   const [editingRemark, setEditingRemark] = useState<{ id: string } | null>(null);
   const [successFeedback, setSuccessFeedback] = useState<{ title: string, message: string } | null>(null);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
+  const [recurringEnabled, setRecurringEnabled] = useState(loan.recurringSchedule?.enabled || false);
+  const [scheduleType, setScheduleType] = useState<'monthly' | 'weekly'>(loan.recurringSchedule?.type || 'monthly');
+  const [selectedDays, setSelectedDays] = useState<number[]>(loan.recurringSchedule?.days || []);
+  const [selectedWeekDays, setSelectedWeekDays] = useState<number[]>(loan.recurringSchedule?.weekDays || []);
+
+  const toggleDay = (day: number) => {
+    setSelectedDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort((a, b) => a - b));
+  };
+
+  const toggleWeeklyDay = (dayIndex: number) => {
+    setSelectedWeekDays(prev => prev.includes(dayIndex) ? prev.filter(d => d !== dayIndex) : [...prev, dayIndex].sort((a, b) => a - b));
+  };
+
+  const computeLocalNextDue = (days: number[]): string => {
+    const sorted = [...days].sort((a, b) => a - b);
+    const today = new Date();
+    const todayDay = today.getDate();
+    let month = today.getMonth();
+    let year = today.getFullYear();
+    for (const day of sorted) {
+      if (day > todayDay) {
+        const lastDay = new Date(year, month + 1, 0).getDate();
+        const d = new Date(year, month, Math.min(day, lastDay));
+        return d.toISOString().split('T')[0];
+      }
+    }
+    month += 1;
+    if (month > 11) { month = 0; year += 1; }
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const d = new Date(year, month, Math.min(sorted[0], lastDay));
+    return d.toISOString().split('T')[0];
+  };
+
+  const computeLocalNextWeeklyDue = (weekDays: number[]): string => {
+    const sorted = [...weekDays].sort((a, b) => a - b);
+    const today = new Date();
+    const currentDayOfWeek = today.getDay();
+    for (const day of sorted) {
+      if (day > currentDayOfWeek) {
+        today.setDate(today.getDate() + (day - currentDayOfWeek));
+        return today.toISOString().split('T')[0];
+      }
+    }
+    today.setDate(today.getDate() + (7 - currentDayOfWeek + sorted[0]));
+    return today.toISOString().split('T')[0];
+  };
+
+  const formatDaySuffix = (d: number) => {
+    if (d >= 11 && d <= 13) return d + 'th';
+    switch (d % 10) {
+      case 1: return d + 'st';
+      case 2: return d + 'nd';
+      case 3: return d + 'rd';
+      default: return d + 'th';
+    }
+  };
 
   const isPTPSuggested = !ptpDate && (
     newRemark.toLowerCase().includes('pay') ||
@@ -55,6 +111,23 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
       setNewRemark('');
       setPtpDate('');
       setFollowUpDate('');
+
+      // Save recurring schedule if toggled
+      if (recurringEnabled && ((scheduleType === 'monthly' && selectedDays.length > 0) || (scheduleType === 'weekly' && selectedWeekDays.length > 0))) {
+        const nextDue = scheduleType === 'monthly' ? computeLocalNextDue(selectedDays) : computeLocalNextWeeklyDue(selectedWeekDays);
+        const schedule: RecurringSchedule = {
+          enabled: true,
+          type: scheduleType,
+          days: selectedDays,
+          weekDays: selectedWeekDays,
+          nextDueDate: nextDue,
+          lastPaidDate: loan.recurringSchedule?.lastPaidDate
+        };
+        await store.updateLoan(loan.id, { recurringSchedule: schedule, promiseToPayDate: nextDue }, currentUser.username, currentUser.role);
+      } else if (!recurringEnabled && loan.recurringSchedule?.enabled) {
+        // User disabled recurring
+        await store.updateLoan(loan.id, { recurringSchedule: { ...loan.recurringSchedule, enabled: false } }, currentUser.username, currentUser.role);
+      }
     } catch (err: any) {
       setErrorFeedback(err.message || 'Failed to submit field intelligence. Check your connection.');
     } finally {
@@ -212,6 +285,130 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
                       disabled={isSubmitting}
                     />
                   </div>
+                </div>
+
+                {/* 3. Recurring Payment Schedule Card */}
+                <div className={`group relative p-4 rounded-[12px] shadow-sm transition-all hover:shadow-md ease-out duration-200 border-2 ${
+                  recurringEnabled ? 'bg-violet-50 border-violet-300' : 'bg-slate-50 border-slate-200'
+                }`}>
+                  <div className="flex items-center justify-between gap-4 mb-3">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-inner group-hover:scale-110 transition-transform ${
+                        recurringEnabled ? 'bg-violet-200 text-violet-700' : 'bg-slate-200 text-slate-500'
+                      }`}>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                      </div>
+                      <div>
+                        <p className={`text-sm font-black uppercase tracking-tight ${recurringEnabled ? 'text-violet-900' : 'text-slate-600'}`}>Recurring Schedule</p>
+                        <p className="text-[10px] font-medium text-slate-500">Auto-track repeating payment dates</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRecurringEnabled(!recurringEnabled)}
+                      className={`relative w-12 h-6 rounded-full transition-all duration-300 ${recurringEnabled ? 'bg-violet-600' : 'bg-slate-300'}`}
+                    >
+                      <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all duration-300 ${recurringEnabled ? 'left-[26px]' : 'left-0.5'}`}></span>
+                    </button>
+                  </div>
+
+                  {recurringEnabled && (
+                    <div className="space-y-4 animate-fadeIn">
+                      {/* Mode Toggle */}
+                      <div className="flex bg-slate-200/50 p-1 rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => setScheduleType('monthly')}
+                          className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${scheduleType === 'monthly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          Monthly
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScheduleType('weekly')}
+                          className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${scheduleType === 'weekly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          Weekly
+                        </button>
+                      </div>
+
+                      {scheduleType === 'monthly' ? (
+                        <>
+                          <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest pt-1">Select days of the month</p>
+                          <div className="grid grid-cols-7 gap-1.5">
+                            {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                              <button
+                                key={day}
+                                type="button"
+                                onClick={() => toggleDay(day)}
+                                className={`w-full aspect-square rounded-lg text-[11px] font-black transition-all duration-200 border ${
+                                  selectedDays.includes(day)
+                                    ? 'bg-violet-600 text-white border-violet-700 shadow-sm scale-105'
+                                    : 'bg-white text-slate-500 border-slate-200 hover:border-violet-300 hover:bg-violet-50'
+                                }`}
+                              >
+                                {day}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest pt-1">Select days of the week</p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((dayName, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => toggleWeeklyDay(idx)}
+                                className={`w-full py-2.5 rounded-lg text-[11px] font-black transition-all duration-200 border ${
+                                  selectedWeekDays.includes(idx)
+                                    ? 'bg-violet-600 text-white border-violet-700 shadow-sm'
+                                    : 'bg-white text-slate-500 border-slate-200 hover:border-violet-300 hover:bg-violet-50'
+                                }`}
+                              >
+                                {dayName}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+
+                      {/* Display Data Output Block */}
+                      {scheduleType === 'monthly' && selectedDays.length > 0 && (
+                        <div className="bg-white p-3 rounded-xl border border-violet-200 space-y-1">
+                          <p className="text-[11px] font-black text-violet-800">
+                            📅 Every {selectedDays.map(d => formatDaySuffix(d)).join(' & ')} of the month
+                          </p>
+                          <p className="text-[10px] font-bold text-violet-500">
+                            Next Due: {new Date(computeLocalNextDue(selectedDays)).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        </div>
+                      )}
+                      {scheduleType === 'weekly' && selectedWeekDays.length > 0 && (
+                        <div className="bg-white p-3 rounded-xl border border-violet-200 space-y-1">
+                          <p className="text-[11px] font-black text-violet-800">
+                            📅 Every {selectedWeekDays.map(n => ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][n]).join(' & ')}
+                          </p>
+                          <p className="text-[10px] font-bold text-violet-500">
+                            Next Due: {new Date(computeLocalNextWeeklyDue(selectedWeekDays)).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        </div>
+                      )}
+
+                      {((scheduleType === 'monthly' && selectedDays.length === 0) || (scheduleType === 'weekly' && selectedWeekDays.length === 0)) && (
+                        <p className="text-[10px] font-bold text-violet-400 text-center py-2">Select days above to set recurring target</p>
+                      )}
+                    </div>
+                  )}
+
+                  {!recurringEnabled && loan.recurringSchedule?.enabled && (
+                    <p className="text-[9px] font-bold text-slate-400 mt-1">
+                      Currently active: {loan.recurringSchedule.type === 'weekly' 
+                        ? `Every ${loan.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ')}` 
+                        : `Every ${loan.recurringSchedule.days?.map(d => formatDaySuffix(d)).join(' & ')}`}. Toggle to modify.
+                    </p>
+                  )}
                 </div>
               </div>
 

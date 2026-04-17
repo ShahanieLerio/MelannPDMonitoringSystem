@@ -17,11 +17,10 @@ interface ReminderItem {
 
 const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser }) => {
   const [loans, setLoans] = useState(store.getLoans(selectedBranch));
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Priority' | 'Monitoring' | 'Follow-up' | 'No Activity'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Priority' | 'Monitoring' | 'Follow-up' | 'Updates Log'>('All');
   const [collapsedSections, setCollapsedSections] = useState({
     priority: false,
     monitoring: false,
-    attention: false,
     reminders: false,
     log: false
   });
@@ -34,7 +33,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     });
 
     // Run Same-Day No-Payment Check
-    // If a client in Top Priority (remark date != today) AND not paid -> Move to Need Attention
+    // If a client in Top Priority (remark date != today) AND not paid -> Downgrade priority
     const checkExpiredPriority = async () => {
       const todayStr = new Date().toDateString();
       const currentLoans = store.getLoans(selectedBranch);
@@ -65,8 +64,17 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
   }, [loans]);
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const tomorrowStr = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  }, []);
   
   const checkIsPriority = (l: any) => {
+    // Auto-detect fulfilled commitments: If they paid today, they shouldn't be in Critical Action today
+    const hasGoodPaymentToday = (l.payments || []).some((p: any) => p.status === 'GOOD' && p.date.startsWith(todayStr));
+    if (hasGoodPaymentToday) return false;
+
     const isTopAi = l.aiPriority === PriorityLevel.TOP;
     const isUnpaid = l.runningBalance > 0 && l.status !== 'Paid';
     // Primary check: loan-level fields (synced from remarks on load/add)
@@ -85,11 +93,6 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     return updateList.filter(l => checkIsPriority(l));
   }, [updateList, todayStr]);
 
-  // Logic for Need Attention Section (Unpaid but Commitment Done)
-  const needAttentionList = useMemo(() => {
-    return updateList.filter(l => !checkIsPriority(l) && l.aiPriority === PriorityLevel.NEED_ATTENTION && l.status !== 'Paid'); // Ensure not paid
-  }, [updateList, todayStr]);
-
   const handleMarkCommitmentDone = async (loan: any) => {
     const isPaid = loan.outstandingBalance <= 0 || loan.status === 'Paid';
     const newPriority = isPaid ? PriorityLevel.LOWEST : PriorityLevel.NEED_ATTENTION;
@@ -98,27 +101,22 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     await store.updateLoan(loan.id, { aiPriority: newPriority }, currentUser.username, currentUser.role);
   };
 
-  const handleSkip = async (loan: any) => {
-    // Skip / Defer: Remove from Need Attention -> Return to All Client Updates (Neutral State)
-    await store.updateLoan(loan.id, { aiPriority: PriorityLevel.LOWEST }, currentUser.username, currentUser.role);
-  };
-
-  // Logic for Reminder Section (Advance early notification)
+  // Logic for Reminder Section (Advance early notification - triggers strictly 1 day prior)
   const reminderList = useMemo(() => {
     const reminders: ReminderItem[] = [];
 
     updateList.forEach(l => {
       if (l.status === 'Paid') return;
-      if (checkIsPriority(l) || (l.aiPriority === PriorityLevel.NEED_ATTENTION && l.status !== 'Paid')) {
+      if (checkIsPriority(l)) {
         return;
       }
 
-      const isFuturePTP = !!l.promiseToPayDate && l.promiseToPayDate > todayStr;
-      const isFutureFU = !!l.followUpDate && l.followUpDate > todayStr;
+      const isTomorrowPTP = !!l.promiseToPayDate && l.promiseToPayDate === tomorrowStr;
+      const isTomorrowFU = !!l.followUpDate && l.followUpDate === tomorrowStr;
 
-      if (isFuturePTP || isFutureFU) {
-        const type = isFuturePTP ? 'Payment' : 'Follow-up';
-        const dateStr = isFuturePTP ? l.promiseToPayDate : l.followUpDate;
+      if (isTomorrowPTP || isTomorrowFU) {
+        const type = isTomorrowPTP ? 'Payment' : 'Follow-up';
+        const dateStr = isTomorrowPTP ? l.promiseToPayDate : l.followUpDate;
         
         reminders.push({
           loan: l,
@@ -130,23 +128,30 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     });
 
     return reminders;
-  }, [updateList, todayStr]);
+  }, [updateList, todayStr, tomorrowStr]);
 
-  // Logic for Close Monitoring (Clients with critical dates reached but NO payment today)
+  // Logic for Close Monitoring (Clients with critical dates reached but NO payment recorded after the date)
   const closeMonitoringList = useMemo(() => {
     return updateList.map(l => {
       if (l.status === 'Paid') return null;
       if (checkIsPriority(l)) return null;
 
-      // Only trigger if promised or follow-up date has passed without payment
+      // Only trigger if promised or follow-up date has passed
       const hasPassedPTP = !!l.promiseToPayDate && l.promiseToPayDate < todayStr;
       const hasPassedFollowUp = !!l.followUpDate && l.followUpDate < todayStr;
-      const hasPassedCriticalDate = hasPassedPTP || hasPassedFollowUp;
       
-      if (!hasPassedCriticalDate) return null;
+      if (!hasPassedPTP && !hasPassedFollowUp) return null;
 
-      const hasGoodPaymentToday = (l.payments || []).some((p: any) => p.status === 'GOOD' && p.date.startsWith(todayStr));
-      if (hasGoodPaymentToday) return null;
+      // Determine the most recent critical date that triggered this monitoring
+      const passedDates = [];
+      if (hasPassedPTP) passedDates.push(l.promiseToPayDate);
+      if (hasPassedFollowUp) passedDates.push(l.followUpDate);
+      passedDates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+      const mostRecentPassedDate = passedDates[0];
+
+      // If they made a GOOD payment on or after the most recent critical date, they fulfilled the past commitment
+      const hasSatisfyingPayment = (l.payments || []).some((p: any) => p.status === 'GOOD' && p.date >= mostRecentPassedDate);
+      if (hasSatisfyingPayment) return null;
 
       const goodPayments = (l.payments || []).filter((p: any) => p.status === 'GOOD');
       let lastPaymentDateStr = null;
@@ -175,7 +180,6 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
 
     return updateList.filter(u =>
       !checkIsPriority(u) &&
-      !(u.aiPriority === PriorityLevel.NEED_ATTENTION && u.status !== 'Paid') &&
       !reminderIds.has(u.id) &&
       !monitoringIds.has(u.id)
     );
@@ -191,10 +195,11 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
 
   return (
     <div className="space-y-8 animate-fadeIn pb-20">
-      <div className="flex justify-between items-center transition-colors duration-300">
+      {/* HEADER SECTION */}
+      <div className="flex justify-between items-center transition-colors duration-300 bg-white p-6 rounded-[1.5rem] shadow-sm border border-slate-200">
         <div>
-          <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight transition-colors duration-300">Client Pulse & Updates</h2>
-          <p className="text-slate-500 dark:text-slate-400 font-medium text-sm transition-colors duration-300">Real-time analysis of collector feedback for: <span className="text-emerald-600 dark:text-emerald-400 font-bold">{selectedBranch}</span></p>
+          <h2 className="text-3xl font-black text-slate-800 tracking-tight transition-colors duration-300 mb-1">Client Pulse & Updates</h2>
+          <p className="text-slate-400 font-medium text-sm transition-colors duration-300">Real-time analysis of collector feedback for: <span className="text-emerald-600 font-bold">{selectedBranch}</span></p>
         </div>
         <div className="flex items-center gap-6">
         </div>
@@ -204,34 +209,59 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
       <div className="flex flex-wrap items-center justify-between gap-6 p-2 bg-white rounded-3xl border border-slate-200 shadow-sm">
         <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl">
           <FilterTab active={activeFilter === 'All'} label="All Activity" onClick={() => setActiveFilter('All')} />
-          <FilterTab active={activeFilter === 'Priority'} label="Priority" count={topPriorityList.length} onClick={() => setActiveFilter('Priority')} color="red" />
-          <FilterTab active={activeFilter === 'Monitoring'} label="Monitoring" count={closeMonitoringList.length} onClick={() => setActiveFilter('Monitoring')} color="red" />
-          <FilterTab active={activeFilter === 'Follow-up'} label="Follow-up" count={reminderList.length} onClick={() => setActiveFilter('Follow-up')} color="amber" />
-          <FilterTab active={activeFilter === 'No Activity'} label="No Activity" count={noActivityList.length} onClick={() => setActiveFilter('No Activity')} color="slate" />
+          <FilterTab active={activeFilter === 'Monitoring'} label="Close Monitoring" count={closeMonitoringList.length} onClick={() => setActiveFilter('Monitoring')} color="red" />
+          <FilterTab active={activeFilter === 'Priority'} label="Critical Action" count={topPriorityList.length} onClick={() => setActiveFilter('Priority')} color="red" />
+          <FilterTab active={activeFilter === 'Follow-up'} label="Advance Reminders" count={reminderList.length} onClick={() => setActiveFilter('Follow-up')} color="amber" />
+          <FilterTab active={activeFilter === 'Updates Log'} label="All Client Updates Log" count={updateList.length} onClick={() => setActiveFilter('Updates Log')} color="slate" />
         </div>
         <div className="px-6 flex gap-8">
           <div className="flex flex-col">
-            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Total Priority</span>
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Close Monitoring</span>
+            <span className="text-lg font-black text-rose-600 leading-none">{closeMonitoringList.length}</span>
+          </div>
+          <div className="w-px h-8 bg-slate-200 self-center"></div>
+          <div className="flex flex-col">
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Critical Action</span>
             <span className="text-lg font-black text-red-600 leading-none">{topPriorityList.length}</span>
           </div>
           <div className="w-px h-8 bg-slate-200 self-center"></div>
           <div className="flex flex-col">
-            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Total Follow-up</span>
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Advance Reminders</span>
             <span className="text-lg font-black text-amber-600 leading-none">{reminderList.length}</span>
           </div>
         </div>
       </div>
 
 
-      {(activeFilter === 'All' || activeFilter === 'Priority') && (
-        <section className="space-y-6">
+      {/* 1️⃣ CLOSE MONITORING — Highest Priority */}
+      {(activeFilter === 'All' || activeFilter === 'Monitoring') && (
+        <section className="bg-rose-50/30 rounded-[1.5rem] p-6 shadow-sm border border-rose-200 space-y-6 relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-1.5 h-6 bg-red-500 rounded-full"></div>
-              <h3 className="text-xs font-black text-red-600 uppercase tracking-[0.25em]">Critical Action: Priority Cases</h3>
+              <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.6)]"></div>
+              <h3 className="text-sm font-black text-rose-900 uppercase tracking-[0.2em]">Close Monitoring Queue</h3>
+            </div>
+            <button onClick={() => toggleSection('monitoring')} className="p-2 hover:bg-rose-100 rounded-xl transition-colors group">
+              <span className={`block text-md transition-transform duration-300 text-rose-500 group-hover:text-rose-700 ${collapsedSections.monitoring ? 'rotate-180' : ''}`}>▼</span>
+            </button>
+          </div>
+          
+          {!collapsedSections.monitoring && (
+             <CloseMonitoringTable data={closeMonitoringList} />
+          )}
+        </section>
+      )}
+
+      {/* 2️⃣ CRITICAL ACTION: PRIORITY CASES */}
+      {(activeFilter === 'All' || activeFilter === 'Priority') && (
+        <section className="bg-white rounded-[1.5rem] p-6 border border-red-200/60 shadow-[0_0_15px_rgba(239,68,68,0.1)] space-y-6 relative">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.6)]"></div>
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em]">Critical Action: Priority Cases</h3>
             </div>
             <button onClick={() => toggleSection('priority')} className="p-2 hover:bg-red-50 rounded-xl transition-colors group">
-              <span className={`block text-lg transition-transform duration-300 text-red-400 group-hover:text-red-600 ${collapsedSections.priority ? 'rotate-180' : ''}`}>▼</span>
+              <span className={`block text-lg transition-transform duration-300 text-red-500 group-hover:text-red-700 ${collapsedSections.priority ? 'rotate-180' : ''}`}>▼</span>
             </button>
           </div>
           
@@ -239,20 +269,21 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
             topPriorityList.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-slideIn">
                 {topPriorityList.map(item => (
-                  <div key={item.id} className="bg-white border border-red-200 p-6 rounded-[2rem] shadow-xl shadow-red-900/5 hover:border-red-400 hover:-translate-y-1.5 transition-all duration-500 group flex flex-col justify-between h-full">
+                  <div key={item.id} className="bg-white border border-red-200 p-6 rounded-[1.5rem] shadow-sm hover:shadow-lg hover:border-red-300 hover:-translate-y-1 transition-all duration-300 group flex flex-col justify-between h-full relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-400 to-rose-600"></div>
                     <div>
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-red-600 bg-red-50 px-3 py-1.5 rounded-xl border border-red-100 shadow-sm">{item.code}</span>
+                      <div className="flex justify-between items-start mb-4 mt-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-red-600 bg-red-50 px-3 py-1.5 rounded-full border border-red-100 shadow-sm">{item.code}</span>
                         {item.promiseToPayDate && item.promiseToPayDate === todayStr && item.runningBalance > 0 && item.status !== 'Paid' ? (
-                          <span className="text-[10px] font-black text-orange-600 bg-orange-50 px-3 py-1.5 rounded-xl border border-orange-100 shadow-sm animate-pulse">
+                          <span className="text-[10px] font-black text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-100 shadow-sm animate-pulse">
                              DUE TODAY
                           </span>
                         ) : item.promiseToPayDate && item.promiseToPayDate < todayStr && item.runningBalance > 0 && item.status !== 'Paid' ? (
-                          <span className="text-[10px] font-black text-red-600 bg-red-100 px-3 py-1.5 rounded-xl border border-red-300 shadow-sm flex items-center gap-1">
+                          <span className="text-[10px] font-black text-red-600 bg-red-100 px-3 py-1.5 rounded-full border border-red-300 shadow-sm flex items-center gap-1">
                             ⚠️ MISSED PTP
                           </span>
                         ) : (
-                          <span className="text-[10px] font-black text-red-600 bg-red-50 px-3 py-1.5 rounded-xl border border-red-100 shadow-sm flex items-center gap-1">
+                          <span className="text-[10px] font-black text-red-600 bg-red-50 px-3 py-1.5 rounded-full border border-red-100 shadow-sm flex items-center gap-1">
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                             HIGH RISK
                           </span>
@@ -282,17 +313,17 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                       </div>
                       <button
                         onClick={() => handleMarkCommitmentDone(item)}
-                        className="w-full py-4 bg-[#111827] text-white rounded-[1.25rem] text-[10px] font-black uppercase tracking-[0.25em] transition-all hover:bg-slate-800 hover:shadow-xl hover:-translate-y-1 active:scale-95 flex items-center justify-center gap-3"
+                        className="w-full py-3 bg-slate-900 border border-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-300 hover:bg-slate-800 hover:shadow-md hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-2"
                       >
-                        <span>✓</span> Settle Commitment
+                        <span className="bg-white/20 w-4 h-4 rounded-full flex items-center justify-center text-[8px]">✓</span> Settle Commitment
                       </button>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="p-16 bg-[#FEF2F2] border-2 border-[#FCA5A5] border-dashed rounded-[3rem] flex flex-col items-center justify-center gap-4 text-center animate-pulse">
-                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-3xl shadow-md border border-[#FCA5A5]">🎉</div>
+              <div className="p-16 bg-red-50 border-2 border-red-200 border-dashed rounded-[2rem] flex flex-col items-center justify-center gap-4 text-center">
+                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-3xl shadow-sm border border-red-100">🎉</div>
                 <div>
                   <h4 className="text-sm font-black text-red-900 uppercase tracking-widest">You're all caught up!</h4>
                   <p className="text-[11px] font-bold text-red-600/60 uppercase tracking-widest mt-1">✅ No urgent cases right now.</p>
@@ -303,101 +334,16 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
         </section>
       )}
 
-      {(activeFilter === 'All') && (
-        <section className="space-y-4">
-          {needAttentionList.length > 0 && (
-            <>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
-                  <h3 className="text-sm font-black text-orange-600 uppercase tracking-widest">Needs Attention: Commitment Done (Unpaid)</h3>
-                </div>
-                <button onClick={() => toggleSection('attention')} className="p-2 hover:bg-orange-50 rounded-xl transition-colors group">
-                  <span className={`block text-md transition-transform duration-300 text-orange-400 group-hover:text-orange-600 ${collapsedSections.attention ? 'rotate-180' : ''}`}>▼</span>
-                </button>
-              </div>
-              
-              {!collapsedSections.attention && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-slideIn">
-                  {needAttentionList.map(item => (
-                    <div key={item.id} className="bg-orange-50 dark:bg-orange-900/10 border-2 border-orange-200 dark:border-orange-900/50 p-4 rounded-2xl shadow-md shadow-orange-100/50 dark:shadow-orange-900/20 hover:border-orange-400 dark:hover:border-orange-500/50 hover:shadow-lg hover:shadow-orange-200 dark:hover:shadow-orange-900/40 hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between h-full group">
-                      <div>
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 bg-white dark:bg-slate-800 rounded-lg border border-orange-200 dark:border-orange-900/50 flex items-center justify-center text-[10px] font-black text-orange-600 dark:text-orange-400 transition-colors duration-300">{item.code}</div>
-                            <div className="flex flex-col">
-                              <span className="text-xs font-black text-slate-800 dark:text-white truncate leading-tight w-24 transition-colors duration-300">{item.borrowerName}</span>
-                              <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider transition-colors duration-300">{item.latestRemark.collector}</span>
-                            </div>
-                          </div>
-                          <span className="bg-white dark:bg-slate-800 px-2 py-1 rounded text-[9px] font-black text-orange-500 dark:text-orange-400 border border-orange-200 dark:border-orange-900/50 shadow-sm uppercase tracking-widest transition-colors duration-300">Pending</span>
-                        </div>
-                        <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-orange-200 dark:border-orange-900/50 mb-2 flex flex-col gap-1.5 shadow-sm transition-colors duration-300">
-                          {item.latestRemark.text.includes('[DL_MARKER]') && (
-                            <span className="self-start text-[8px] font-black text-white bg-red-500 px-1.5 py-0.5 rounded uppercase tracking-widest shadow-sm">
-                              DEMAND LETTER
-                            </span>
-                          )}
-                          <p className="text-[10px] text-slate-700 dark:text-slate-300 font-medium italic line-clamp-2 transition-colors duration-300">
-                            "{item.latestRemark.text.replace('[DL_MARKER]', '').trim()}"
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex justify-between items-end border-t border-orange-200 dark:border-orange-900/50 pt-2 mt-2 transition-colors duration-300">
-                        <div>
-                          <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 block uppercase tracking-wider transition-colors duration-300">Balance</span>
-                          <span className="text-xs font-black text-orange-900 dark:text-orange-400 transition-colors duration-300">₱{item.runningBalance.toLocaleString()}</span>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleSkip(item)}
-                            className="px-2 py-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm rounded text-[9px] font-bold uppercase tracking-tight transition-colors"
-                          >
-                            Skip
-                          </button>
-                          <div className="px-2 py-1 bg-orange-100 dark:bg-orange-900/40 border border-orange-200 dark:border-orange-900/50 text-orange-700 dark:text-orange-400 shadow-sm rounded text-[9px] font-black uppercase tracking-tight transition-colors duration-300">
-                            Wait for Payment
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </section>
-      )}
-
-      {/* CLOSE MONITORING SECTION */}
-      {(activeFilter === 'All' || activeFilter === 'Monitoring') && (
-        <section className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-1.5 h-6 bg-rose-500 rounded-full animate-pulse"></div>
-              <h3 className="text-xs font-black text-rose-600 uppercase tracking-[0.25em]">Close Monitoring Queue</h3>
-            </div>
-            <button onClick={() => toggleSection('monitoring')} className="p-2 hover:bg-rose-50 rounded-xl transition-colors group">
-              <span className={`block text-md transition-transform duration-300 text-rose-400 group-hover:text-rose-600 ${collapsedSections.monitoring ? 'rotate-180' : ''}`}>▼</span>
-            </button>
-          </div>
-          
-          {!collapsedSections.monitoring && (
-             <CloseMonitoringTable data={closeMonitoringList} />
-          )}
-        </section>
-      )}
-
-      {/* REMINDER SECTION */}
+      {/* 3️⃣ ADVANCE REMINDERS & SCHEDULED FOLLOW-UPS */}
       {(activeFilter === 'All' || activeFilter === 'Follow-up') && (
-        <section className="space-y-6">
+        <section className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm space-y-6 relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-1.5 h-6 bg-amber-500 rounded-full"></div>
-              <h3 className="text-xs font-black text-amber-600 uppercase tracking-[0.25em]">Advance Reminders & Scheduled Follow-ups</h3>
+              <div className="w-2 h-2 bg-amber-500 rounded-full"></div>
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em]">Advance Reminders & Scheduled Follow-ups</h3>
             </div>
-            <button onClick={() => toggleSection('reminders')} className="p-2 hover:bg-amber-50 rounded-xl transition-colors group">
-              <span className={`block text-md transition-transform duration-300 text-amber-400 group-hover:text-amber-600 ${collapsedSections.reminders ? 'rotate-180' : ''}`}>▼</span>
+            <button onClick={() => toggleSection('reminders')} className="p-2 hover:bg-slate-100 rounded-xl transition-colors group">
+              <span className={`block text-md transition-transform duration-300 text-slate-400 group-hover:text-amber-500 ${collapsedSections.reminders ? 'rotate-180' : ''}`}>▼</span>
             </button>
           </div>
           
@@ -405,16 +351,17 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
             reminderList.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-slideIn">
                 {reminderList.map((item, idx) => (
-                  <div key={`${item.loan.id}-rem-${idx}`} className="bg-white border-2 border-[#FCD34D] p-6 rounded-[2rem] shadow-lg shadow-amber-900/5 hover:-translate-y-2 transition-all duration-500 h-full flex flex-col justify-between group">
+                  <div key={`${item.loan.id}-rem-${idx}`} className="bg-white border border-amber-200 p-6 rounded-[1.5rem] shadow-sm hover:shadow-md hover:border-amber-300 hover:-translate-y-1 transition-all duration-300 h-full flex flex-col justify-between group relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-400 to-amber-500"></div>
                     <div>
-                      <div className="flex justify-between items-start mb-4">
-                        <div className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border shadow-sm ${item.type === 'Payment' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                      <div className="flex justify-between items-start mb-4 mt-2">
+                        <div className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border shadow-sm ${item.type === 'Payment' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
                           item.type === 'Visit' ? 'bg-blue-50 text-blue-700 border-blue-100' :
                             'bg-amber-50 text-amber-700 border-amber-100'
                           }`}>
                           {item.type}
                         </div>
-                        <span className="text-[10px] font-black text-amber-700 flex items-center gap-2 bg-amber-50 px-3 py-1 rounded-xl border border-amber-200 shadow-sm">
+                        <span className="text-[10px] font-black text-amber-700 flex items-center gap-2 bg-amber-50 px-3 py-1 rounded-full border border-amber-200 shadow-sm">
                           ⏰ {item.date}
                         </span>
                       </div>
@@ -443,73 +390,42 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                 ))}
               </div>
             ) : (
-              <div className="p-10 bg-slate-50 border-2 border-slate-100 border-dashed rounded-[2.5rem] flex items-center justify-center">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">No upcoming reminders in queue</p>
+              <div className="p-10 bg-slate-50 border-2 border-slate-200 border-dashed rounded-[2rem] flex items-center justify-center h-48">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex flex-col gap-4 items-center">
+                  <span className="text-3xl opacity-50">🗓️</span>
+                  No upcoming reminders in queue
+                </p>
               </div>
             )
           )}
         </section>
       )}
 
-      {(activeFilter === 'All' || activeFilter === 'No Activity') && (
-        <>
-          <div className="relative flex items-center justify-center pt-8 pb-3">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200"></div></div>
-            <div className="relative px-6 bg-slate-50 flex items-center gap-4">
-              <div className="relative px-6 py-2 bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-[0.5em] flex items-center gap-4">
-                <span className="h-0.5 w-8 bg-slate-200"></span>
-                {activeFilter === 'No Activity' ? 'Inactive Client Registry' : 'All Client Updates Log'}
-                <span className="h-0.5 w-8 bg-slate-200"></span>
-              </div>
-              <button onClick={() => toggleSection('log')} className="p-2 hover:bg-slate-200 rounded-xl transition-colors group">
-                <span className={`block text-xs transition-transform duration-300 text-slate-400 group-hover:text-slate-600 ${collapsedSections.log ? 'rotate-180' : ''}`}>▼</span>
-              </button>
+      {/* 4️⃣ ALL CLIENT UPDATES LOG — Full Logs */}
+      {(activeFilter === 'All' || activeFilter === 'Updates Log') && (
+        <section className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm space-y-6 relative">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 bg-slate-400 rounded-full"></div>
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em]">All Client Updates Log</h3>
             </div>
+            <button onClick={() => toggleSection('log')} className="p-2 hover:bg-slate-100 rounded-xl transition-colors group">
+              <span className={`block text-md transition-transform duration-300 text-slate-400 group-hover:text-slate-600 ${collapsedSections.log ? 'rotate-180' : ''}`}>▼</span>
+            </button>
           </div>
 
           {!collapsedSections.log && (
-            <>
-              {activeFilter === 'No Activity' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-slideIn">
-                  {noActivityList.length === 0 ? (
-                    <div className="col-span-full py-20 bg-white border-2 border-dashed border-slate-200 rounded-[3rem] flex flex-col items-center justify-center text-center">
-                      <p className="font-black text-slate-400 uppercase tracking-[0.2em] text-[10px]">Registry is active</p>
-                      <p className="text-[#6B7280] font-bold text-xs mt-2">All clients have recorded interactions.</p>
-                    </div>
-                  ) : (
-                    noActivityList.map((loan) => (
-                      <div key={loan.id} className="bg-white p-5 rounded-[1.5rem] shadow-xl shadow-slate-900/5 border border-slate-100 flex flex-col justify-between h-full opacity-70 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-300">
-                        <div className="flex justify-between items-start mb-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center font-black text-slate-400 text-[10px]">{loan.code}</div>
-                            <div>
-                              <h4 className="font-black text-slate-800 text-sm truncate">{loan.borrowerName}</h4>
-                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">No Activity Recorded</span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="pt-4 border-t border-slate-50 flex justify-between items-center">
-                          <span className="text-[10px] font-black text-slate-300">N/A</span>
-                          <span className="text-sm font-black text-slate-400">₱{loan.runningBalance.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              ) : (
-                filteredMainList.length === 0 ? (
-                  <div className="py-20 bg-white border-2 border-dashed border-slate-200 rounded-[3rem] flex flex-col items-center justify-center text-center">
-                    <div className="w-20 h-20 bg-slate-50 rounded-[2rem] flex items-center justify-center text-4xl mb-6 shadow-inner">📢</div>
-                    <p className="font-black text-slate-400 uppercase tracking-[0.2em] text-[10px]">Registry sweep complete</p>
-                    <p className="text-[#6B7280] font-bold text-xs mt-2">No other client updates pending review.</p>
-                  </div>
-                ) : (
-                  <ClientUpdateTable data={filteredMainList} />
-                )
-              )}
-            </>
+            (activeFilter === 'Updates Log' ? updateList : filteredMainList).length === 0 ? (
+              <div className="py-20 bg-white border-2 border-dashed border-slate-200 rounded-[3rem] flex flex-col items-center justify-center text-center">
+                <div className="w-20 h-20 bg-slate-50 rounded-[2rem] flex items-center justify-center text-4xl mb-6 shadow-inner">📢</div>
+                <p className="font-black text-slate-400 uppercase tracking-[0.2em] text-[10px]">Registry sweep complete</p>
+                <p className="text-[#6B7280] font-bold text-xs mt-2">No client updates to display.</p>
+              </div>
+            ) : (
+              <ClientUpdateTable data={activeFilter === 'Updates Log' ? updateList : filteredMainList} />
+            )
           )}
-        </>
+        </section>
       )}
     </div>
   );
@@ -525,10 +441,10 @@ interface FilterTabProps {
 
 function FilterTab({ active, label, count, onClick, color }: FilterTabProps) {
   const colorClasses = {
-    red: active ? 'bg-red-600 text-white shadow-red-200' : 'text-red-600 hover:bg-red-50',
-    amber: active ? 'bg-amber-500 text-white shadow-amber-200' : 'text-amber-600 hover:bg-amber-50',
-    slate: active ? 'bg-slate-800 text-white shadow-slate-200' : 'text-slate-600 hover:bg-slate-200',
-    default: active ? 'bg-[#111827] text-white shadow-slate-200' : 'text-slate-600 hover:bg-white'
+    red: active ? 'bg-red-600 text-white shadow-md shadow-red-200 translate-y-[-2px]' : 'bg-slate-100/50 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:-translate-y-0.5 hover:shadow-sm',
+    amber: active ? 'bg-amber-500 text-white shadow-md shadow-amber-200 translate-y-[-2px]' : 'bg-slate-100/50 text-slate-500 hover:bg-amber-50 hover:text-amber-600 hover:-translate-y-0.5 hover:shadow-sm',
+    slate: active ? 'bg-slate-800 text-white shadow-md shadow-slate-200 translate-y-[-2px]' : 'bg-slate-100/50 text-slate-500 hover:bg-slate-200 hover:text-slate-800 hover:-translate-y-0.5 hover:shadow-sm',
+    default: active ? 'bg-[#111827] text-white shadow-md shadow-slate-200 translate-y-[-2px]' : 'bg-slate-100/50 text-slate-500 hover:bg-slate-100 hover:text-slate-800 hover:-translate-y-0.5 hover:shadow-sm'
   };
 
   const currentClass = color ? colorClasses[color] : colorClasses.default;
@@ -536,11 +452,11 @@ function FilterTab({ active, label, count, onClick, color }: FilterTabProps) {
   return (
     <button
       onClick={onClick}
-      className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-3 transition-all duration-300 shadow-sm ${currentClass}`}
+      className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-3 transition-all duration-300 ${currentClass}`}
     >
       {label}
       {count !== undefined && (
-        <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black shadow-inner ${active ? 'bg-white/20' : 'bg-slate-200 text-slate-600'}`}>
+        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black shadow-inner transition-colors duration-300 ${active ? 'bg-white/20' : 'bg-slate-200/80 text-slate-500'}`}>
           {count}
         </span>
       )}
@@ -557,7 +473,7 @@ function PriorityBadge({ level }: { level: PriorityLevel }) {
     [PriorityLevel.LOWEST]: 'bg-slate-50 text-slate-400 border-slate-100 font-bold',
   };
   return (
-    <span className={`px-4 py-1.5 rounded-xl text-[9px] uppercase tracking-widest border transition-all ${styles[level]}`}>
+    <span className={`px-4 py-1.5 rounded-full text-[9px] uppercase tracking-widest border transition-all ${styles[level]}`}>
       {level === PriorityLevel.MONITOR ? 'Monitor' : level}
     </span>
   );
@@ -790,8 +706,8 @@ function ClientUpdateTable({ data }: { data: any[] }) {
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-white border-b-2 border-slate-200">
-              <th className="p-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleSort('name')}>
+            <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 text-left">
+              <th className="p-4 px-6 text-[10px] font-black text-slate-500 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('name')}>
                 Client Details <SortIcon columnKey="name" />
               </th>
               <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors">
@@ -825,7 +741,16 @@ function ClientUpdateTable({ data }: { data: any[] }) {
                   <td className="p-4 px-6 align-top min-w-[200px]">
                     <div className="flex flex-col">
                       <span className="font-black text-slate-800 text-sm leading-tight mb-1 group-hover:text-emerald-700 transition-colors">{row.borrowerName}</span>
-                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
+                        {row.recurringSchedule?.enabled && (
+                          <span className="bg-violet-50 text-violet-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-sm border border-violet-200">
+                            🔄 Every {row.recurringSchedule.type === 'weekly' 
+                              ? row.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ') 
+                              : row.recurringSchedule.days?.join(' & ')}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
 
@@ -984,8 +909,8 @@ function CloseMonitoringTable({ data }: { data: any[] }) {
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-rose-50/50 border-b-2 border-rose-100 sticky top-0 z-10 text-left">
-              <th className="p-4 px-6 text-[10px] font-black text-rose-400 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-rose-100/50 transition-colors" onClick={() => handleSort('name')}>
+            <tr className="bg-rose-50 border-b border-rose-200 sticky top-0 z-10 text-left shadow-sm">
+              <th className="p-4 px-6 text-[10px] font-black text-rose-500 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-rose-100 transition-colors" onClick={() => handleSort('name')}>
                 Client Details <SortIcon columnKey="name" />
               </th>
               <th className="p-4 text-[10px] font-black text-rose-400 uppercase tracking-widest whitespace-nowrap">
@@ -1026,13 +951,20 @@ function CloseMonitoringTable({ data }: { data: any[] }) {
               }
 
               return (
-                <tr key={row.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-rose-50/20'} hover:bg-rose-50/60 transition-colors group`}>
+                <tr key={row.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-rose-50/80 transition-colors group`}>
                   {/* Client Name & ID */}
                   <td className="p-4 px-6 align-top">
                     <div className="flex flex-col">
                       <span className="font-black text-slate-800 text-sm leading-tight mb-1 group-hover:text-rose-700 transition-colors">{row.borrowerName}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
+                        {row.recurringSchedule?.enabled && (
+                          <span className="bg-violet-50 text-violet-700 text-[9px] font-black uppercase px-2 py-0.5 rounded-sm border border-violet-200 shadow-sm">
+                            🔄 Every {row.recurringSchedule.type === 'weekly' 
+                              ? row.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ') 
+                              : row.recurringSchedule.days?.join(' & ')}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </td>

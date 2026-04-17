@@ -1,4 +1,4 @@
-import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord } from '../types';
+import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule } from '../types';
 const API_URL = 'http://localhost:5000/api';
 
 const INITIAL_USERS: User[] = [
@@ -100,6 +100,13 @@ class DataStore {
       ]);
 
       // Mapping logic...
+      const parseJson = (val: any) => {
+        if (typeof val === 'string') {
+          try { return JSON.parse(val); } catch (e) { return val; }
+        }
+        return val;
+      };
+
       const mappedLoans = dbLoans.map((l: any) => ({
         ...l,
         collector: l.collector || 'UNASSIGNED',
@@ -122,6 +129,7 @@ class DataStore {
         promiseToPayDate: l.promise_to_pay_date || null,
         followUpDate: l.follow_up_date || null,
         aiPriority: l.ai_priority,
+        recurringSchedule: parseJson(l.recurring_schedule) || null,
         branch: l.branch || Branch.ALL,
         payments: dbPayments.filter((p: any) => p.loan_id === l.id).map((p: any) => ({ 
           ...p, 
@@ -163,7 +171,7 @@ class DataStore {
       this.users = dbUsers.map((u: any) => ({
         ...u,
         fullName: u.full_name,
-        statusHistory: u.status_history,
+        statusHistory: parseJson(u.status_history) || [],
         createdAt: u.created_at
       }));
 
@@ -612,7 +620,17 @@ class DataStore {
     
     // 1. Sync PTP
     const latestPTPRemark = [...loan.remarks].reverse().find(r => r.ptpDate);
-    if (latestPTPRemark && latestPTPRemark.ptpDate) {
+    
+    // If we have a recurring schedule, it's a primary source of PTP
+    if (loan.recurringSchedule?.enabled && loan.recurringSchedule.nextDueDate) {
+      // If there's a specific PTP remark that is LATER than the recurring one, use it
+      // Otherwise use the recurring schedule's next due date
+      if (latestPTPRemark && latestPTPRemark.ptpDate && latestPTPRemark.ptpDate > loan.recurringSchedule.nextDueDate) {
+        loan.promiseToPayDate = latestPTPRemark.ptpDate;
+      } else {
+        loan.promiseToPayDate = loan.recurringSchedule.nextDueDate;
+      }
+    } else if (latestPTPRemark && latestPTPRemark.ptpDate) {
       loan.promiseToPayDate = latestPTPRemark.ptpDate;
     }
 
@@ -716,6 +734,62 @@ class DataStore {
     return loan;
   }
 
+  /**
+   * Computes the next due date from an array of recurring schedule days.
+   * Given days like [15, 30] and a reference date, finds the nearest future occurrence.
+   * Handles edge cases like Feb 30 → Feb 28/29.
+   */
+  private computeNextDueDate(days: number[], afterDate: string): string {
+    const sorted = [...days].sort((a, b) => a - b);
+    const ref = new Date(afterDate + 'T00:00:00');
+    const refDay = ref.getDate();
+    let refMonth = ref.getMonth();
+    let refYear = ref.getFullYear();
+
+    // Find the first scheduled day that is strictly after the reference day in the current month
+    for (const day of sorted) {
+      if (day > refDay) {
+        // Clamp to last valid day of the month
+        const lastDay = new Date(refYear, refMonth + 1, 0).getDate();
+        const clampedDay = Math.min(day, lastDay);
+        const candidate = new Date(refYear, refMonth, clampedDay);
+        return candidate.toISOString().split('T')[0];
+      }
+    }
+
+    // No day found in current month — wrap to the first scheduled day of next month
+    refMonth += 1;
+    if (refMonth > 11) {
+      refMonth = 0;
+      refYear += 1;
+    }
+    const lastDay = new Date(refYear, refMonth + 1, 0).getDate();
+    const clampedDay = Math.min(sorted[0], lastDay);
+    const candidate = new Date(refYear, refMonth, clampedDay);
+    return candidate.toISOString().split('T')[0];
+  }
+
+  /**
+   * Computes the next due date from an array of weekly schedule days (0=Sun, 6=Sat).
+   */
+  private computeNextWeeklyDueDate(weekDays: number[], afterDate: string): string {
+    const sorted = [...weekDays].sort((a, b) => a - b);
+    const ref = new Date(afterDate + 'T00:00:00');
+    const currentDayOfWeek = ref.getDay();
+    
+    // Find first day in the sorted array strictly strictly after current day of week
+    for (const day of sorted) {
+      if (day > currentDayOfWeek) {
+        ref.setDate(ref.getDate() + (day - currentDayOfWeek));
+        return ref.toISOString().split('T')[0];
+      }
+    }
+    
+    // If no day found in current week, wrap to the first available day next week
+    ref.setDate(ref.getDate() + (7 - currentDayOfWeek + sorted[0]));
+    return ref.toISOString().split('T')[0];
+  }
+
   async recordPayment(loanId: string, amount: number, date: string, remarks: string, recorder: string, role: string, customOr?: string) {
     const index = this.loans.findIndex(l => l.id === loanId);
     if (index === -1) return null;
@@ -762,6 +836,29 @@ class DataStore {
     // Only update local memory after server success
     this.loans[index].payments.push(newPayment);
     const updatedLoan = this.recalculateLoanFinances(loanId);
+
+    // Recurring Schedule Auto-Advance: If loan has an active recurring schedule,
+    // advance the nextDueDate and sync promiseToPayDate for the Client Update pipeline.
+    if (updatedLoan && updatedLoan.recurringSchedule?.enabled) {
+      const schedule = updatedLoan.recurringSchedule;
+      const isWeekly = schedule.type === 'weekly';
+      
+      if ((isWeekly && schedule.weekDays && schedule.weekDays.length > 0) || (!isWeekly && schedule.days && schedule.days.length > 0)) {
+        schedule.lastPaidDate = date;
+        if (isWeekly) {
+          schedule.nextDueDate = this.computeNextWeeklyDueDate(schedule.weekDays!, date);
+        } else {
+          schedule.nextDueDate = this.computeNextDueDate(schedule.days, date);
+        }
+        updatedLoan.promiseToPayDate = schedule.nextDueDate;
+        // Persist the schedule advancement to server
+      try {
+        await this.api(`/loans/${loanId}`, 'PUT', updatedLoan);
+      } catch (err) {
+        console.error('Failed to sync recurring schedule advancement:', err);
+      }
+      }
+    }
 
     await this.recordHistory(
       loanId, 

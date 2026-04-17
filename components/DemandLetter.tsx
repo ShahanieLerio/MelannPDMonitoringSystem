@@ -20,6 +20,7 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingDL, setEditingDL] = useState<DemandLetter | null>(null);
     const [visitingDL, setVisitingDL] = useState<any | null>(null);
+    const [receivingDL, setReceivingDL] = useState<any | null>(null);
     const [initialData, setInitialData] = useState<Partial<DemandLetter> | undefined>(undefined);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -145,15 +146,11 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
     };
 
     const handleEdit = (dl: DemandLetter) => {
-        askConfirm(
-            "Are you sure you want to edit this record?",
-            `You are modifying the legal stage or status for ${dl.borrowerName}.`,
-            () => {
-                setEditingDL(dl);
-                setInitialData(undefined);
-                setIsModalOpen(true);
-            }
-        );
+        setEditingDL(dl);
+    };
+
+    const handleReceive = (dl: any) => {
+        setReceivingDL(dl);
     };
 
     const handleProceedToSecond = (dl: DemandLetter) => {
@@ -256,22 +253,22 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                 ))}
             </div>
 
-            <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors duration-300">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left border-collapse">
-                        <thead className="bg-slate-50/80 dark:bg-slate-900/50 shadow-sm text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors duration-300">
+                <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700">
+                    <table className="w-full text-sm text-left border-collapse table-auto">
+                        <thead className="sticky top-0 bg-white dark:bg-slate-900 z-10 shadow-sm text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">
                             <tr>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Collector</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Borrower Identity</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Legal Type</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Prepared</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50 border-l border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10">Date Received</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Follow-up</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Last Action</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Remarks</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50 text-center">Status</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50">Priority</th>
-                                <th className="px-8 py-5 border-b border-slate-100 dark:border-slate-700/50 text-center">Action</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Collector</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Borrower Identity</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Legal</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Prepared</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50 border-l border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10">Received</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Follow-up</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Last Action</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Remarks</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50 text-center">Status</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Priority</th>
+                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50 text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50 transition-colors duration-300">
@@ -292,95 +289,95 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                                     (isOverdue || isThirdDL ? PriorityLevel.TOP : PriorityLevel.FOLLOW_UP);
 
                                 return (
-                                    <tr key={dl.id} className="group hover:bg-emerald-50 dark:hover:bg-slate-700/50 transition-all duration-300">
-                                        <td className="px-8 py-5 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] tracking-widest transition-colors duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400">{dl.collectorName}</td>
-                                        <td className="px-8 py-5 font-bold text-slate-700 dark:text-slate-300 text-base transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:font-black group-hover:underline decoration-emerald-500/30 underline-offset-4">{dl.borrowerName}</td>
-                                        <td className="px-8 py-5">
-                                            <span className="text-emerald-700 dark:text-emerald-400 font-black text-[10px] uppercase tracking-widest bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded transition-colors duration-300">
+                                    <tr key={dl.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-all duration-200">
+                                        <td className="px-3 py-2.5 text-slate-400 dark:text-slate-500 font-bold uppercase text-[9px] tracking-widest transition-colors duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 truncate max-w-[100px]">{dl.collectorName}</td>
+                                        <td className="px-3 py-2.5 font-bold text-slate-700 dark:text-slate-300 text-[13px] transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 truncate max-w-[150px]">{dl.borrowerName}</td>
+                                        <td className="px-3 py-2.5">
+                                            <span className="text-emerald-700 dark:text-emerald-400 font-black text-[9px] uppercase tracking-widest bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded transition-colors duration-300">
                                                 {dl.type}
                                             </span>
                                         </td>
-                                        <td className="px-8 py-5 text-slate-500 dark:text-slate-400 font-medium transition-colors duration-300">{dl.datePrepared}</td>
-                                        <td className="px-8 py-5 text-slate-600 dark:text-slate-300 font-bold border-l border-emerald-50/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10 transition-colors duration-300">
+                                        <td className="px-3 py-2.5 text-slate-500 dark:text-slate-400 font-medium text-xs transition-colors duration-300">{dl.datePrepared}</td>
+                                        <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300 font-bold text-xs border-l border-emerald-50/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10 transition-colors duration-300">
                                             {dl.dateReceived || <span className="text-slate-300 dark:text-slate-600 italic font-medium">Pending</span>}
                                         </td>
-                                        <td className="px-8 py-5">
-                                            <span className={`font-black uppercase text-[10px] tracking-widest transition-colors duration-300 ${priority === PriorityLevel.TOP ? 'text-red-500 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                                        <td className="px-3 py-2.5">
+                                            <span className={`font-black uppercase text-[9px] tracking-widest transition-colors duration-300 ${priority === PriorityLevel.TOP ? 'text-red-500 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'}`}>
                                                 {dl.followUpDate || '-'}
                                             </span>
                                         </td>
-                                        <td className="px-8 py-5">
+                                        <td className="px-3 py-2.5">
                                             <div className="flex flex-col">
-                                                <span className={`font-black text-xs ${
+                                                <span className={`font-black text-[10px] ${
                                                     dl.daysSinceLastAction >= 8 ? 'text-red-600 dark:text-red-400' :
                                                     dl.daysSinceLastAction >= 4 ? 'text-amber-500 dark:text-amber-400' :
                                                     'text-emerald-600 dark:text-emerald-400'
                                                 }`}>
-                                                    {dl.daysSinceLastAction} days ago
+                                                    {dl.daysSinceLastAction}d ago
                                                 </span>
-                                                <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">{dl.lastActivityDate.toISOString().split('T')[0]}</span>
+                                                <span className="text-[8px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">{dl.lastActivityDate.toISOString().split('T')[0]}</span>
                                             </div>
                                         </td>
-                                        <td className="px-8 py-5 max-w-[200px]">
+                                        <td className="px-3 py-2.5 max-w-[120px]">
                                             <div className="group/tooltip relative">
-                                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate italic cursor-help transition-colors duration-300">
+                                                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate italic cursor-help transition-colors duration-300">
                                                     {dl.remarks ? `"${dl.remarks}"` : <span className="text-slate-300 dark:text-slate-600">No remarks</span>}
                                                 </p>
                                                 {dl.remarks && (
-                                                    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[250px] p-3 bg-slate-800 dark:bg-slate-700 text-white text-xs rounded-xl shadow-xl opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none whitespace-normal break-words">
+                                                    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] p-2 bg-slate-800 dark:bg-slate-700 text-white text-[10px] rounded-lg shadow-xl opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none whitespace-normal break-words">
                                                         {dl.remarks}
                                                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800 dark:border-t-slate-700"></div>
                                                     </div>
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-8 py-5 text-center">
-                                            <span className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors duration-300 ${
+                                        <td className="px-3 py-2.5 text-center">
+                                            <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors duration-300 ${
                                                 dl.autoEscalationStatus === 'Ready for Legal Action' ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400' :
                                                 dl.autoEscalationStatus === 'For Legal Review' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400' :
                                                 dl.status === DemandLetterStatus.SETTLED ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400' :
                                                 dl.status === DemandLetterStatus.FOLLOW_UP ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400' :
                                                     'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold'
                                                 }`}>
-                                                {dl.autoEscalationStatus || dl.status}
+                                                {dl.autoEscalationStatus || (dl.status === DemandLetterStatus.FOLLOW_UP ? 'Follow-up' : dl.status)}
                                             </span>
                                         </td>
-                                        <td className="px-8 py-5">
+                                        <td className="px-3 py-2.5">
                                             <PriorityBadge level={priority} />
                                         </td>
-                                        <td className="px-8 py-5 text-center">
-                                            <div className="flex items-center justify-center gap-2">
+                                        <td className="px-3 py-2.5 text-center">
+                                            <div className="flex items-center justify-center gap-1.5">
                                                 {dl.type === DemandLetterType.FIRST && (
                                                     hasThird ? (
-                                                        <span className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
+                                                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-lg text-[8px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
                                                             Ongoing 3rd
                                                         </span>
                                                     ) : hasSecond ? (
-                                                        <span className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
+                                                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-lg text-[8px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
                                                             Ongoing 2nd
                                                         </span>
                                                     ) : (
                                                         <button
                                                             onClick={() => handleProceedToSecond(dl)}
                                                             title="Proceed to 2nd Demand Letter"
-                                                            className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-emerald-200 dark:border-emerald-800 whitespace-nowrap"
+                                                            className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-emerald-200 dark:border-emerald-800 whitespace-nowrap"
                                                         >
-                                                            Proceed to 2nd
+                                                            To 2nd
                                                         </button>
                                                     )
                                                 )}
                                                 {dl.type === DemandLetterType.SECOND && (
                                                     hasThird ? (
-                                                        <span className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
+                                                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-lg text-[8px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700 whitespace-nowrap opacity-75 cursor-not-allowed">
                                                             Ongoing 3rd
                                                         </span>
                                                     ) : (
                                                         <button
                                                             onClick={() => handleProceedToThird(dl)}
                                                             title="Proceed to 3rd Demand Letter"
-                                                            className="px-3 py-1.5 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-indigo-200 dark:border-indigo-800 whitespace-nowrap"
+                                                            className="px-2 py-0.5 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-400 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-indigo-200 dark:border-indigo-800 whitespace-nowrap"
                                                         >
-                                                            Proceed to 3rd
+                                                            To 3rd
                                                         </button>
                                                     )
                                                 )}
@@ -388,16 +385,26 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                                                     <button
                                                         onClick={() => handleAssignFieldVisit(dl)}
                                                         title="Assign Field Visit"
-                                                        className="px-3 py-1.5 bg-orange-100 hover:bg-orange-200 dark:bg-orange-900/40 dark:hover:bg-orange-900/60 text-orange-700 dark:text-orange-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-orange-200 dark:border-orange-800 whitespace-nowrap"
+                                                        className="px-2 py-0.5 bg-orange-100 hover:bg-orange-200 dark:bg-orange-900/40 dark:hover:bg-orange-900/60 text-orange-700 dark:text-orange-400 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-orange-200 dark:border-orange-800 whitespace-nowrap"
                                                     >
-                                                        Field Visit
+                                                        Visit
                                                     </button>
                                                 )}
+                                                {/* 📩 Received Button */}
+                                                <button
+                                                    onClick={() => handleReceive(dl)}
+                                                    title="Mark as Received & Add Remarks"
+                                                    className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700/50 rounded-lg transition-all active:scale-90"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                                                </button>
+                                                {/* ✏️ Edit Date Prepared Button */}
                                                 <button
                                                     onClick={() => handleEdit(dl)}
-                                                    className="p-2 text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-slate-700/50 rounded-xl transition-all active:scale-90"
+                                                    title="Edit Date Prepared"
+                                                    className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-slate-700/50 rounded-lg transition-all active:scale-90"
                                                 >
-                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                                 </button>
                                             </div>
                                         </td>
@@ -441,6 +448,22 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                     onSuccess={(msg) => setSuccessMessage(msg)}
                 />
             )}
+            {editingDL && (
+                <EditDatePreparedModal
+                    dl={editingDL}
+                    currentUser={currentUser}
+                    onClose={() => { setEditingDL(null); refreshData(); }}
+                    onSuccess={(msg) => setSuccessMessage(msg)}
+                />
+            )}
+            {receivingDL && (
+                <ReceivedDemandLetterModal
+                    dl={receivingDL}
+                    currentUser={currentUser}
+                    onClose={() => { setReceivingDL(null); refreshData(); }}
+                    onSuccess={(msg) => setSuccessMessage(msg)}
+                />
+            )}
         </div>
     );
 };
@@ -453,8 +476,8 @@ const PriorityBadge: React.FC<{ level: PriorityLevel }> = ({ level }) => {
         [PriorityLevel.LOWEST]: 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-700',
     };
     return (
-        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight border transition-colors duration-300 ${styles[level]}`}>
-            {level === PriorityLevel.MONITOR ? 'Urgent Follow-up' : level}
+        <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tight border transition-colors duration-300 ${styles[level]}`}>
+            {level === PriorityLevel.MONITOR ? 'Urgent' : level}
         </span>
     );
 };
@@ -1016,6 +1039,374 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                             {dl ? 'Confirm Changes' : 'Record Legal Action'}
                         </button>
                     </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+// ─────────────────────────────────────────────────────────────────
+//  EditDatePreparedModal – Pen Icon: only Date Prepared editable
+// ─────────────────────────────────────────────────────────────────
+interface EditDatePreparedModalProps {
+    dl: DemandLetter;
+    currentUser: User;
+    onClose: () => void;
+    onSuccess?: (message: string) => void;
+}
+
+const EditDatePreparedModal: React.FC<EditDatePreparedModalProps> = ({ dl, currentUser, onClose, onSuccess }) => {
+    const [datePrepared, setDatePrepared] = useState(dl.datePrepared || '');
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        setIsSaving(true);
+        store.updateDemandLetter(dl.id, { datePrepared }, currentUser.username, currentUser.role);
+        if (onSuccess) onSuccess('Date Prepared updated successfully.');
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn">
+            <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-md overflow-hidden animate-slideUp border border-white/20 dark:border-slate-700">
+                {/* Header */}
+                <div className="p-8 bg-[#064e3b] dark:bg-slate-800 flex justify-between items-center">
+                    <div>
+                        <h3 className="text-xl font-black text-white tracking-tight">Edit Date Prepared</h3>
+                        <p className="text-emerald-300/70 font-bold text-xs uppercase tracking-widest mt-1">{dl.borrowerName}</p>
+                    </div>
+                    <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all">
+                        <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                {/* Body */}
+                <form onSubmit={handleSubmit} className="p-8 space-y-6">
+                    <div>
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1">Date Prepared</label>
+                        <input
+                            type="date"
+                            required
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 dark:text-white outline-none transition-colors"
+                            value={datePrepared}
+                            onChange={e => setDatePrepared(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex gap-4 pt-2">
+                        <button type="button" onClick={onClose} className="flex-1 py-4 text-slate-400 dark:text-slate-500 font-black rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all uppercase tracking-widest text-[10px] border border-transparent hover:border-slate-100">Cancel</button>
+                        <button type="submit" disabled={isSaving} className="flex-[2] py-4 bg-emerald-600 dark:bg-emerald-500 text-white font-black rounded-3xl hover:bg-emerald-700 shadow-xl shadow-emerald-900/20 transition-all uppercase tracking-widest text-[10px] active:scale-95 disabled:opacity-50">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+// ─────────────────────────────────────────────────────────────────
+//  ReceivedDemandLetterModal – Full processing: Date + Remarks + PTP + Schedule
+// ─────────────────────────────────────────────────────────────────
+interface ReceivedDemandLetterModalProps {
+    dl: any;
+    currentUser: User;
+    onClose: () => void;
+    onSuccess?: (message: string) => void;
+}
+
+const ReceivedDemandLetterModal: React.FC<ReceivedDemandLetterModalProps> = ({ dl, currentUser, onClose, onSuccess }) => {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Compute auto follow-up (1st/2nd: +10 days, 3rd: +5 days)
+    const computeFollowUp = (received: string) => {
+        if (!received) return '';
+        const d = new Date(received + 'T00:00:00');
+        d.setDate(d.getDate() + (dl.type === DemandLetterType.THIRD ? 5 : 10));
+        return d.toISOString().split('T')[0];
+    };
+
+    const [dateReceived, setDateReceived] = useState(dl.dateReceived || today);
+    const [followUpDate, setFollowUpDate] = useState(computeFollowUp(dl.dateReceived || today));
+    const [remarkText, setRemarkText] = useState('');
+    const [ptpDate, setPtpDate] = useState('');
+    const [schedType, setSchedType] = useState<'monthly' | 'weekly'>('monthly');
+    const [recurringEnabled, setRecurringEnabled] = useState(false);
+    const [selectedDays, setSelectedDays] = useState<number[]>([]);
+    const [selectedWeekDays, setSelectedWeekDays] = useState<number[]>([]);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+    // Re-compute follow-up when dateReceived changes
+    useEffect(() => {
+        setFollowUpDate(computeFollowUp(dateReceived));
+    }, [dateReceived]);
+
+    const toggleDay = (day: number) => setSelectedDays(p => p.includes(day) ? p.filter(d => d !== day) : [...p, day].sort((a, b) => a - b));
+    const toggleWeekDay = (idx: number) => setSelectedWeekDays(p => p.includes(idx) ? p.filter(d => d !== idx) : [...p, idx].sort((a, b) => a - b));
+
+    const computeNextMonthly = (days: number[]) => {
+        const sorted = [...days].sort((a, b) => a - b);
+        const today = new Date();
+        const todayDay = today.getDate();
+        let month = today.getMonth();
+        let year = today.getFullYear();
+        for (const day of sorted) {
+            if (day > todayDay) {
+                const lastDay = new Date(year, month + 1, 0).getDate();
+                return new Date(year, month, Math.min(day, lastDay)).toISOString().split('T')[0];
+            }
+        }
+        month += 1;
+        if (month > 11) { month = 0; year += 1; }
+        const lastDay = new Date(year, month + 1, 0).getDate();
+        return new Date(year, month, Math.min(sorted[0], lastDay)).toISOString().split('T')[0];
+    };
+
+    const computeNextWeekly = (wDays: number[]) => {
+        const sorted = [...wDays].sort((a, b) => a - b);
+        const ref = new Date();
+        const cur = ref.getDay();
+        for (const d of sorted) {
+            if (d > cur) { ref.setDate(ref.getDate() + (d - cur)); return ref.toISOString().split('T')[0]; }
+        }
+        ref.setDate(ref.getDate() + (7 - cur + sorted[0]));
+        return ref.toISOString().split('T')[0];
+    };
+
+    const formatSuffix = (d: number) => {
+        if (d >= 11 && d <= 13) return d + 'th';
+        switch (d % 10) { case 1: return d + 'st'; case 2: return d + 'nd'; case 3: return d + 'rd'; default: return d + 'th'; }
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!remarkText.trim() && !ptpDate && !dateReceived) return;
+        setIsSubmitting(true);
+        setErrorMsg(null);
+        try {
+            // 1. Update the DL record itself
+            const dlUpdate: Partial<DemandLetter> = {
+                dateReceived,
+                followUpDate: followUpDate || undefined,
+                status: DemandLetterStatus.FOLLOW_UP,
+            };
+            store.updateDemandLetter(dl.id, dlUpdate, currentUser.username, currentUser.role);
+
+            // 2. Add remark to the loan (flows to Client Update automatically)
+            const fullRemark = `[DL_RECEIVED] ${remarkText.trim()}`;
+            if (remarkText.trim() || ptpDate || followUpDate) {
+                const { PriorityLevel: PL } = await import('../types.ts');
+                const priority = ptpDate ? PL.TOP : PL.FOLLOW_UP;
+                await store.addRemark(
+                    dl.loanId,
+                    remarkText.trim() ? fullRemark : `[DL_RECEIVED] Demand Letter received on ${dateReceived}.`,
+                    dl.collectorName,
+                    priority,
+                    currentUser.username,
+                    currentUser.role,
+                    ptpDate || null,
+                    followUpDate || null
+                );
+            }
+
+            // 3. Save recurring schedule to the loan if enabled
+            const hasMonthly = schedType === 'monthly' && selectedDays.length > 0;
+            const hasWeekly = schedType === 'weekly' && selectedWeekDays.length > 0;
+            if (recurringEnabled && (hasMonthly || hasWeekly)) {
+                const nextDue = hasWeekly ? computeNextWeekly(selectedWeekDays) : computeNextMonthly(selectedDays);
+                const schedule = {
+                    enabled: true,
+                    type: schedType,
+                    days: selectedDays,
+                    weekDays: selectedWeekDays,
+                    nextDueDate: nextDue,
+                    lastPaidDate: undefined
+                };
+                await store.updateLoan(dl.loanId, { recurringSchedule: schedule, promiseToPayDate: nextDue }, currentUser.username, currentUser.role);
+            }
+
+            if (onSuccess) onSuccess('Demand Letter marked as received. Remarks logged to Client Updates.');
+            onClose();
+        } catch (err: any) {
+            setErrorMsg(err.message || 'Failed to save. Please check your connection.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn">
+            <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh] animate-slideUp border border-white/20 dark:border-slate-700">
+                {/* Header */}
+                <div className="bg-[#1e40af] dark:bg-slate-800 p-8 text-white shrink-0">
+                    <div className="flex justify-between items-start mb-1">
+                        <span className="text-[10px] font-black uppercase tracking-widest px-3 py-1 bg-blue-900/50 rounded-xl border border-white/10">Demand Letter Received</span>
+                        <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-xl transition-all">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <h3 className="text-2xl font-black tracking-tight mt-3">{dl.borrowerName}</h3>
+                    <p className="text-blue-200/60 font-bold text-xs uppercase tracking-widest mt-1">{dl.type} · {dl.collectorName}</p>
+                </div>
+
+                {/* Scrollable Body */}
+                <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 p-6 space-y-4">
+
+                    {/* Date Received */}
+                    <div className="group relative bg-[#ECFDF5] border-2 border-[#6EE7B7] p-4 rounded-[12px] shadow-sm">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl bg-emerald-200 text-emerald-700 flex items-center justify-center shadow-inner">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                </div>
+                                <div>
+                                    <p className="text-sm font-black text-emerald-900 uppercase tracking-tight">Date Received</p>
+                                    <p className="text-[10px] font-medium text-slate-500">When borrower received this letter</p>
+                                </div>
+                            </div>
+                            <input
+                                type="date"
+                                className="bg-white border border-slate-200 rounded-[8px] px-4 py-2 text-xs font-black text-emerald-900 focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                                value={dateReceived}
+                                onChange={e => setDateReceived(e.target.value)}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Auto Follow-up Date */}
+                    <div className="group relative bg-[#EFF6FF] border-2 border-[#93C5FD] p-4 rounded-[12px] shadow-sm">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl bg-blue-200 text-blue-700 flex items-center justify-center shadow-inner">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                </div>
+                                <div>
+                                    <p className="text-sm font-black text-blue-900 uppercase tracking-tight flex items-center gap-2">
+                                        Follow-up Date
+                                        <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">AUTO</span>
+                                    </p>
+                                    <p className="text-[10px] font-medium text-slate-500">{dl.type === DemandLetterType.THIRD ? '+5 days' : '+10 days'} from receipt</p>
+                                </div>
+                            </div>
+                            <input
+                                type="date"
+                                className="bg-white border border-slate-200 rounded-[8px] px-4 py-2 text-xs font-black text-blue-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                                value={followUpDate}
+                                onChange={e => setFollowUpDate(e.target.value)}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Promise to Pay */}
+                    <div className="group relative bg-[#FFFBEB] border-2 border-[#FCD34D] p-4 rounded-[12px] shadow-sm">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl bg-amber-200 text-amber-700 flex items-center justify-center shadow-inner">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                </div>
+                                <div>
+                                    <p className="text-sm font-black text-amber-900 uppercase tracking-tight">Promise to Pay (PTP)</p>
+                                    <p className="text-[10px] font-medium text-slate-500">Sets borrower commitment date</p>
+                                </div>
+                            </div>
+                            <input
+                                type="date"
+                                className="bg-white border border-slate-200 rounded-[8px] px-4 py-2 text-xs font-black text-amber-900 focus:ring-2 focus:ring-amber-500/20 outline-none"
+                                value={ptpDate}
+                                onChange={e => setPtpDate(e.target.value)}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Remarks Textarea */}
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block px-1">Field Remarks</label>
+                        <textarea
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-3xl px-6 py-4 focus:ring-2 focus:ring-blue-500 font-medium text-slate-700 dark:text-slate-300 h-28 outline-none resize-none transition-all placeholder:text-slate-300"
+                            placeholder="Notes on borrower response, commitment, or interaction..."
+                            value={remarkText}
+                            onChange={e => setRemarkText(e.target.value)}
+                        />
+                    </div>
+
+                    {/* Recurring Schedule */}
+                    <div className={`group relative p-4 rounded-[12px] shadow-sm transition-all border-2 ${recurringEnabled ? 'bg-violet-50 border-violet-300' : 'bg-slate-50 border-slate-200'}`}>
+                        <div className="flex items-center justify-between gap-4 mb-3">
+                            <div className="flex items-center gap-4">
+                                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-inner ${recurringEnabled ? 'bg-violet-200 text-violet-700' : 'bg-slate-200 text-slate-500'}`}>
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                </div>
+                                <div>
+                                    <p className={`text-sm font-black uppercase tracking-tight ${recurringEnabled ? 'text-violet-900' : 'text-slate-600'}`}>Recurring Schedule</p>
+                                    <p className="text-[10px] font-medium text-slate-500">Auto-track repeating payment dates</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setRecurringEnabled(!recurringEnabled)}
+                                className={`relative w-12 h-6 rounded-full transition-all duration-300 ${recurringEnabled ? 'bg-violet-600' : 'bg-slate-300'}`}
+                            >
+                                <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all duration-300 ${recurringEnabled ? 'left-[26px]' : 'left-0.5'}`}></span>
+                            </button>
+                        </div>
+
+                        {recurringEnabled && (
+                            <div className="space-y-4 animate-fadeIn">
+                                {/* Mode Segmented Toggle */}
+                                <div className="flex bg-slate-200/50 p-1 rounded-xl">
+                                    <button type="button" onClick={() => setSchedType('monthly')} className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${schedType === 'monthly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Monthly</button>
+                                    <button type="button" onClick={() => setSchedType('weekly')} className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${schedType === 'weekly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Weekly</button>
+                                </div>
+
+                                {schedType === 'monthly' ? (
+                                    <>
+                                        <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest">Select days of the month</p>
+                                        <div className="grid grid-cols-7 gap-1.5">
+                                            {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                                                <button key={day} type="button" onClick={() => toggleDay(day)} className={`w-full aspect-square rounded-lg text-[11px] font-black transition-all duration-200 border ${selectedDays.includes(day) ? 'bg-violet-600 text-white border-violet-700 shadow-sm scale-105' : 'bg-white text-slate-500 border-slate-200 hover:border-violet-300 hover:bg-violet-50'}`}>{day}</button>
+                                            ))}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest">Select days of the week</p>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((name, idx) => (
+                                                <button key={idx} type="button" onClick={() => toggleWeekDay(idx)} className={`py-2.5 rounded-lg text-[11px] font-black transition-all duration-200 border ${selectedWeekDays.includes(idx) ? 'bg-violet-600 text-white border-violet-700 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:border-violet-300 hover:bg-violet-50'}`}>{name}</button>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+
+                                {/* Live Preview */}
+                                {((schedType === 'monthly' && selectedDays.length > 0) || (schedType === 'weekly' && selectedWeekDays.length > 0)) && (
+                                    <div className="bg-white p-3 rounded-xl border border-violet-200 space-y-1">
+                                        <p className="text-[11px] font-black text-violet-800">
+                                            📅 {schedType === 'monthly'
+                                                ? `Every ${selectedDays.map(d => formatSuffix(d)).join(' & ')} of the month`
+                                                : `Every ${selectedWeekDays.map(n => ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][n]).join(' & ')}`}
+                                        </p>
+                                        <p className="text-[10px] font-bold text-violet-500">
+                                            Next Due: {new Date(schedType === 'monthly' ? computeNextMonthly(selectedDays) : computeNextWeekly(selectedWeekDays)).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {errorMsg && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
+                            <svg className="w-4 h-4 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <p className="text-xs text-red-600 font-medium">{errorMsg}</p>
+                        </div>
+                    )}
+
+                    <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="w-full py-5 bg-blue-700 text-white font-black rounded-[2rem] shadow-xl shadow-blue-900/20 hover:bg-blue-800 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl active:scale-[0.98] disabled:opacity-50 uppercase tracking-widest text-xs"
+                    >
+                        {isSubmitting ? 'Saving...' : '✉️ Confirm & Log Received'}
+                    </button>
                 </form>
             </div>
         </div>

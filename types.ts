@@ -101,6 +101,15 @@ export interface HistoryRecord {
   module: string;
 }
 
+export interface RecurringSchedule {
+  enabled: boolean;
+  type?: 'monthly' | 'weekly'; // Optional for backwards compatibility
+  days: number[];          // e.g. [15, 30]
+  weekDays?: number[];     // e.g. [0, 6] (0 = Sunday, 6 = Saturday)
+  nextDueDate: string;     // ISO date string, auto-calculated
+  lastPaidDate?: string;   // ISO date of last satisfying payment
+}
+
 export interface Loan {
   id: string;
   collector: string;
@@ -126,6 +135,7 @@ export interface Loan {
   contactNumber?: string;
   promiseToPayDate?: string | null;
   followUpDate?: string | null;
+  recurringSchedule?: RecurringSchedule | null;
   branch: Branch;
 }
 
