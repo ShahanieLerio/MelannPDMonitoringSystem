@@ -16,8 +16,33 @@ const AGING_BUCKETS = [
     '120+ Days'
 ];
 
+type DateFilterMode = 'all' | 'specific' | 'range';
+
+const toDateOnly = (value: string) => {
+    if (!value) return '';
+    return value.includes('T') ? value.split('T')[0] : value;
+};
+
+const isWithinDateFilter = (dueDate: string, mode: DateFilterMode, fromDate: string, toDate: string) => {
+    if (mode === 'all') return true;
+
+    const loanDate = toDateOnly(dueDate);
+    if (!loanDate) return false;
+
+    if (mode === 'specific') {
+        return fromDate ? loanDate === fromDate : true;
+    }
+
+    if (fromDate && loanDate < fromDate) return false;
+    if (toDate && loanDate > toDate) return false;
+    return true;
+};
+
 const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
     const [loans, setLoans] = useState(store.getLoans(selectedBranch));
+    const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>('all');
+    const [fromDate, setFromDate] = useState('');
+    const [toDate, setToDate] = useState('');
 
     useEffect(() => {
         setLoans(store.getLoans(selectedBranch));
@@ -35,6 +60,7 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
         loans.forEach(loan => {
             if (loan.outstandingBalance <= 0) return;
             if (!loan.dueDate) return;
+            if (!isWithinDateFilter(loan.dueDate, dateFilterMode, fromDate, toDate)) return;
 
             const dueDate = new Date(loan.dueDate);
             const diffTime = today.getTime() - dueDate.getTime();
@@ -88,7 +114,23 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
             .sort((a, b) => a.collector.localeCompare(b.collector));
 
         return { collectors: processedCollectors, grandTotals: totals };
-    }, [loans]);
+    }, [loans, dateFilterMode, fromDate, toDate]);
+
+    const clearDateFilter = () => {
+        setDateFilterMode('all');
+        setFromDate('');
+        setToDate('');
+    };
+
+    const handleModeChange = (mode: DateFilterMode) => {
+        setDateFilterMode(mode);
+        if (mode === 'all') {
+            setFromDate('');
+            setToDate('');
+        } else if (mode === 'specific') {
+            setToDate('');
+        }
+    };
 
     const getBucketColor = (bucket: string) => {
         if (bucket.includes('1-30')) return 'bg-emerald-400';
@@ -104,7 +146,7 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
         return '#ef4444'; // red-500
     };
 
-    if (collectors.length === 0) {
+    if (false && collectors.length === 0) {
         return (
             <div className="py-20 flex flex-col items-center justify-center bg-white dark:bg-slate-800 rounded-[2.5rem] border-2 border-dashed border-slate-100 dark:border-slate-700 animate-fadeIn">
                 <span className="text-6xl mb-6 opacity-20">📊</span>
@@ -117,11 +159,77 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
     return (
         <div className="space-y-12 animate-fadeIn">
             {/* HEADER */}
-            <div className="px-2">
-                <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight">Aging of Receivables</h2>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Breakdown of outstanding balances by aging category</p>
+            <div className="px-2 flex flex-col gap-5">
+                <div>
+                    <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight">Aging of Receivables</h2>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Breakdown of outstanding balances by aging category</p>
+                </div>
+
+                <div className="bg-white dark:bg-slate-800 rounded-[1.5rem] border border-slate-100 dark:border-slate-700 shadow-sm p-4 md:p-5">
+                    <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4">
+                        <div>
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Due Date Filter</p>
+                            <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 dark:bg-slate-900 p-1 border border-slate-100 dark:border-slate-700">
+                                {([
+                                    { value: 'all', label: 'All Dates' },
+                                    { value: 'specific', label: 'Specific Date' },
+                                    { value: 'range', label: 'Date Range' },
+                                ] as { value: DateFilterMode; label: string }[]).map(option => (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        onClick={() => handleModeChange(option.value)}
+                                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${dateFilterMode === option.value ? 'bg-[#064e3b] text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'}`}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[180px_180px_auto] gap-3 flex-1 xl:max-w-[520px]">
+                            <label className="flex flex-col gap-2">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{dateFilterMode === 'specific' ? 'Due Date' : 'From Date'}</span>
+                                <input
+                                    type="date"
+                                    value={fromDate}
+                                    disabled={dateFilterMode === 'all'}
+                                    onChange={(event) => setFromDate(event.target.value)}
+                                    className="h-11 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-300 px-4 rounded-xl outline-none shadow-sm disabled:opacity-50 disabled:cursor-not-allowed focus:border-emerald-600 transition-colors"
+                                />
+                            </label>
+
+                            <label className="flex flex-col gap-2">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">To Date</span>
+                                <input
+                                    type="date"
+                                    value={toDate}
+                                    disabled={dateFilterMode !== 'range'}
+                                    onChange={(event) => setToDate(event.target.value)}
+                                    className="h-11 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-300 px-4 rounded-xl outline-none shadow-sm disabled:opacity-50 disabled:cursor-not-allowed focus:border-emerald-600 transition-colors"
+                                />
+                            </label>
+
+                            <button
+                                type="button"
+                                onClick={clearDateFilter}
+                                className="h-11 self-end px-5 rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
+            {collectors.length === 0 ? (
+                <div className="py-20 flex flex-col items-center justify-center bg-white dark:bg-slate-800 rounded-[2.5rem] border-2 border-dashed border-slate-100 dark:border-slate-700 animate-fadeIn">
+                    <span className="text-6xl mb-6 opacity-20">Chart</span>
+                    <h3 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">No receivables data available</h3>
+                    <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mt-2">Try selecting a different branch or date filter</p>
+                </div>
+            ) : (
+            <>
             {/* SUMMARY DASHBOARD */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <SummaryCard label="Total Accounts" value={grandTotals.accounts.toString()} icon="👥" color="text-slate-600 dark:text-slate-200" />
@@ -293,6 +401,8 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
                     );
                 })}
             </div>
+            </>
+            )}
         </div>
     );
 };

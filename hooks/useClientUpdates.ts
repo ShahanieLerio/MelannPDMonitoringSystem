@@ -59,7 +59,20 @@ export const useClientUpdates = (selectedBranch: Branch) => {
     const latestRemark = l.remarks?.length > 0 ? l.remarks[l.remarks.length - 1] : null;
     const remarkPtpToday = !!latestRemark?.ptpDate && latestRemark.ptpDate === todayStr && isUnpaid;
     const remarkFuToday = !!latestRemark?.followUpDate && latestRemark.followUpDate === todayStr && isUnpaid;
-    return isTopAi || isDueToday || isFollowUpToday || remarkPtpToday || remarkFuToday;
+
+    // Recurring Schedule: Check if TODAY is a scheduled due day
+    // This prevents loans from falling into Close Monitoring on their actual due day
+    let isRecurringDueToday = false;
+    if (l.recurringSchedule?.enabled && isUnpaid) {
+      const today = new Date();
+      if (l.recurringSchedule.type === 'weekly' && l.recurringSchedule.weekDays?.length > 0) {
+        isRecurringDueToday = l.recurringSchedule.weekDays.includes(today.getDay());
+      } else if (l.recurringSchedule.type === 'monthly' && l.recurringSchedule.days?.length > 0) {
+        isRecurringDueToday = l.recurringSchedule.days.includes(today.getDate());
+      }
+    }
+
+    return isTopAi || isDueToday || isFollowUpToday || remarkPtpToday || remarkFuToday || isRecurringDueToday;
   };
 
   const topPriorityList = useMemo(() => {

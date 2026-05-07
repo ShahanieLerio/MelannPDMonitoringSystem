@@ -1,4 +1,5 @@
-import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule } from '../types';
+import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction } from '../types';
+import { dedupeCollectors, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorKey } from './collectorUtils';
 const API_URL = 'http://localhost:5000/api';
 
 const INITIAL_USERS: User[] = [
@@ -79,7 +80,12 @@ class DataStore {
   private users: User[] = [];
   private collectors: Collector[] = [];
   private demandLetters: DemandLetter[] = [];
+  private visitLogs: VisitLog[] = [];
   private listeners: (() => void)[] = [];
+
+  private getCollectorDisplayName(collector?: string | null) {
+    return getCollectorDisplayName(collector, this.collectors);
+  }
 
   constructor() {
     this.loadFromLocalStorage();
@@ -89,14 +95,15 @@ class DataStore {
   async refresh() {
     try {
       console.log('Syncing with Local PostgreSQL via Bridge...');
-      const [dbLoans, dbUsers, dbCollectors, dbDLs, dbPayments, dbRemarks, dbLogs] = await Promise.all([
+      const [dbLoans, dbUsers, dbCollectors, dbDLs, dbPayments, dbRemarks, dbLogs, dbVisitLogs] = await Promise.all([
         fetch(`${API_URL}/loans`).then(r => r.json()),
         fetch(`${API_URL}/users`).then(r => r.json()),
         fetch(`${API_URL}/collectors`).then(r => r.json()),
         fetch(`${API_URL}/demand_letters`).then(r => r.json()),
         fetch(`${API_URL}/payments`).then(r => r.json()),
         fetch(`${API_URL}/remarks`).then(r => r.json()),
-        fetch(`${API_URL}/activity_logs`).then(r => r.json())
+        fetch(`${API_URL}/activity_logs`).then(r => r.json()),
+        fetch(`${API_URL}/visit_logs`).then(r => r.json())
       ]);
 
       // Mapping logic...
@@ -107,9 +114,11 @@ class DataStore {
         return val;
       };
 
+      const mappedCollectors = dedupeCollectors(dbCollectors as unknown as Collector[]);
+
       const mappedLoans = dbLoans.map((l: any) => ({
         id: l.id,
-        collector: l.collector || 'UNASSIGNED',
+        collector: getCollectorDisplayName(l.collector || 'UNASSIGNED', mappedCollectors),
         code: l.code || 'N/A',
         firstName: l.first_name || '',
         lastName: l.last_name || '',
@@ -202,11 +211,11 @@ class DataStore {
         createdBy: u.created_by
       }));
 
-      this.collectors = dbCollectors as unknown as Collector[];
+      this.collectors = mappedCollectors;
       this.demandLetters = dbDLs.map((d: any) => ({
         id: d.id,
         loanId: d.loan_id,
-        collectorName: d.collector_name,
+        collectorName: getCollectorDisplayName(d.collector_name, mappedCollectors),
         borrowerName: d.borrower_name,
         type: d.type,
         datePrepared: d.date_prepared,
@@ -216,6 +225,18 @@ class DataStore {
         remarks: d.remarks,
         branch: d.branch
       })) as unknown as DemandLetter[];
+
+      this.visitLogs = (dbVisitLogs || []).map((v: any) => ({
+        id: v.id,
+        loanId: v.loan_id,
+        visitDate: v.visit_date,
+        collectorNotes: v.collector_notes,
+        clientComment: v.client_comment || '',
+        visitedByCollector: v.visited_by_collector || false,
+        action: v.action || VisitLogAction.LOG_ONLY,
+        loggedBy: v.logged_by,
+        timestamp: v.timestamp
+      })) as VisitLog[];
 
     } catch (err) {
       console.error('DB Sync Error, falling back to LocalStorage:', err);
@@ -243,7 +264,7 @@ class DataStore {
     const savedDemandLetters = localStorage.getItem('melann_demand_letters');
     this.loans = savedLoans ? JSON.parse(savedLoans).map((l: any) => ({ ...l, history: l.history || [] })) : INITIAL_LOANS.map(l => ({ ...l, history: [] }));
     this.users = savedUsers ? JSON.parse(savedUsers).map((u: any) => ({ ...u, statusHistory: u.statusHistory || [] })) : INITIAL_USERS;
-    this.collectors = savedCollectors ? JSON.parse(savedCollectors) : INITIAL_COLLECTORS;
+    this.collectors = dedupeCollectors(savedCollectors ? JSON.parse(savedCollectors) : INITIAL_COLLECTORS);
     this.demandLetters = savedDemandLetters ? JSON.parse(savedDemandLetters) : [];
   }
 
@@ -363,18 +384,23 @@ class DataStore {
   }
 
   getCollectors(branch?: Branch) {
-    if (!branch || branch === Branch.ALL) return this.collectors;
-    return this.collectors.filter(c => c.branch === branch);
+    const collectors = dedupeCollectors(this.collectors);
+    if (!branch || branch === Branch.ALL) return collectors;
+    return collectors.filter(c => c.branch === branch);
   }
 
   async addCollector(name: string, branch: Branch, address?: string, nickname?: string) {
+    if (hasDuplicateCollectorIdentity(this.collectors, { name, nickname })) {
+      throw new Error('Collector already exists. Please use the existing collector record.');
+    }
+
     const id = Math.random().toString(36).substring(2, 9);
     const newCollector: Collector = { id, name, nickname, address, branch };
     
     // Await server confirmation
     await this.api('/collectors', 'POST', newCollector);
 
-    this.collectors.push(newCollector);
+    this.collectors = dedupeCollectors([...this.collectors, newCollector]);
     this.save();
     return newCollector;
   }
@@ -382,6 +408,10 @@ class DataStore {
   async updateCollector(id: string, name: string, branch: Branch, address?: string, nickname?: string) {
     const index = this.collectors.findIndex(c => c.id === id);
     if (index !== -1) {
+      if (hasDuplicateCollectorIdentity(this.collectors, { name, nickname }, id)) {
+        throw new Error('Collector already exists. Please use the existing collector record.');
+      }
+
       const oldName = this.collectors[index].name;
       const oldNick = this.collectors[index].nickname;
       
@@ -768,7 +798,24 @@ class DataStore {
     // Sync loan status and totals
     loan.runningBalance = finalRunning;
     loan.amountCollected = totalCollected;
-    loan.status = finalRunning <= 0 ? MovingStatus.PAID : (loan.status === MovingStatus.PAID ? MovingStatus.MOVING : loan.status);
+    
+    // Auto status determination:
+    if (finalRunning <= 0) {
+      loan.status = MovingStatus.PAID;
+    } else if (activePayments.length === 0) {
+      loan.status = MovingStatus.NMSR;
+    } else {
+      const latestPayment = activePayments[activePayments.length - 1]; // activePayments is sorted by date ASC
+      const latestDate = new Date(latestPayment.date).getTime();
+      const now = new Date().getTime();
+      const msIn30Days = 30 * 24 * 60 * 60 * 1000;
+      
+      if (now - latestDate <= msIn30Days) {
+        loan.status = MovingStatus.MOVING;
+      } else {
+        loan.status = MovingStatus.NM;
+      }
+    }
 
     return loan;
   }
@@ -792,7 +839,10 @@ class DataStore {
         const lastDay = new Date(refYear, refMonth + 1, 0).getDate();
         const clampedDay = Math.min(day, lastDay);
         const candidate = new Date(refYear, refMonth, clampedDay);
-        return candidate.toISOString().split('T')[0];
+        const y = candidate.getFullYear();
+        const m = String(candidate.getMonth() + 1).padStart(2, '0');
+        const d = String(candidate.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
       }
     }
 
@@ -805,7 +855,10 @@ class DataStore {
     const lastDay = new Date(refYear, refMonth + 1, 0).getDate();
     const clampedDay = Math.min(sorted[0], lastDay);
     const candidate = new Date(refYear, refMonth, clampedDay);
-    return candidate.toISOString().split('T')[0];
+    const y = candidate.getFullYear();
+    const m = String(candidate.getMonth() + 1).padStart(2, '0');
+    const d = String(candidate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
   /**
@@ -820,13 +873,19 @@ class DataStore {
     for (const day of sorted) {
       if (day > currentDayOfWeek) {
         ref.setDate(ref.getDate() + (day - currentDayOfWeek));
-        return ref.toISOString().split('T')[0];
+        const y = ref.getFullYear();
+        const m = String(ref.getMonth() + 1).padStart(2, '0');
+        const d = String(ref.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
       }
     }
     
     // If no day found in current week, wrap to the first available day next week
     ref.setDate(ref.getDate() + (7 - currentDayOfWeek + sorted[0]));
-    return ref.toISOString().split('T')[0];
+    const y = ref.getFullYear();
+    const m = String(ref.getMonth() + 1).padStart(2, '0');
+    const d = String(ref.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
   async recordPayment(loanId: string, amount: number, date: string, remarks: string, recorder: string, role: string, customOr?: string) {
@@ -872,8 +931,16 @@ class DataStore {
       }
     }
 
-    // Only update local memory after server success
-    this.loans[index].payments.push(newPayment);
+    // Server upserts by loan + payment date, so mirror that rule locally.
+    // Otherwise the browser can show duplicate same-day payments until refresh.
+    const existingSameDateIndex = this.loans[index].payments.findIndex(
+      p => p.loanId === loanId && p.date === date
+    );
+    if (existingSameDateIndex !== -1) {
+      this.loans[index].payments[existingSameDateIndex] = newPayment;
+    } else {
+      this.loans[index].payments.push(newPayment);
+    }
     const updatedLoan = this.recalculateLoanFinances(loanId);
 
     // Recurring Schedule Auto-Advance: If loan has an active recurring schedule,
@@ -965,7 +1032,7 @@ class DataStore {
     return allPayments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, limit);
   }
 
-  getDailyCollections(date: string, branch?: Branch) {
+  getDailyCollections(fromDate: string, toDate: string, branch?: Branch) {
     const filteredLoans = this.getLoans(branch);
     const transactions: {
       loanId: string;
@@ -980,12 +1047,17 @@ class DataStore {
 
     filteredLoans.forEach(loan => {
       loan.payments
-        .filter(p => p.date === date && p.status === PaymentStatus.GOOD)
+        .filter(p => {
+          if (p.status !== PaymentStatus.GOOD) return false;
+          if (fromDate && p.date < fromDate) return false;
+          if (toDate && p.date > toDate) return false;
+          return true;
+        })
         .forEach(p => {
           transactions.push({
             loanId: loan.id,
             borrowerName: loan.borrowerName,
-            collector: loan.collector,
+            collector: this.getCollectorDisplayName(loan.collector),
             area: loan.area || loan.city || 'N/A',
             city: loan.city,
             amount: p.amount,
@@ -998,11 +1070,12 @@ class DataStore {
     // Group by collector
     const collectorMap: Record<string, { collector: string; totalAccounts: number; totalAmount: number }> = {};
     transactions.forEach(t => {
-      if (!collectorMap[t.collector]) {
-        collectorMap[t.collector] = { collector: t.collector, totalAccounts: 0, totalAmount: 0 };
+      const collectorKey = normalizeCollectorKey(t.collector);
+      if (!collectorMap[collectorKey]) {
+        collectorMap[collectorKey] = { collector: collectorKey, totalAccounts: 0, totalAmount: 0 };
       }
-      collectorMap[t.collector].totalAccounts++;
-      collectorMap[t.collector].totalAmount += t.amount;
+      collectorMap[collectorKey].totalAccounts++;
+      collectorMap[collectorKey].totalAmount += t.amount;
     });
 
     const collectorSummary = Object.values(collectorMap).sort((a, b) => b.totalAmount - a.totalAmount);
@@ -1053,8 +1126,8 @@ class DataStore {
     const collectors: Record<string, CollectorPerformance> = {};
     const filteredLoans = this.getLoans(branch);
     filteredLoans.forEach(loan => {
-      const coll = loan.collector?.trim();
-      if (!coll || coll === 'N/A' || coll === 'undefined' || coll === 'UNASSIGNED') return;
+      const coll = this.getCollectorDisplayName(loan.collector);
+      if (!coll || coll === 'N/A' || coll === 'UNDEFINED' || coll === 'UNASSIGNED') return;
 
       if (!collectors[coll]) {
         collectors[coll] = { collector: coll, totalAccounts: 0, reportedAmount: 0, collectedAmount: 0, runningBalance: 0, collectionRate: 0, paidCount: 0 };
@@ -1072,6 +1145,61 @@ class DataStore {
   getDemandLetters(branch?: Branch) {
     if (!branch || branch === Branch.ALL) return this.demandLetters;
     return this.demandLetters.filter(dl => dl.branch === branch);
+  }
+
+  // Visit Log Methods (Close Monitoring)
+  getVisitLogs(loanId: string): VisitLog[] {
+    return this.visitLogs.filter(v => v.loanId === loanId).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  async addVisitLog(loanId: string, visitDate: string, collectorNotes: string, clientComment: string, visitedByCollector: boolean, action: VisitLogAction, loggedBy: string, role: string): Promise<VisitLog> {
+    const id = Math.random().toString(36).substring(2, 9);
+    const now = new Date().toISOString();
+    const newLog: VisitLog = {
+      id,
+      loanId,
+      visitDate,
+      collectorNotes,
+      clientComment,
+      visitedByCollector,
+      action,
+      loggedBy,
+      timestamp: now
+    };
+
+    // Persist to DB first
+    await this.api('/visit_logs', 'POST', newLog);
+    this.visitLogs.push(newLog);
+
+    // Record audit trail
+    const actionDesc = action === VisitLogAction.RETURN_TO_UPDATE
+      ? 'Visit logged → Returned to All Client Updates (new promise/follow-up needed)'
+      : action === VisitLogAction.MARK_SETTLED
+        ? 'Visit logged → Account marked as SETTLED'
+        : `Visit logged: ${collectorNotes.substring(0, 50)}`;
+    await this.recordHistory(loanId, 'Visit Log', actionDesc, loggedBy, role, 'Close Monitoring');
+
+    // Handle resolution actions
+    const loanIndex = this.loans.findIndex(l => l.id === loanId);
+    if (loanIndex !== -1) {
+      if (action === VisitLogAction.RETURN_TO_UPDATE) {
+        // Reset PTP/FollowUp dates so it goes back to the main update log
+        this.loans[loanIndex].promiseToPayDate = null;
+        this.loans[loanIndex].followUpDate = null;
+        this.loans[loanIndex].aiPriority = PriorityLevel.NEED_ATTENTION;
+        await this.api(`/loans/${loanId}`, 'PUT', this.loans[loanIndex]);
+      } else if (action === VisitLogAction.MARK_SETTLED) {
+        // Mark the account as Paid/Settled so it won't appear in any update queue
+        this.loans[loanIndex].status = MovingStatus.PAID;
+        this.loans[loanIndex].promiseToPayDate = null;
+        this.loans[loanIndex].followUpDate = null;
+        this.loans[loanIndex].aiPriority = PriorityLevel.LOWEST;
+        await this.api(`/loans/${loanId}`, 'PUT', this.loans[loanIndex]);
+      }
+    }
+
+    this.save();
+    return newLog;
   }
 
   getCollectorDistribution(branch?: Branch) {
@@ -1222,7 +1350,7 @@ class DataStore {
       if (targetBranch === Branch.ALL) {
           if (data.loans && Array.isArray(data.loans)) this.loans = data.loans.map((l: any) => ({ ...l, history: l.history || [] }));
           if (data.users && Array.isArray(data.users)) this.users = data.users;
-          if (data.collectors && Array.isArray(data.collectors)) this.collectors = data.collectors;
+          if (data.collectors && Array.isArray(data.collectors)) this.collectors = dedupeCollectors(data.collectors);
           if (data.demandLetters && Array.isArray(data.demandLetters)) this.demandLetters = data.demandLetters;
       } else {
           if (data.loans && Array.isArray(data.loans)) {
@@ -1235,7 +1363,7 @@ class DataStore {
           }
           if (data.collectors && Array.isArray(data.collectors)) {
               this.collectors = this.collectors.filter(c => c.branch !== targetBranch);
-              this.collectors = [...this.collectors, ...data.collectors];
+              this.collectors = dedupeCollectors([...this.collectors, ...data.collectors]);
           }
           if (data.demandLetters && Array.isArray(data.demandLetters)) {
               this.demandLetters = this.demandLetters.filter(d => d.branch !== targetBranch);

@@ -2,6 +2,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
 import { Loan, Collector, User, Branch } from '../types.ts';
+import { getCollectorDisplayName } from '../services/collectorUtils.ts';
+import { formatMMDDYYYY } from '../constants.tsx';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface CollectionSheetProps {
@@ -75,11 +77,12 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
 
   const collectorLoans = useMemo(() => {
     if (!selectedCollector) return [];
-    let list = loans.filter(l => l.collector === (selectedCollector.nickname || selectedCollector.name));
+    const selectedCollectorName = getCollectorDisplayName(selectedCollector.nickname || selectedCollector.name, collectors);
+    let list = loans.filter(l => getCollectorDisplayName(l.collector, collectors) === selectedCollectorName);
     if (filterFromDate) list = list.filter(l => l.dueDate >= filterFromDate);
     if (filterToDate) list = list.filter(l => l.dueDate <= filterToDate);
     return list;
-  }, [selectedCollector, loans, filterFromDate, filterToDate]);
+  }, [selectedCollector, loans, collectors, filterFromDate, filterToDate]);
 
   const groupedLoans = useMemo(() => {
     return collectorLoans.reduce((acc, loan) => {
@@ -362,7 +365,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
 
               <div className="mt-6 border-t border-slate-50 dark:border-slate-700/50 pt-4 flex justify-between items-center transition-colors duration-300">
                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 transition-colors duration-300">
-                  {loans.filter(l => l.collector === (c.nickname || c.name)).length} Accounts
+                  {loans.filter(l => getCollectorDisplayName(l.collector, collectors) === getCollectorDisplayName(c.nickname || c.name, collectors)).length} Accounts
                 </span>
                 <span className="bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0">Generate</span>
               </div>
@@ -515,7 +518,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-center font-black text-slate-400 dark:text-slate-500 transition-colors duration-300">{l.code}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 font-bold text-slate-700 dark:text-slate-300 transition-all duration-300 group-hover:font-black group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:underline decoration-emerald-500/30 underline-offset-4">{l.lastName.toUpperCase()}, {l.firstName.toUpperCase()}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-slate-500 dark:text-slate-400 font-medium italic transition-colors duration-300">{l.fullAddress || "—"}</td>
-                          <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-slate-600 dark:text-slate-400 font-bold transition-colors duration-300">{l.dueDate}</td>
+                          <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-slate-600 dark:text-slate-400 font-bold transition-colors duration-300">{formatMMDDYYYY(l.dueDate)}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-right font-black text-slate-800 dark:text-white transition-colors duration-300">₱{l.runningBalance.toLocaleString()}</td>
                           <td className="p-2 px-6">
                             <div className="flex items-center border border-slate-200 dark:border-slate-700 focus-within:border-emerald-600 dark:focus-within:border-emerald-500 rounded-xl bg-white dark:bg-slate-900 transition-all duration-300">
@@ -725,7 +728,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
                         <td style={{ border: '0.5pt solid #000', padding: '3px',     textAlign: 'center', fontWeight: '700', fontSize: '8pt' }}>{l.code}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px 4px', fontWeight: '700',   fontSize: '8.5pt', textTransform: 'uppercase', lineHeight: '1.2' }}>{l.lastName}, {l.firstName}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px 4px', fontSize: '7.5pt',   fontStyle: 'italic', lineHeight: '1.2' }}>{l.fullAddress || '—'}</td>
-                        <td style={{ border: '0.5pt solid #000', padding: '3px 4px', fontSize: '8pt',     lineHeight: '1.2' }}>{l.dueDate}</td>
+                        <td style={{ border: '0.5pt solid #000', padding: '3px 4px', fontSize: '8pt',     lineHeight: '1.2' }}>{formatMMDDYYYY(l.dueDate)}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px 4px', textAlign: 'right',  fontWeight: '800', fontSize: '8.5pt' }}>₱{l.runningBalance.toLocaleString()}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px',     backgroundColor: '#fff' }}>&nbsp;</td>
                       </tr>

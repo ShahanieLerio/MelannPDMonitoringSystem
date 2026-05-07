@@ -39,6 +39,35 @@ pool.connect((err, client, release) => {
 // Generic Query Handler
 const query = (text, params) => pool.query(text, params);
 
+const normalizeCollectorKey = (collector) =>
+    String(collector || '')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toUpperCase();
+
+const getCollectorIdentityCandidates = ({ name, nickname }) =>
+    [name, nickname]
+        .map(normalizeCollectorKey)
+        .filter(Boolean);
+
+const assertCollectorIsUnique = async ({ name, nickname }, excludeId) => {
+    const candidateKeys = new Set(getCollectorIdentityCandidates({ name, nickname }));
+    if (candidateKeys.size === 0) return;
+
+    const result = await query('SELECT id, name, nickname FROM collectors');
+    const duplicate = result.rows.find((collector) => {
+        if (excludeId && collector.id === excludeId) return false;
+        return getCollectorIdentityCandidates(collector).some(key => candidateKeys.has(key));
+    });
+
+    if (duplicate) {
+        const error = new Error('Collector already exists');
+        error.status = 409;
+        throw error;
+    }
+};
+
 // --- API ENDPOINTS ---
 
 // Users
@@ -130,12 +159,12 @@ app.post('/api/loans', async (req, res) => {
 
 app.put('/api/loans/:id', async (req, res) => {
     const { id } = req.params;
-    const { collector, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule } = req.body;
+    const { collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule } = req.body;
     try {
         const scheduleVal = recurringSchedule ? (typeof recurringSchedule === 'string' ? recurringSchedule : JSON.stringify(recurringSchedule)) : null;
         await query(
-            'UPDATE loans SET collector=$1, first_name=$2, last_name=$3, borrower_name=$4, due_date=$5, outstanding_balance=$6, amount_collected=$7, running_balance=$8, status=$9, location=$10, area=$11, city=$12, barangay=$13, full_address=$14, contact_number=$15, branch=$16, ai_priority=$17, promise_to_pay_date=$18, follow_up_date=$19, month_reported=$20, recurring_schedule=$21 WHERE id=$22',
-            [collector, firstName, lastName, borrowerName, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, monthReported ?? null, scheduleVal, id]
+            'UPDATE loans SET collector=$1, first_name=$2, last_name=$3, borrower_name=$4, due_date=$5, outstanding_balance=$6, amount_collected=$7, running_balance=$8, status=$9, location=$10, area=$11, city=$12, barangay=$13, full_address=$14, contact_number=$15, branch=$16, ai_priority=$17, promise_to_pay_date=$18, follow_up_date=$19, month_reported=$20, recurring_schedule=$21, code=$23 WHERE id=$22',
+            [collector, firstName, lastName, borrowerName, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, monthReported ?? null, scheduleVal, id, code ?? null]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -211,18 +240,20 @@ app.get('/api/collectors', async (req, res) => {
 app.post('/api/collectors', async (req, res) => {
     const { id, name, nickname, address, branch } = req.body;
     try {
+        await assertCollectorIsUnique({ name, nickname });
         await query('INSERT INTO collectors (id, name, nickname, address, branch) VALUES ($1, $2, $3, $4, $5)', [id, name, nickname, address, branch]);
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
 app.put('/api/collectors/:id', async (req, res) => {
     const { id } = req.params;
     const { name, nickname, address, branch } = req.body;
     try {
+        await assertCollectorIsUnique({ name, nickname }, id);
         await query('UPDATE collectors SET name=$1, nickname=$2, address=$3, branch=$4 WHERE id=$5', [name, nickname, address, branch, id]);
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
 app.delete('/api/collectors/:id', async (req, res) => {
@@ -305,6 +336,32 @@ app.post('/api/activity_logs', async (req, res) => {
         await query(
             'INSERT INTO activity_logs (id, loan_id, type, description, user_name, user_role, module, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
             [id, loan_id, type, description, user_name, user_role, module, timestamp]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Visit Logs (Close Monitoring)
+app.get('/api/visit_logs', async (req, res) => {
+    try {
+        const result = await query('SELECT * FROM visit_logs ORDER BY timestamp DESC');
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/visit_logs/:loanId', async (req, res) => {
+    try {
+        const result = await query('SELECT * FROM visit_logs WHERE loan_id = $1 ORDER BY timestamp DESC', [req.params.loanId]);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/visit_logs', async (req, res) => {
+    const { id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, loggedBy, timestamp } = req.body;
+    try {
+        await query(
+            'INSERT INTO visit_logs (id, loan_id, visit_date, collector_notes, client_comment, visited_by_collector, action, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+            [id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, loggedBy, timestamp]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }

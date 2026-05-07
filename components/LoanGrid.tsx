@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
 import { Loan, MovingStatus, LocationStatus, Branch, User } from '../types.ts';
-import { STATUS_COLORS, formatReportedMonth } from '../constants.tsx';
+import { STATUS_COLORS, formatReportedMonth, formatMMDDYYYY } from '../constants.tsx';
 import ClientModal from './ClientModal.tsx';
 import ClientFormModal from './ClientFormModal.tsx';
 import RemarksModal from './RemarksModal.tsx';
@@ -10,6 +10,7 @@ import HistoryModal from './HistoryModal.tsx';
 import ConfirmationModal from './ConfirmationModal.tsx';
 import BulkImportModal from './BulkImportModal.tsx';
 import MultiSelectFilter from './MultiSelectFilter.tsx';
+import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 
 interface LoanGridProps {
   currentUser: User;
@@ -95,11 +96,9 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
 
   // Dynamic filter options for MultiSelect
   const collectorOptions = useMemo(() => {
-    const uniqueNames = Array.from(new Set(loans.map(l => l.collector))).sort();
-    return uniqueNames.map(name => {
-      const coll = allCollectors.find(c => c.name === name);
-      return { value: name, label: coll?.nickname || name };
-    });
+    return Array.from(new Set(loans.map(l => getCollectorDisplayName(l.collector, allCollectors))))
+      .sort()
+      .map(name => ({ value: name, label: name }));
   }, [loans, allCollectors]);
 
   const areaOptions = useMemo(() =>
@@ -166,7 +165,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
       // 3. Multi-Select Filters Logic (OR logic within filter, AND logic between filters)
       // null means "All Selected", [] means "None Selected" (match nothing)
 
-      const matchCollector = filterCollectors === null || filterCollectors.includes(l.collector);
+      const matchCollector = filterCollectors === null || filterCollectors.includes(getCollectorDisplayName(l.collector, allCollectors));
       const matchLocation = filterLocations === null || filterLocations.includes(l.location);
 
       // Special handling for Status: if null (All), exclude PAID by default unless explicitly selected?
@@ -198,7 +197,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
     });
   }, [
     loans, searchTerm, filterStartDate, filterEndDate,
-    filterCollectors, filterLocations, filterStatuses, filterAreas, filterCities, filterBarangays
+    allCollectors, filterCollectors, filterLocations, filterStatuses, filterAreas, filterCities, filterBarangays
   ]);
 
   return (
@@ -329,7 +328,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
                   <td colSpan={14} className="py-20 text-center text-slate-400 italic font-medium">No records found for this branch matching current filters.</td>
                 </tr>
               ) : filteredLoans.map((l) => {
-                const collectorNick = allCollectors.find(c => c.name === l.collector)?.nickname || l.collector;
+                const collectorNick = getCollectorDisplayName(l.collector, allCollectors);
                 return (
                   <tr key={l.id} className="group hover:bg-emerald-50 dark:hover:bg-slate-700/50 transition-all duration-300">
                     <td className="sticky left-0 bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 font-bold z-10 px-3 py-4 text-emerald-700 dark:text-emerald-400 border-r border-slate-50 dark:border-slate-700 min-w-[100px] truncate transition-colors duration-300" title={l.collector}>{collectorNick}</td>
@@ -341,7 +340,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
                       {l.lastName}, {l.firstName}
                     </td>
                     <td className="px-3 py-4 text-slate-600 dark:text-slate-300">{formatReportedMonth(l.monthReported)}</td>
-                    <td className="px-3 py-4 text-slate-600 dark:text-slate-300 font-bold whitespace-nowrap">{l.dueDate}</td>
+                    <td className="px-3 py-4 text-slate-600 dark:text-slate-300 font-bold whitespace-nowrap">{formatMMDDYYYY(l.dueDate)}</td>
                     <td className="px-3 py-4 text-right text-slate-800 dark:text-white font-black">₱{l.outstandingBalance.toLocaleString()}</td>
                     <td className="px-3 py-4 text-right text-emerald-600 dark:text-emerald-400 font-black">₱{l.amountCollected.toLocaleString()}</td>
                     <td className={`px-3 py-4 text-right font-black ${l.runningBalance < 0 ? 'text-red-500 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
@@ -448,4 +447,3 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
 };
 
 export default LoanGrid;
-

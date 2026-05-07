@@ -9,14 +9,15 @@ interface DailyCollectionReportProps {
 
 const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedBranch }) => {
   const today = new Date().toISOString().split('T')[0];
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [data, setData] = useState(store.getDailyCollections(today, selectedBranch));
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
+  const [data, setData] = useState(store.getDailyCollections(today, today, selectedBranch));
   const [filterCollector, setFilterCollector] = useState('');
   const [filterArea, setFilterArea] = useState('');
 
   const refresh = useCallback(() => {
-    setData(store.getDailyCollections(selectedDate, selectedBranch));
-  }, [selectedDate, selectedBranch]);
+    setData(store.getDailyCollections(fromDate, toDate, selectedBranch));
+  }, [fromDate, toDate, selectedBranch]);
 
   useEffect(() => {
     refresh();
@@ -56,15 +57,28 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
         </div>
 
         {/* Date Selector */}
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">Report Date</label>
-          <input
-            type="date"
-            max={today}
-            value={selectedDate}
-            onChange={e => setSelectedDate(e.target.value)}
-            className="px-5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-sm text-slate-700 dark:text-slate-300 transition-colors duration-300"
-          />
+        <div className="flex flex-col sm:flex-row gap-4 items-end">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">From Date</label>
+            <input
+              type="date"
+              max={toDate || today}
+              value={fromDate}
+              onChange={e => setFromDate(e.target.value)}
+              className="px-5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-sm text-slate-700 dark:text-slate-300 transition-colors duration-300"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">To Date</label>
+            <input
+              type="date"
+              min={fromDate}
+              max={today}
+              value={toDate}
+              onChange={e => setToDate(e.target.value)}
+              className="px-5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-sm text-slate-700 dark:text-slate-300 transition-colors duration-300"
+            />
+          </div>
         </div>
       </div>
 
@@ -77,7 +91,9 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100 dark:text-emerald-200/70 mb-1 transition-colors duration-300">Grand Total Collected</p>
             <p className="text-3xl font-black transition-colors duration-300">{formatCurrency(data.grandTotal)}</p>
-            <p className="text-[10px] text-emerald-200 dark:text-emerald-400/70 mt-1 font-bold transition-colors duration-300">{formatDate(selectedDate)}</p>
+            <p className="text-[10px] text-emerald-200 dark:text-emerald-400/70 mt-1 font-bold transition-colors duration-300">
+              {fromDate === toDate ? formatDate(fromDate) : `${formatDate(fromDate)} – ${formatDate(toDate)}`}
+            </p>
           </div>
         </div>
         <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 flex items-center gap-6 transition-colors duration-300">
@@ -131,7 +147,7 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
             </table>
           ) : (
             <div className="py-20 text-center text-slate-400 dark:text-slate-500 italic text-[10px] font-black uppercase tracking-[0.2em] transition-colors duration-300">
-              No collections recorded for {formatDate(selectedDate)}.
+              No collections recorded for the selected date range.
             </div>
           )}
         </div>
@@ -199,7 +215,7 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
             </table>
           ) : (
             <div className="py-20 text-center text-slate-400 dark:text-slate-500 italic text-[10px] font-black uppercase tracking-[0.2em] transition-colors duration-300">
-              {data.transactions.length > 0 ? 'No matches for applied filters.' : `No transactions on ${formatDate(selectedDate)}.`}
+              {data.transactions.length > 0 ? 'No matches for applied filters.' : 'No transactions in the selected date range.'}
             </div>
           )}
         </div>

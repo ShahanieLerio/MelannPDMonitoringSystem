@@ -5,6 +5,7 @@ import { PriorityLevel, Branch, User, Loan } from '../types.ts';
 import ClientModal from './ClientModal.tsx';
 import ClientFormModal from './ClientFormModal.tsx';
 import RemarksModal from './RemarksModal.tsx';
+import VisitLogModal from './VisitLogModal.tsx';
 import { useClientUpdates } from '../hooks/useClientUpdates.ts';
 
 interface ClientUpdateProps {
@@ -33,6 +34,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
   const [editLoan, setEditLoan] = useState<Loan | null>(null);
   const [remarksLoan, setRemarksLoan] = useState<Loan | null>(null);
+  const [visitLogLoan, setVisitLogLoan] = useState<Loan | null>(null);
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -109,6 +111,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                onViewDetails={setSelectedLoan}
                onEdit={setEditLoan}
                onAddRemark={setRemarksLoan}
+               onVisitLog={setVisitLogLoan}
              />
           )}
         </section>
@@ -168,14 +171,30 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                       </div>
                     </div>
                     
-                    <div className="mt-6 pt-5 border-t border-slate-100 flex flex-col gap-4">
+                    <div className="mt-6 pt-5 border-t border-slate-100 flex flex-col gap-3">
                       <div className="flex justify-between items-center px-1">
                         <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Risk Exposure</div>
                         <div className="text-xl font-black text-[#111827]">₱{item.runningBalance.toLocaleString()}</div>
                       </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setSelectedLoan(item)}
+                          className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-300 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-700 hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-1.5"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                          Details
+                        </button>
+                        <button
+                          onClick={() => setRemarksLoan(item)}
+                          className="flex-1 py-2.5 bg-white border border-emerald-200 text-emerald-600 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-300 hover:bg-emerald-50 hover:border-emerald-300 hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-1.5 relative"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                          Remarks
+                        </button>
+                      </div>
                       <button
                         onClick={() => handleMarkCommitmentDone(item)}
-                        className="w-full py-3 bg-slate-900 border border-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-300 hover:bg-slate-800 hover:shadow-md hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-2"
+                        className="w-full py-2.5 bg-slate-900 border border-slate-800 text-white rounded-xl text-[9px] font-black uppercase tracking-[0.2em] transition-all duration-300 hover:bg-slate-800 hover:shadow-md hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-2"
                       >
                         <span className="bg-white/20 w-4 h-4 rounded-full flex items-center justify-center text-[8px]">✓</span> Settle Commitment
                       </button>
@@ -242,11 +261,29 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-3 text-[10px] text-[#6B7280] font-black uppercase tracking-[0.1em] border-t border-slate-100 pt-4 mt-auto">
-                      <div className="w-8 h-8 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700 font-black shadow-sm group-hover:scale-110 transition-transform">
-                        {item.loan.collector.charAt(0)}
+                    <div className="flex items-center justify-between text-[10px] text-[#6B7280] font-black uppercase tracking-[0.1em] border-t border-slate-100 pt-3 mt-auto">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700 font-black text-[9px] shadow-sm group-hover:scale-110 transition-transform">
+                          {item.loan.collector.charAt(0)}
+                        </div>
+                        <span className="text-[9px]">{item.loan.collector}</span>
                       </div>
-                      {item.loan.collector}
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setSelectedLoan(item.loan as unknown as Loan)}
+                          className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors"
+                          title="Client Details"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                        </button>
+                        <button
+                          onClick={() => setRemarksLoan(item.loan as unknown as Loan)}
+                          className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors"
+                          title="Remarks"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -308,6 +345,13 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
           loan={remarksLoan}
           currentUser={currentUser}
           onClose={() => { setRemarksLoan(null); refreshData(); }}
+        />
+      )}
+      {visitLogLoan && (
+        <VisitLogModal
+          loan={visitLogLoan}
+          currentUser={currentUser}
+          onClose={() => { setVisitLogLoan(null); refreshData(); }}
         />
       )}
     </div>
@@ -754,7 +798,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
   );
 }
 
-function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark }: { data: any[], onViewDetails: (l: any) => void, onEdit: (l: any) => void, onAddRemark: (l: any) => void }) {
+function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisitLog }: { data: any[], onViewDetails: (l: any) => void, onEdit: (l: any) => void, onAddRemark: (l: any) => void, onVisitLog: (l: any) => void }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState<'name' | 'days'>('days');
   const [sortDesc, setSortDesc] = useState(true);
@@ -799,19 +843,19 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark }: { da
   return (
     <div className="bg-white rounded-[2rem] border border-rose-200/60 overflow-hidden shadow-xl shadow-rose-900/5 animate-slideIn">
       {/* Table Toolbar */}
-      <div className="p-6 border-b border-rose-100 flex justify-between items-center bg-rose-50/30">
-        <h3 className="font-black text-rose-800 uppercase tracking-widest text-sm flex items-center gap-3">
-          <span className="bg-rose-100 text-rose-600 px-2 py-1 rounded border border-rose-200 shadow-sm">{sortedAndFiltered.length}</span>
+      <div className="px-5 py-3 border-b border-rose-100 flex justify-between items-center bg-rose-50/30">
+        <h3 className="font-black text-rose-800 uppercase tracking-widest text-xs flex items-center gap-2">
+          <span className="bg-rose-100 text-rose-600 px-2 py-0.5 rounded border border-rose-200 shadow-sm text-[10px]">{sortedAndFiltered.length}</span>
           Monitoring Cases
         </h3>
-        <div className="relative w-72">
+        <div className="relative w-64">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-rose-400">
-            <svg className="w-4 h-4 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            <svg className="w-3.5 h-3.5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
           </div>
           <input
             type="text"
             placeholder="Search Client or Collector..."
-            className="w-full pl-10 pr-4 py-2 bg-white border border-rose-200 rounded-xl focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none text-xs font-bold text-slate-700 shadow-sm transition-all placeholder:text-slate-400 placeholder:font-medium"
+            className="w-full pl-9 pr-3 py-1.5 bg-white border border-rose-200 rounded-lg focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none text-[11px] font-bold text-slate-700 shadow-sm transition-all placeholder:text-slate-400 placeholder:font-medium"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -822,22 +866,22 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark }: { da
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-rose-50 border-b border-rose-200 sticky top-0 z-10 text-left shadow-sm">
-              <th className="p-4 px-6 text-[10px] font-black text-rose-500 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-rose-100 transition-colors" onClick={() => handleSort('name')}>
+              <th className="py-2 px-4 text-[9px] font-black text-rose-500 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-rose-100 transition-colors" onClick={() => handleSort('name')}>
                 Client Details <SortIcon columnKey="name" />
               </th>
-              <th className="p-4 text-[10px] font-black text-rose-400 uppercase tracking-widest whitespace-nowrap">
+              <th className="py-2 px-3 text-[9px] font-black text-rose-400 uppercase tracking-widest whitespace-nowrap">
                 Collector
               </th>
-              <th className="p-4 text-[10px] font-black text-rose-400 uppercase tracking-widest min-w-[200px]">
+              <th className="py-2 px-3 text-[9px] font-black text-rose-400 uppercase tracking-widest min-w-[180px]">
                 Last Interaction
               </th>
-              <th className="p-4 text-[10px] font-black text-rose-400 uppercase tracking-widest">
+              <th className="py-2 px-3 text-[9px] font-black text-rose-400 uppercase tracking-widest">
                 Priority
               </th>
-              <th className="p-4 text-center text-[10px] font-black text-rose-400 uppercase tracking-widest cursor-pointer hover:bg-rose-100/50 transition-colors" onClick={() => handleSort('days')}>
+              <th className="py-2 px-3 text-center text-[9px] font-black text-rose-400 uppercase tracking-widest cursor-pointer hover:bg-rose-100/50 transition-colors" onClick={() => handleSort('days')}>
                 Days Since Last Payment <SortIcon columnKey="days" />
               </th>
-              <th className="p-4 px-6 text-right text-[10px] font-black text-rose-400 uppercase tracking-widest">
+              <th className="py-2 px-4 text-right text-[9px] font-black text-rose-400 uppercase tracking-widest">
                 Action
               </th>
             </tr>
@@ -866,14 +910,14 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark }: { da
               return (
                 <tr key={row.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-rose-50/80 transition-colors group`}>
                   {/* Client Name & ID */}
-                  <td className="p-4 px-6 align-top">
+                  <td className="py-2 px-4 align-middle">
                     <div className="flex flex-col">
-                      <span className="font-black text-slate-800 text-sm leading-tight mb-1 group-hover:text-rose-700 transition-colors">{row.borrowerName}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
+                      <span className="font-black text-slate-800 text-[13px] leading-tight group-hover:text-rose-700 transition-colors">{row.borrowerName}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
                         {row.recurringSchedule?.enabled && (
-                          <span className="bg-violet-50 text-violet-700 text-[9px] font-black uppercase px-2 py-0.5 rounded-sm border border-violet-200 shadow-sm">
-                            🔄 Every {row.recurringSchedule.type === 'weekly' 
+                          <span className="bg-violet-50 text-violet-700 text-[8px] font-black uppercase px-1.5 py-0 rounded-sm border border-violet-200">
+                            🔄 {row.recurringSchedule.type === 'weekly' 
                               ? row.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ') 
                               : row.recurringSchedule.days?.join(' & ')}
                           </span>
@@ -883,47 +927,47 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark }: { da
                   </td>
 
                   {/* Collector */}
-                  <td className="p-4 align-top">
-                    <span className="bg-slate-50 text-slate-600 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border border-slate-200">
+                  <td className="py-2 px-3 align-middle">
+                    <span className="bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-slate-200">
                       {row.collector}
                     </span>
                   </td>
 
                   {/* Interaction */}
-                  <td className="p-4 align-top">
+                  <td className="py-2 px-3 align-middle">
                     <div className="relative group/tooltip">
-                      <p className="text-[11px] text-slate-600 font-bold italic line-clamp-2 leading-relaxed">
+                      <p className="text-[11px] text-slate-600 font-bold italic line-clamp-1 leading-snug">
                         "{cleanText}"
                       </p>
-                      {cleanText.length > 60 && (
+                      {cleanText.length > 40 && (
                         <div className="absolute left-0 bottom-full mb-2 hidden group-hover/tooltip:block w-72 bg-slate-800 text-white text-[10px] font-medium p-3 rounded-xl shadow-2xl z-50">
                           {cleanText}
                           <div className="absolute top-full left-4 -mt-1 border-4 border-transparent border-t-slate-800"></div>
                         </div>
                       )}
                     </div>
-                    <span className="mt-1 text-[8px] font-black uppercase text-slate-400 block tracking-widest">
+                    <span className="text-[8px] font-black uppercase text-slate-400 block tracking-widest">
                        {new Date(row.latestRemark.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                     </span>
                   </td>
 
                   {/* Priority */}
-                  <td className="p-4 align-top whitespace-nowrap">
+                  <td className="py-2 px-3 align-middle whitespace-nowrap">
                     <PriorityBadge level={row.aiPriority || PriorityLevel.LOWEST} />
                   </td>
 
                   {/* Days Without Payment & Status */}
-                  <td className="p-4 align-top text-center w-48">
-                    <div className="flex flex-col items-center justify-center gap-1.5">
-                       <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border bg-white ${daysColor.split(' ')[0]} ${daysColor.split(' ')[2]}`}>
+                  <td className="py-2 px-3 align-middle text-center w-44">
+                    <div className="flex flex-col items-center justify-center gap-0.5">
+                       <span className={`px-1.5 py-0 rounded text-[9px] font-black uppercase tracking-widest border bg-white ${daysColor.split(' ')[0]} ${daysColor.split(' ')[2]}`}>
                          {statusBadge}
                        </span>
-                       <div className={`px-3 py-1 rounded-lg border flex items-center justify-center gap-1.5 ${daysColor}`}>
-                          <span className="text-sm font-black leading-none">{row.daysWithoutPayment === -1 ? '?' : row.daysWithoutPayment}</span>
-                          <span className="text-[8px] font-black uppercase tracking-widest mt-0.5 opacity-80">Days</span>
+                       <div className={`px-2 py-0.5 rounded-md border flex items-center justify-center gap-1 ${daysColor}`}>
+                          <span className="text-xs font-black leading-none">{row.daysWithoutPayment === -1 ? '?' : row.daysWithoutPayment}</span>
+                          <span className="text-[7px] font-black uppercase tracking-widest opacity-80">Days</span>
                        </div>
                        {row.lastPaymentDateStr && (
-                          <span className="text-[8px] font-bold text-slate-400 tracking-wider">
+                          <span className="text-[7px] font-bold text-slate-400 tracking-wider">
                             Last: {row.lastPaymentDateStr}
                           </span>
                        )}
@@ -931,22 +975,30 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark }: { da
                   </td>
 
                   {/* Action */}
-                  <td className="p-4 px-6 align-top text-right">
-                     <div className="flex justify-end gap-1">
+                  <td className="py-2 px-4 align-middle text-right">
+                     <div className="flex justify-end gap-0.5">
+                        <button
+                          onClick={() => onVisitLog(row)}
+                          className="p-1.5 text-rose-400 hover:text-rose-700 hover:bg-rose-100 rounded-md transition-colors relative group/vl"
+                          title="Visit Log"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                          <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded opacity-0 group-hover/vl:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">Visit Log</span>
+                        </button>
                         <button
                           onClick={() => onAddRemark(row)}
-                          className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors relative"
+                          className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100 rounded-md transition-colors relative"
                           title="Remarks"
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
-                          {row.remarks && row.remarks.length > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-800"></span>}
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                          {row.remarks && row.remarks.length > 0 && <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full border border-white"></span>}
                         </button>
                         <button
                           onClick={() => onViewDetails(row)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-100 rounded-lg transition-colors"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-100 rounded-md transition-colors"
                           title="Client Details"
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
                         </button>
                       </div>
                   </td>

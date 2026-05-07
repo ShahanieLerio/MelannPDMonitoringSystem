@@ -1,7 +1,8 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
 import { DemandLetter, DemandLetterType, DemandLetterStatus, PriorityLevel, Branch, User } from '../types.ts';
+import { formatMMDDYYYY } from '../constants.tsx';
+import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
 import SuccessModal from './SuccessModal.tsx';
 
@@ -16,6 +17,9 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
     const [filterCollector, setFilterCollector] = useState('');
     const [filterType, setFilterType] = useState<DemandLetterType | 'For Legal Action'>(DemandLetterType.FIRST);
     const [filterStatus, setFilterStatus] = useState('');
+
+    const [sortColumn, setSortColumn] = useState<string>('');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingDL, setEditingDL] = useState<DemandLetter | null>(null);
@@ -62,8 +66,11 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
         return () => unsubscribe();
     }, [selectedBranch]);
 
-    const collectors = Array.from(new Set(store.getLoans(selectedBranch).map(l => l.collector))).sort();
     const loans = store.getLoans(selectedBranch);
+    const collectorDirectory = store.getCollectors(Branch.ALL);
+    const collectors = Array.from(new Set(
+        loans.map(l => getCollectorDisplayName(l.collector, collectorDirectory))
+    )).sort();
 
     const augmentedDLs = useMemo(() => {
         return demandLetters.map(dl => {
@@ -123,7 +130,7 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
     const filteredDLs = useMemo(() => {
         return augmentedDLs.filter(dl => {
             const matchSearch = dl.borrowerName.toLowerCase().includes(searchTerm.toLowerCase());
-            const matchCollector = filterCollector === '' || dl.collectorName === filterCollector;
+            const matchCollector = filterCollector === '' || getCollectorDisplayName(dl.collectorName, collectorDirectory) === filterCollector;
             
             let matchType = false;
             if (filterType === 'For Legal Action') {
@@ -137,7 +144,54 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
             
             return matchSearch && matchCollector && matchType && matchStatus;
         });
-    }, [augmentedDLs, searchTerm, filterCollector, filterType, filterStatus]);
+    }, [augmentedDLs, searchTerm, filterCollector, filterType, filterStatus, collectorDirectory]);
+
+    const sortedDLs = useMemo(() => {
+        if (!sortColumn) return filteredDLs;
+        return [...filteredDLs].sort((a, b) => {
+            let valA: string | undefined = undefined;
+            let valB: string | undefined = undefined;
+
+            if (sortColumn === 'datePrepared') {
+                valA = a.datePrepared;
+                valB = b.datePrepared;
+            } else if (sortColumn === 'dateReceived') {
+                valA = a.dateReceived;
+                valB = b.dateReceived;
+            } else if (sortColumn === 'followUpDate') {
+                valA = a.followUpDate;
+                valB = b.followUpDate;
+            }
+
+            if (!valA && !valB) return 0;
+            if (!valA) return sortDirection === 'asc' ? 1 : -1;
+            if (!valB) return sortDirection === 'asc' ? -1 : 1;
+
+            if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+            if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }, [filteredDLs, sortColumn, sortDirection]);
+
+    const handleSort = (column: string) => {
+        if (sortColumn === column) {
+            setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortColumn(column);
+            setSortDirection('desc');
+        }
+    };
+
+    const SortIcon = ({ column }: { column: string }) => {
+        if (sortColumn !== column) return (
+            <svg className="w-3 h-3 ml-1 text-slate-300 dark:text-slate-600 inline-block opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"></path></svg>
+        );
+        return sortDirection === 'asc' ? (
+            <svg className="w-3 h-3 ml-1 text-slate-500 dark:text-slate-400 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7"></path></svg>
+        ) : (
+            <svg className="w-3 h-3 ml-1 text-slate-500 dark:text-slate-400 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+        );
+    };
 
     const handleOpenAddModal = () => {
         setEditingDL(null);
@@ -151,6 +205,22 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
 
     const handleReceive = (dl: any) => {
         setReceivingDL(dl);
+    };
+
+    const handleSettle = (dl: DemandLetter) => {
+        askConfirm(
+            "Settle Demand Letter",
+            `Are you sure you want to mark the demand letter for ${dl.borrowerName} as settled?`,
+            () => {
+                store.updateDemandLetter(dl.id, { 
+                    status: DemandLetterStatus.SETTLED,
+                    remarks: dl.remarks ? `${dl.remarks} - Settled immediately upon demand` : 'Settled immediately upon demand'
+                }, currentUser.username, currentUser.role);
+                setSuccessMessage("Demand letter successfully marked as settled.");
+                refreshData();
+            },
+            'info'
+        );
     };
 
     const handleProceedToSecond = (dl: DemandLetter) => {
@@ -260,26 +330,32 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                     })}
                 </div>
 
-                <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 p-2">
+                <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 px-2 pb-2">
                     <table className="w-full text-sm text-left border-collapse table-auto">
-                        <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider transition-colors duration-300 border-b border-slate-100 dark:border-slate-700/50">
+                        <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider transition-colors duration-300 border-b-2 border-slate-200 dark:border-slate-600 shadow-[0_2px_4px_-1px_rgba(0,0,0,0.06)]">
                             <tr>
                                 <th className="px-5 py-4">Collector</th>
                                 <th className="px-5 py-4">Borrower Identity</th>
-                                <th className="px-5 py-4">Prepared</th>
-                                <th className="px-5 py-4">Received</th>
-                                <th className="px-5 py-4">Follow-up</th>
+                                <th className="px-5 py-4 cursor-pointer group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors" onClick={() => handleSort('datePrepared')}>
+                                    Prepared <SortIcon column="datePrepared" />
+                                </th>
+                                <th className="px-5 py-4 cursor-pointer group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors" onClick={() => handleSort('dateReceived')}>
+                                    Received <SortIcon column="dateReceived" />
+                                </th>
+                                <th className="px-5 py-4 cursor-pointer group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors" onClick={() => handleSort('followUpDate')}>
+                                    Follow-up <SortIcon column="followUpDate" />
+                                </th>
                                 <th className="px-5 py-4">Remarks</th>
                                 <th className="px-5 py-4 text-center">Status</th>
                                 <th className="px-5 py-4 text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50 dark:divide-slate-700/50 transition-colors duration-300">
-                            {filteredDLs.length === 0 ? (
+                            {sortedDLs.length === 0 ? (
                                 <tr>
                                     <td colSpan={8} className="py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px]">No legal records found in this branch.</td>
                                 </tr>
-                            ) : filteredDLs.map((dl) => {
+                            ) : sortedDLs.map((dl) => {
                                 const todayStr = new Date().toISOString().split('T')[0];
                                 const tomorrowTemp = new Date();
                                 tomorrowTemp.setDate(tomorrowTemp.getDate() + 1);
@@ -443,6 +519,16 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                                                         className="px-2 py-0.5 bg-orange-100 hover:bg-orange-200 dark:bg-orange-900/40 dark:hover:bg-orange-900/60 text-orange-700 dark:text-orange-400 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all active:scale-90 shadow-sm border border-orange-200 dark:border-orange-800 whitespace-nowrap"
                                                     >
                                                         Visit
+                                                    </button>
+                                                )}
+                                                {/* ✅ Settle Button */}
+                                                {!isSettled && (
+                                                    <button
+                                                        onClick={() => handleSettle(dl)}
+                                                        title="Mark as Settled"
+                                                        className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-slate-700/50 rounded-lg transition-all active:scale-90"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
                                                     </button>
                                                 )}
                                                 {/* 📩 Received Button */}
@@ -843,7 +929,7 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                     </div>
                     <div class="info-box">
                         <p><strong>Current Balance:</strong> <span>₱${loan.runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
-                        <p><strong>Due Date:</strong> <span>${loan.dueDate}</span></p>
+                        <p><strong>Due Date:</strong> <span>${formatMMDDYYYY(loan.dueDate)}</span></p>
                         <p><strong>Date Prepared:</strong> <span>${formData.datePrepared}</span></p>
                     </div>
                 </div>
@@ -938,7 +1024,7 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                                 value={formData.loanId}
                                 onChange={e => {
                                     const loan = loans.find(l => l.id === e.target.value);
-                                    setFormData({ ...formData, loanId: e.target.value, borrowerName: loan ? loan.borrowerName : '', collectorName: loan ? loan.collector : '', branch: loan?.branch || formData.branch });
+                                    setFormData({ ...formData, loanId: e.target.value, borrowerName: loan ? loan.borrowerName : '', collectorName: loan ? getCollectorDisplayName(loan.collector, store.getCollectors(Branch.ALL)) : '', branch: loan?.branch || formData.branch });
                                 }}
                                 required
                                 disabled={!!dl}

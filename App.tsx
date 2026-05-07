@@ -141,7 +141,7 @@ const App: React.FC = () => {
         selectedBranch={selectedBranch}
       />
 
-      <main className={`flex-1 overflow-y-auto transition-all duration-300 ${isSidebarOpen ? 'ml-72' : 'ml-20'}`}>
+      <main className={`flex-1 overflow-y-auto transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-16'}`}>
         <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 h-16 flex items-center justify-between px-8 sticky top-0 z-40 shadow-sm transition-colors duration-300">
           <div className="flex items-center gap-6">
             <button

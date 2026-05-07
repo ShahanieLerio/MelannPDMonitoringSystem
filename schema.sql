@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS collectors (
     branch TEXT NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS collectors_name_unique
+ON collectors (UPPER(REGEXP_REPLACE(TRIM(name), '\s+', ' ', 'g')));
+
+CREATE UNIQUE INDEX IF NOT EXISTS collectors_nickname_unique
+ON collectors (UPPER(REGEXP_REPLACE(TRIM(nickname), '\s+', ' ', 'g')))
+WHERE nickname IS NOT NULL AND TRIM(nickname) <> '';
+
 -- Loans Table
 CREATE TABLE IF NOT EXISTS loans (
     id TEXT PRIMARY KEY,
@@ -63,6 +70,11 @@ CREATE TABLE IF NOT EXISTS payments (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Required by the payment upsert in server.cjs.
+-- One loan should only have one payment row per collection date.
+CREATE UNIQUE INDEX IF NOT EXISTS payments_loan_id_date_unique
+ON payments (loan_id, date);
+
 -- Remarks Table
 CREATE TABLE IF NOT EXISTS remarks (
     id TEXT PRIMARY KEY,
@@ -99,4 +111,17 @@ CREATE TABLE IF NOT EXISTS activity_logs (
     user_name TEXT NOT NULL,
     user_role TEXT NOT NULL,
     module TEXT NOT NULL
+);
+
+-- Visit Logs (Close Monitoring)
+CREATE TABLE IF NOT EXISTS visit_logs (
+    id TEXT PRIMARY KEY,
+    loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
+    visit_date TEXT NOT NULL,
+    collector_notes TEXT NOT NULL,
+    client_comment TEXT DEFAULT '',
+    visited_by_collector BOOLEAN DEFAULT FALSE,
+    action TEXT NOT NULL DEFAULT 'Log Only',
+    logged_by TEXT NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

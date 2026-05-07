@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { store } from '../services/dataStore.ts';
+import { getCollectorDisplayName, normalizeCollectorKey } from '../services/collectorUtils.ts';
 import { Loan, Payment, Branch } from '../types.ts';
 
 interface MonthlyPerformanceProps {
@@ -77,16 +78,16 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
 
         loans.forEach(loan => {
             if (loan.monthReported >= fromStr && loan.monthReported <= toStr) {
-                const key = loan.collector;
+                const key = getCollectorDisplayName(loan.collector, collectors);
                 if (!data[key]) {
-                    const searchName = (loan.collector || '').trim().toUpperCase();
+                    const searchName = normalizeCollectorKey(loan.collector);
                     const collectorInfo = collectors.find(c => 
-                        (c.name || '').trim().toUpperCase() === searchName || 
-                        (c.nickname || '').trim().toUpperCase() === searchName
+                        normalizeCollectorKey(c.name) === searchName ||
+                        normalizeCollectorKey(c.nickname) === searchName
                     );
                     const deploymentArea = (collectorInfo?.address?.trim() || loan.area?.trim() || 'N/A');
                     
-                    data[key] = { area: deploymentArea, collector: loan.collector, amount: 0 };
+                    data[key] = { area: deploymentArea, collector: key, amount: 0 };
                 }
                 data[key].amount += loan.outstandingBalance;
             }
@@ -115,6 +116,8 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
         }
 
         loans.forEach(loan => {
+            const collectorKey = getCollectorDisplayName(loan.collector, collectors);
+
             // Apply due date filter logic BEFORE checking payments
             if (dueStart || dueEnd) {
                 const loanDueDate = (loan.dueDate || '').substring(0, 10);
@@ -132,26 +135,26 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                 const isWithinFilterRange = paymentDateStr >= filterStart && paymentDateStr <= filterEnd;
 
                 if (isWithinFilterRange) {
-                    if (!data[loan.collector]) {
-                        const searchName = (loan.collector || '').trim().toUpperCase();
+                    if (!data[collectorKey]) {
+                        const searchName = normalizeCollectorKey(loan.collector);
                         const collectorInfo = collectors.find(c => 
-                            (c.name || '').trim().toUpperCase() === searchName || 
-                            (c.nickname || '').trim().toUpperCase() === searchName
+                            normalizeCollectorKey(c.name) === searchName ||
+                            normalizeCollectorKey(c.nickname) === searchName
                         );
                         
                         // Use the collector's address if it exists and isn't just whitespace, otherwise fall back to loan.area
                         const deploymentArea = (collectorInfo?.address?.trim() || loan.area?.trim() || 'N/A');
                         
-                        data[loan.collector] = { 
+                        data[collectorKey] = {
                             area: deploymentArea,
-                            collector: loan.collector, 
+                            collector: collectorKey,
                             amount: 0, 
                             startDate: filterStart, 
                             endDate: filterEnd,
                             dueDateRangeDisplay
                         };
                     }
-                    data[loan.collector].amount += payment.amount;
+                    data[collectorKey].amount += payment.amount;
                 }
             });
         });

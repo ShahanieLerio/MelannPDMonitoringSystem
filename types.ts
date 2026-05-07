@@ -177,3 +177,21 @@ export interface DemandLetter {
   remarks: string;
   branch: Branch;
 }
+
+export enum VisitLogAction {
+  LOG_ONLY = 'Log Only',
+  RETURN_TO_UPDATE = 'Returned to Client Update',
+  MARK_SETTLED = 'Marked as Settled'
+}
+
+export interface VisitLog {
+  id: string;
+  loanId: string;
+  visitDate: string;
+  collectorNotes: string;
+  clientComment: string;
+  visitedByCollector: boolean;
+  action: VisitLogAction;
+  loggedBy: string;
+  timestamp: string;
+}

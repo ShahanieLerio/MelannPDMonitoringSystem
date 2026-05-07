@@ -28,6 +28,15 @@ export const formatReportedMonth = (val: string) => {
   return `${months[mIdx]}-${year.slice(-2)}`;
 };
 
+export const formatMMDDYYYY = (dateStr: string | null | undefined) => {
+  if (!dateStr || !dateStr.includes('-')) return dateStr || '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[1]}-${parts[2]}-${parts[0]}`;
+  }
+  return dateStr;
+};
+
 export const LogoIcon = () => (
   <img src="/assets/app_logo.jpg" alt="Melann Lending" className="w-8 h-8 rounded-lg object-cover" />
 );
