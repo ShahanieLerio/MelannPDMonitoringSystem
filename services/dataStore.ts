@@ -108,7 +108,7 @@ class DataStore {
       };
 
       const mappedLoans = dbLoans.map((l: any) => ({
-        ...l,
+        id: l.id,
         collector: l.collector || 'UNASSIGNED',
         code: l.code || 'N/A',
         firstName: l.first_name || '',
@@ -119,6 +119,9 @@ class DataStore {
         borrowerName: l.borrower_name || 'Unnamed Client',
         monthReported: l.month_reported || '',
         dueDate: l.due_date || '',
+        dateRelease: l.date_release || null,
+        principal: l.principal != null ? Number(l.principal) : null,
+        totalLoan: l.total_loan != null ? Number(l.total_loan) : null,
         status: l.status || MovingStatus.MOVING,
         location: l.location || LocationStatus.LOCATED,
         area: l.area || 'N/A',
@@ -132,15 +135,34 @@ class DataStore {
         recurringSchedule: parseJson(l.recurring_schedule) || null,
         branch: l.branch || Branch.ALL,
         payments: dbPayments.filter((p: any) => p.loan_id === l.id).map((p: any) => ({ 
-          ...p, 
+          id: p.id,
           loanId: p.loan_id, 
+          date: p.date,
           amount: Number(p.amount), 
           balanceAfter: Number(p.balance_after), 
           orNumber: p.or_number || p.orNumber,
+          recorder: p.recorder,
+          remarks: p.remarks,
+          status: p.status,
           createdAt: p.created_at || p.createdAt || new Date(p.date).toISOString()
         })) as unknown as Payment[],
-        remarks: dbRemarks.filter((r: any) => r.loan_id === l.id).map((r: any) => ({ ...r, ptpDate: r.ptp_date, followUpDate: r.follow_up_date })) as unknown as Remark[],
-        history: dbLogs.filter((log: any) => log.loan_id === l.id).map((log: any) => ({ ...log, user: log.user_name, role: log.user_role })) as unknown as HistoryRecord[]
+        remarks: dbRemarks.filter((r: any) => r.loan_id === l.id).map((r: any) => ({ 
+          id: r.id, 
+          text: r.text, 
+          timestamp: r.timestamp, 
+          collector: r.collector, 
+          ptpDate: r.ptp_date, 
+          followUpDate: r.follow_up_date 
+        })) as unknown as Remark[],
+        history: dbLogs.filter((log: any) => log.loan_id === l.id).map((log: any) => ({ 
+          id: log.id, 
+          timestamp: log.timestamp, 
+          type: log.type, 
+          description: log.description, 
+          user: log.user_name, 
+          role: log.user_role, 
+          module: log.module 
+        })) as unknown as HistoryRecord[]
       }));
 
       // Conservative Merge Rule:
@@ -169,21 +191,30 @@ class DataStore {
       });
 
       this.users = dbUsers.map((u: any) => ({
-        ...u,
+        id: u.id,
+        username: u.username,
         fullName: u.full_name,
+        role: u.role,
+        status: u.status,
+        branch: u.branch,
         statusHistory: parseJson(u.status_history) || [],
-        createdAt: u.created_at
+        createdAt: u.created_at,
+        createdBy: u.created_by
       }));
 
       this.collectors = dbCollectors as unknown as Collector[];
       this.demandLetters = dbDLs.map((d: any) => ({
-        ...d,
+        id: d.id,
         loanId: d.loan_id,
         collectorName: d.collector_name,
         borrowerName: d.borrower_name,
+        type: d.type,
         datePrepared: d.date_prepared,
         dateReceived: d.date_received,
-        followUpDate: d.follow_up_date
+        followUpDate: d.follow_up_date,
+        status: d.status,
+        remarks: d.remarks,
+        branch: d.branch
       })) as unknown as DemandLetter[];
 
     } catch (err) {
@@ -256,10 +287,14 @@ class DataStore {
   }
 
   private save() {
-    localStorage.setItem('melann_loans', JSON.stringify(this.loans));
-    localStorage.setItem('melann_users', JSON.stringify(this.users));
-    localStorage.setItem('melann_collectors', JSON.stringify(this.collectors));
-    localStorage.setItem('melann_demand_letters', JSON.stringify(this.demandLetters));
+    try {
+      localStorage.setItem('melann_loans', JSON.stringify(this.loans));
+      localStorage.setItem('melann_users', JSON.stringify(this.users));
+      localStorage.setItem('melann_collectors', JSON.stringify(this.collectors));
+      localStorage.setItem('melann_demand_letters', JSON.stringify(this.demandLetters));
+    } catch (err) {
+      console.warn('Failed to save to localStorage (likely quota exceeded). Offline fallback cache will not be updated.', err);
+    }
     this.notify();
   }
 
@@ -616,7 +651,11 @@ class DataStore {
     const loanIndex = this.loans.findIndex(l => l.id === loanId);
     if (loanIndex === -1) return;
     const loan = this.loans[loanIndex];
-    const today = new Date().toISOString().split('T')[0];
+    const currentDate = new Date();
+    const y = currentDate.getFullYear();
+    const m = String(currentDate.getMonth() + 1).padStart(2, '0');
+    const day = String(currentDate.getDate()).padStart(2, '0');
+    const today = `${y}-${m}-${day}`;
     
     // 1. Sync PTP
     const latestPTPRemark = [...loan.remarks].reverse().find(r => r.ptpDate);
@@ -1119,20 +1158,22 @@ class DataStore {
 
   private calculateFollowUpDate(type: DemandLetterType, dateReceived?: string): string | undefined {
     if (!dateReceived) return undefined;
-    const received = new Date(dateReceived);
+    const received = new Date(dateReceived + 'T00:00:00');
     if (type === DemandLetterType.FIRST || type === DemandLetterType.SECOND) {
       received.setDate(received.getDate() + 10);
-      return received.toISOString().split('T')[0];
     } else if (type === DemandLetterType.THIRD) {
       received.setDate(received.getDate() + 5);
-      return received.toISOString().split('T')[0];
     }
-    return undefined;
+    const y = received.getFullYear();
+    const m = String(received.getMonth() + 1).padStart(2, '0');
+    const day = String(received.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
   private getPriorityFromStatus(dl: DemandLetter): PriorityLevel {
     if (dl.status === DemandLetterStatus.SETTLED) return PriorityLevel.LOWEST;
-    const today = new Date().toISOString().split('T')[0];
+    const date = new Date();
+    const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     if (dl.followUpDate && dl.followUpDate <= today) return PriorityLevel.TOP;
     if (dl.status === DemandLetterStatus.FOLLOW_UP) return PriorityLevel.FOLLOW_UP;
     if (dl.type === DemandLetterType.THIRD) return PriorityLevel.TOP;

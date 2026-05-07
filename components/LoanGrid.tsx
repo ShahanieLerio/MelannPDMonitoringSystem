@@ -14,9 +14,11 @@ import MultiSelectFilter from './MultiSelectFilter.tsx';
 interface LoanGridProps {
   currentUser: User;
   selectedBranch: Branch;
+  activeAction?: 'import' | 'add' | null;
+  onActionComplete?: () => void;
 }
 
-const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch }) => {
+const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, activeAction, onActionComplete }) => {
   const [loans, setLoans] = useState(store.getLoans(selectedBranch));
   const [allCollectors, setAllCollectors] = useState(store.getCollectors(Branch.ALL));
   const [searchTerm, setSearchTerm] = useState('');
@@ -81,6 +83,16 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch }) => {
     return () => unsubscribe();
   }, [selectedBranch]);
 
+  useEffect(() => {
+    if (activeAction === 'import') {
+      setIsImportModalOpen(true);
+      if (onActionComplete) onActionComplete();
+    } else if (activeAction === 'add') {
+      setIsAddModalOpen(true);
+      if (onActionComplete) onActionComplete();
+    }
+  }, [activeAction, onActionComplete]);
+
   // Dynamic filter options for MultiSelect
   const collectorOptions = useMemo(() => {
     const uniqueNames = Array.from(new Set(loans.map(l => l.collector))).sort();
@@ -135,11 +147,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch }) => {
   };
 
   const handleEdit = (l: Loan) => {
-    askConfirm(
-      "Are you sure you want to edit this record?",
-      `You are about to modify the profile for ${l.borrowerName}.`,
-      () => setEditLoan(l)
-    );
+    setEditLoan(l);
   };
 
   const filteredLoans = useMemo(() => {
@@ -201,22 +209,6 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch }) => {
           <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1 transition-colors duration-300">
             Displaying data for: <span className="text-emerald-600">{selectedBranch}</span>
           </p>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setIsImportModalOpen(true)}
-            className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 active:scale-95 border border-slate-200 dark:border-slate-700"
-          >
-            <span className="text-xl">📁</span>
-            Import Clients
-          </button>
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-md hover:shadow-xl hover:shadow-emerald-900/20 transition-all duration-300 active:scale-95 hover:-translate-y-0.5"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-            Add Client
-          </button>
         </div>
       </div>
 

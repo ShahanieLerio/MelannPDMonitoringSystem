@@ -7,6 +7,7 @@ import ConfirmationModal from './ConfirmationModal.tsx';
 interface PaymentFormProps {
   currentUser: User;
   selectedBranch: Branch;
+  activeView?: 'post' | 'reverse';
 }
 
 interface RecentPost {
@@ -18,8 +19,8 @@ interface RecentPost {
   remarks: string;
 }
 
-const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch }) => {
-  const [activeTab, setActiveTab] = useState<'post' | 'reverse'>('post');
+const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, activeView }) => {
+  const activeTab = activeView || 'post';
 
   // Post Payment States
   const [code, setCode] = useState('');
@@ -43,6 +44,16 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch }
       }
     }
   }, []);
+
+  useEffect(() => {
+    setError('');
+    setSuccess('');
+    if (activeTab === 'post') {
+      setTimeout(() => codeRef.current?.focus(), 100);
+    } else {
+      setTimeout(() => revOrRef.current?.focus(), 100);
+    }
+  }, [activeTab]);
 
   // Reverse Payment States
   const [revOrNumber, setRevOrNumber] = useState('');
@@ -310,17 +321,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch }
     );
   };
 
-  const switchTab = (tab: 'post' | 'reverse') => {
-    setActiveTab(tab);
-    setError('');
-    setSuccess('');
-    // Focus appropriate input
-    if (tab === 'post') {
-      setTimeout(() => codeRef.current?.focus(), 100);
-    } else {
-      setTimeout(() => revOrRef.current?.focus(), 100);
-    }
-  };
+  // Tab switching handled by props now
 
   // Auditory Feedback Utility (Browser-Native Ping)
   const playSuccessSound = () => {
@@ -359,25 +360,6 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch }
         
         {/* MAIN PANEL (LEFT) */}
         <div className="lg:col-span-2 space-y-8">
-          
-          {/* SEGMENTED CONTROL */}
-          <div className="p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex transition-all duration-300">
-            <button
-              onClick={() => switchTab('post')}
-              className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-300 ${activeTab === 'post' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-md ring-1 ring-slate-200 dark:ring-slate-600' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
-              Post Payment
-            </button>
-            <button
-              onClick={() => switchTab('reverse')}
-              className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-300 ${activeTab === 'reverse' ? 'bg-white dark:bg-slate-700 text-red-600 dark:text-red-400 shadow-md ring-1 ring-slate-200 dark:ring-slate-600' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z" /></svg>
-              Reverse Payment
-            </button>
-          </div>
-
           {activeTab === 'post' ? (
             <div className="space-y-8 animate-slideUp">
               

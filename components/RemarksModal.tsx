@@ -32,6 +32,13 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
     setSelectedWeekDays(prev => prev.includes(dayIndex) ? prev.filter(d => d !== dayIndex) : [...prev, dayIndex].sort((a, b) => a - b));
   };
 
+  const getLocalISODate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
   const computeLocalNextDue = (days: number[]): string => {
     const sorted = [...days].sort((a, b) => a - b);
     const today = new Date();
@@ -39,17 +46,17 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
     let month = today.getMonth();
     let year = today.getFullYear();
     for (const day of sorted) {
-      if (day > todayDay) {
+      if (day >= todayDay) {
         const lastDay = new Date(year, month + 1, 0).getDate();
         const d = new Date(year, month, Math.min(day, lastDay));
-        return d.toISOString().split('T')[0];
+        return getLocalISODate(d);
       }
     }
     month += 1;
     if (month > 11) { month = 0; year += 1; }
     const lastDay = new Date(year, month + 1, 0).getDate();
     const d = new Date(year, month, Math.min(sorted[0], lastDay));
-    return d.toISOString().split('T')[0];
+    return getLocalISODate(d);
   };
 
   const computeLocalNextWeeklyDue = (weekDays: number[]): string => {
@@ -57,13 +64,13 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
     const today = new Date();
     const currentDayOfWeek = today.getDay();
     for (const day of sorted) {
-      if (day > currentDayOfWeek) {
+      if (day >= currentDayOfWeek) {
         today.setDate(today.getDate() + (day - currentDayOfWeek));
-        return today.toISOString().split('T')[0];
+        return getLocalISODate(today);
       }
     }
     today.setDate(today.getDate() + (7 - currentDayOfWeek + sorted[0]));
-    return today.toISOString().split('T')[0];
+    return getLocalISODate(today);
   };
 
   const formatDaySuffix = (d: number) => {
@@ -96,23 +103,12 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
       if (editingRemark) {
         await store.updateRemark(loan.id, editingRemark.id, newRemark, priority, currentUser.username, currentUser.role, ptpDate || null, followUpDate || null);
         setEditingRemark(null);
-        setSuccessFeedback({
-          title: "Field Intel Updated",
-          message: "The intelligence remarks have been successfully updated and synced."
-        });
       } else {
         await store.addRemark(loan.id, newRemark, currentUser.username, priority, currentUser.username, currentUser.role, ptpDate || null, followUpDate || null);
-        setSuccessFeedback({
-          title: "Field Intel Logged",
-          message: "The new field intelligence has been successfully saved to the client profile."
-        });
       }
 
-      setNewRemark('');
-      setPtpDate('');
-      setFollowUpDate('');
-
-      // Save recurring schedule if toggled
+      // Save recurring schedule BEFORE showing success feedback
+      // This ensures the schedule is committed to DB as part of the transactional flow
       if (recurringEnabled && ((scheduleType === 'monthly' && selectedDays.length > 0) || (scheduleType === 'weekly' && selectedWeekDays.length > 0))) {
         const nextDue = scheduleType === 'monthly' ? computeLocalNextDue(selectedDays) : computeLocalNextWeeklyDue(selectedWeekDays);
         const schedule: RecurringSchedule = {
@@ -128,6 +124,18 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
         // User disabled recurring
         await store.updateLoan(loan.id, { recurringSchedule: { ...loan.recurringSchedule, enabled: false } }, currentUser.username, currentUser.role);
       }
+
+      // Show success only AFTER all data (remark + schedule) has been persisted
+      setSuccessFeedback({
+        title: editingRemark ? "Field Intel Updated" : "Field Intel Logged",
+        message: editingRemark 
+          ? "The intelligence remarks have been successfully updated and synced."
+          : "The new field intelligence has been successfully saved to the client profile."
+      });
+
+      setNewRemark('');
+      setPtpDate('');
+      setFollowUpDate('');
     } catch (err: any) {
       setErrorFeedback(err.message || 'Failed to submit field intelligence. Check your connection.');
     } finally {

@@ -105,9 +105,16 @@ const ClientModal: React.FC<ClientModalProps> = ({ loan, onClose }) => {
                         label="Latest Reporting" 
                         value={formatReportedMonth(activeRecord.monthReported)} 
                       />
+                      {activeRecord.dateRelease && (
+                        <DetailItem 
+                          icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
+                          label="Date Release" 
+                          value={activeRecord.dateRelease} 
+                        />
+                      )}
                       <DetailItem 
                         icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
-                        label="Settlement Due" 
+                        label="Maturity Date" 
                         value={activeRecord.dueDate} 
                       />
                       <DetailItem 
@@ -162,9 +169,16 @@ const ClientModal: React.FC<ClientModalProps> = ({ loan, onClose }) => {
                   <div className="bg-slate-50/80 p-5 rounded-[16px] shadow-sm border border-slate-200 flex flex-col gap-5 h-full hover:-translate-y-1 hover:shadow-md hover:border-slate-300 transition-all duration-300 ease-in-out">
                     <h3 className="text-sm font-bold text-slate-800 border-b border-slate-200 pb-2">Financial Summary</h3>
                     
+                    {activeRecord.principal != null && (
+                      <div className="bg-white p-4 rounded-[12px] border border-slate-200 shadow-sm flex flex-col justify-center hover:border-slate-300 hover:shadow-md transition-all duration-200 cursor-default">
+                        <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Principal</span>
+                        <span className="text-lg font-bold text-slate-900">₱{activeRecord.principal.toLocaleString()}</span>
+                      </div>
+                    )}
+
                     <div className="bg-white p-4 rounded-[12px] border border-slate-200 shadow-sm flex flex-col justify-center hover:border-slate-300 hover:shadow-md transition-all duration-200 cursor-default">
-                      <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Principal</span>
-                      <span className="text-lg font-bold text-slate-900">₱{activeRecord.outstandingBalance.toLocaleString()}</span>
+                      <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Loan</span>
+                      <span className="text-lg font-bold text-slate-900">₱{(activeRecord.totalLoan != null ? activeRecord.totalLoan : activeRecord.outstandingBalance).toLocaleString()}</span>
                     </div>
 
                     <div className="bg-white p-4 rounded-[12px] border border-slate-200 shadow-sm flex flex-col justify-center hover:border-slate-300 hover:shadow-md transition-all duration-200 cursor-default">

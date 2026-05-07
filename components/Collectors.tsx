@@ -15,6 +15,12 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
   const [name, setName] = useState('');
   const [nickname, setNickname] = useState('');
   const [address, setAddress] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+
+  const showSuccess = (msg: string) => {
+    setSuccessMessage(msg);
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
 
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -48,22 +54,30 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
 
   useEffect(() => {
     refresh();
+    const unsubscribe = store.subscribe(refresh);
+    return () => unsubscribe();
   }, [selectedBranch]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) return;
     const branchToUse = selectedBranch === Branch.ALL ? Branch.NAVAL : selectedBranch;
 
     const finalName = name.trim();
     const finalNick = nickname.trim().toUpperCase();
 
-    if (editingCollector) {
-      store.updateCollector(editingCollector.id, finalName, branchToUse, address.trim(), finalNick);
-    } else {
-      store.addCollector(finalName, branchToUse, address.trim(), finalNick);
+    try {
+      if (editingCollector) {
+        await store.updateCollector(editingCollector.id, finalName, branchToUse, address.trim(), finalNick);
+        showSuccess("Collector successfully updated!");
+      } else {
+        await store.addCollector(finalName, branchToUse, address.trim(), finalNick);
+        showSuccess("Collector successfully added!");
+      }
+      closeModal();
+      refresh();
+    } catch (error) {
+      console.error('Failed to save collector:', error);
     }
-    closeModal();
-    refresh();
   };
 
   const handleDelete = (id: string, name: string) => {
@@ -80,17 +94,10 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
 
   const openModal = (c?: Collector) => {
     if (c) {
-      askConfirm(
-        "Are you sure you want to edit this record?",
-        `You are about to modify the identity record for ${c.name}.`,
-        () => {
-          setEditingCollector(c);
-          setName(c.name);
-          setNickname(c.nickname || '');
-          setAddress(c.address || '');
-          setIsModalOpen(true);
-        }
-      );
+      setEditingCollector(c);
+      setName(c.name);
+      setNickname(c.nickname || '');
+      setAddress(c.address || '');
     } else {
       setEditingCollector(null);
       setName('');
@@ -213,6 +220,15 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
         onCancel={closeConfirm}
         type={confirmConfig.type}
       />
+
+      {successMessage && (
+        <div className="fixed bottom-6 right-6 z-[100] bg-emerald-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideUp border border-emerald-500/50">
+          <div className="bg-white/20 p-1.5 rounded-full">
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+          </div>
+          <p className="font-black text-sm tracking-wide">{successMessage}</p>
+        </div>
+      )}
     </div>
   );
 };

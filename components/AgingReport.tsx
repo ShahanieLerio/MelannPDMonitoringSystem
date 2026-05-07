@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { store } from '../services/dataStore';
 import { Branch } from '../types';
 
@@ -96,6 +97,13 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
         return 'bg-red-500';
     };
 
+    const getChartColor = (bucket: string) => {
+        if (bucket.includes('1-30')) return '#34d399'; // emerald-400
+        if (bucket.includes('31-45') || bucket.includes('46-60')) return '#fbbf24'; // amber-400
+        if (bucket.includes('61-90')) return '#f97316'; // orange-500
+        return '#ef4444'; // red-500
+    };
+
     if (collectors.length === 0) {
         return (
             <div className="py-20 flex flex-col items-center justify-center bg-white dark:bg-slate-800 rounded-[2.5rem] border-2 border-dashed border-slate-100 dark:border-slate-700 animate-fadeIn">
@@ -123,107 +131,161 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
             </div>
 
             {/* COLLECTOR CARDS - ALL FULLY VISIBLE */}
-            <div className="space-y-10">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 xl:gap-8">
                 {collectors.map((c) => {
                     const totalAccounts = c.total.accounts;
                     
                     return (
-                        <div key={c.collector} className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-xl shadow-slate-900/5 border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300">
+                        <div key={c.collector} className="bg-white dark:bg-slate-800 flex flex-col h-full transition-all duration-300" style={{ borderRadius: '14px', border: '1px solid rgba(0,0,0,0.06)', boxShadow: '0 4px 12px rgba(0,0,0,0.04)' }}>
                             {/* COLLECTOR MODULE HEADER */}
-                            <div className="p-6 md:p-8 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-700/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                                <div className="flex-1 space-y-4">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-center text-xl shadow-sm border border-slate-100 dark:border-slate-700">👤</div>
-                                        <div>
-                                            <h3 className="text-lg font-black text-slate-800 dark:text-white uppercase tracking-tight">{c.collector}</h3>
-                                            <div className="flex items-center gap-2 mt-0.5">
-                                                <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">{c.efficiency.toFixed(1)}% Collected</p>
-                                                <div className="w-32 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                            <div className="px-6 py-3 md:px-8 md:py-3 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-700/50 flex flex-col md:flex-row justify-between items-center gap-2 md:gap-6">
+                                <div className="flex-1 flex items-center justify-between w-full">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-center text-lg shadow-sm border border-slate-100 dark:border-slate-700">👤</div>
+                                        <div className="flex flex-col justify-center">
+                                            <h3 className="text-lg font-black text-slate-800 dark:text-white uppercase tracking-tight leading-none mb-1">{c.collector}</h3>
+                                            <div className="flex items-center gap-2">
+                                                <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest leading-none">{c.efficiency.toFixed(1)}% Collected</p>
+                                                <div className="w-24 h-1 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
                                                     <div className="h-full bg-emerald-500 transition-all duration-1000" style={{ width: `${c.efficiency}%` }}></div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                     
-                                    {/* AGING DISTRIBUTION MINI CHART */}
-                                    <div className="flex items-end gap-1 h-8">
+                                    {/* AGING DISTRIBUTION MINI CHART (HIDDEN ON VERY SMALL SCREENS TO SAVE SPACE) */}
+                                    <div className="hidden sm:flex items-end gap-1 h-6 w-24 opacity-60">
                                         {AGING_BUCKETS.map(b => {
                                             const count = c.buckets[b].accounts;
                                             const pct = totalAccounts > 0 ? (count / totalAccounts) * 100 : 0;
                                             return (
                                                 <div key={b} className="flex-1 group relative">
                                                     <div className={`w-full rounded-t-sm transition-all duration-700 ${getBucketColor(b)} ${pct > 0 ? 'opacity-100' : 'opacity-20'}`} style={{ height: pct > 0 ? `${Math.max(pct, 15)}%` : '2px' }}></div>
-                                                    <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none z-10">
-                                                        <div className="bg-slate-900 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-xl whitespace-nowrap">{count} Accts ({b})</div>
-                                                    </div>
                                                 </div>
                                             );
                                         })}
                                     </div>
                                 </div>
 
-                                <div className="flex gap-4 w-full md:w-auto">
-                                    <div className="flex-1 md:flex-none px-6 py-3 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl text-center">
-                                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Accounts</p>
-                                        <p className="text-sm font-black text-slate-700 dark:text-slate-300">{c.total.accounts}</p>
+                                <div className="flex gap-3 w-full md:w-auto mt-2 md:mt-0 justify-end">
+                                    <div className="px-4 py-1.5 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl text-center flex flex-col justify-center">
+                                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5 leading-none">Accounts</p>
+                                        <p className="text-[13px] font-black text-slate-700 dark:text-slate-300 leading-none mt-1">{c.total.accounts}</p>
                                     </div>
-                                    <div className="flex-1 md:flex-none px-6 py-3 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-2xl text-center">
-                                        <p className="text-[8px] font-black text-red-400 uppercase tracking-widest mb-0.5">Outstanding</p>
-                                        <p className="text-sm font-black text-red-600">₱{c.total.balance.toLocaleString()}</p>
+                                    <div className="px-4 py-1.5 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-xl text-center flex flex-col justify-center">
+                                        <p className="text-[8px] font-black text-red-400 uppercase tracking-widest mb-0.5 leading-none">Outstanding</p>
+                                        <p className="text-[13px] font-black text-red-600 leading-none mt-1">₱{c.total.balance.toLocaleString()}</p>
                                     </div>
                                 </div>
                             </div>
 
-                            {/* DATA TABLE - PERMANENTLY VISIBLE */}
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                    <thead className="bg-[#F9FAFB] dark:bg-slate-900/80 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest border-b border-slate-100 dark:border-slate-700">
-                                        <tr>
-                                            <th className="px-8 py-5">Aging Category</th>
-                                            <th className="px-8 py-5 text-center">Accounts</th>
-                                            <th className="px-8 py-5 text-right">Reported Amt.</th>
-                                            <th className="px-8 py-5 text-right">Collected Amt.</th>
-                                            <th className="px-8 py-5 text-right">Ending Balance</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50 dark:divide-slate-700/30 font-medium">
-                                        {AGING_BUCKETS.map((bucket, bIdx) => {
-                                            const bData = c.buckets[bucket];
-                                            if (bData.accounts === 0) return null;
-                                            return (
-                                                <tr key={bucket} className={`group transition-all duration-200 hover:bg-slate-50 dark:hover:bg-slate-700/40 ${bIdx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50/20 dark:bg-slate-800/40'}`}>
-                                                    <td className="px-8 py-4">
-                                                        <div className="flex items-center gap-3">
-                                                            <span className={`w-2 h-2 rounded-full ${getBucketColor(bucket)}`}></span>
-                                                            <span className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-tight">{bucket}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-8 py-4 text-center text-xs font-bold text-slate-500 dark:text-slate-400">{bData.accounts}</td>
-                                                    <td className="px-8 py-4 text-right text-xs font-bold text-slate-400">₱{bData.reported.toLocaleString()}</td>
-                                                    <td className="px-8 py-4 text-right text-xs font-black text-emerald-600 dark:text-emerald-400">₱{bData.collected.toLocaleString()}</td>
-                                                    <td className="px-8 py-4 text-right text-sm font-black text-red-600">₱{bData.balance.toLocaleString()}</td>
+                                {/* CONTENT WRAPPER */}
+                                <div className="flex flex-col lg:flex-row gap-5 px-4 pt-3 pb-4 md:px-6 md:pt-4 md:pb-6 flex-1">
+                                    {/* DATA TABLE CONTAINER */}
+                                    <div className="lg:w-[60%] overflow-hidden" style={{ background: '#FAFBFC', border: '1px solid rgba(0,0,0,0.05)', borderRadius: '10px', padding: '16px' }}>
+                                        <table className="w-full text-center" style={{ tableLayout: 'fixed', width: '100%' }}>
+                                            <thead style={{ background: '#F3F5F7', borderBottom: '1px solid rgba(0,0,0,0.08)', color: '#4b5563' }}>
+                                                <tr>
+                                                    <th style={{ width: '18%', fontSize: '12px', fontWeight: 600, letterSpacing: '0.3px', padding: '10px 8px', textAlign: 'center', borderRight: '1px solid rgba(0,0,0,0.04)' }}>Aging Category</th>
+                                                    <th style={{ width: '10%', fontSize: '12px', fontWeight: 600, letterSpacing: '0.3px', padding: '10px 8px', textAlign: 'center', whiteSpace: 'normal', wordBreak: 'break-word', borderRight: '1px solid rgba(0,0,0,0.04)' }}>No. of Accts.</th>
+                                                    <th style={{ width: '20%', fontSize: '12px', fontWeight: 600, letterSpacing: '0.3px', padding: '10px 8px', textAlign: 'center' }}>Reported Amt.</th>
+                                                    <th style={{ width: '20%', fontSize: '12px', fontWeight: 600, letterSpacing: '0.3px', padding: '10px 8px', textAlign: 'center' }}>Collected Amt.</th>
+                                                    <th style={{ width: '22%', fontSize: '12px', fontWeight: 600, letterSpacing: '0.3px', padding: '10px 8px', textAlign: 'center' }}>Ending Balance</th>
                                                 </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
+                                            </thead>
+                                            <tbody>
+                                                {AGING_BUCKETS.map((bucket) => {
+                                                    const bData = c.buckets[bucket];
+                                                    if (bData.accounts === 0) return null;
+                                                    return (
+                                                        <tr key={bucket} className="transition-all duration-200 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]" style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+                                                            <td style={{ padding: '10px 8px', textAlign: 'center', borderRight: '1px solid rgba(0,0,0,0.04)' }}>
+                                                                <div className="flex items-center justify-center gap-2">
+                                                                    <span className={`w-2 h-2 shrink-0 rounded-full ${getBucketColor(bucket)}`}></span>
+                                                                    <span style={{ fontSize: '13px', fontWeight: 500, lineHeight: 1.5, whiteSpace: 'normal', wordBreak: 'break-word', color: '#1e293b' }}>{bucket}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td style={{ padding: '10px 8px', textAlign: 'center', fontSize: '13px', fontWeight: 500, lineHeight: 1.5, color: '#334155', borderRight: '1px solid rgba(0,0,0,0.04)' }}>{bData.accounts}</td>
+                                                            <td style={{ padding: '10px 8px', textAlign: 'center', fontSize: '13px', fontWeight: 500, lineHeight: 1.5, color: '#1e293b', whiteSpace: 'normal', wordBreak: 'break-word' }}>₱{bData.reported.toLocaleString()}</td>
+                                                            <td style={{ padding: '10px 8px', textAlign: 'center', fontSize: '13px', fontWeight: 500, lineHeight: 1.5, color: '#16a34a', whiteSpace: 'normal', wordBreak: 'break-word' }}>₱{bData.collected.toLocaleString()}</td>
+                                                            <td style={{ padding: '10px 8px', textAlign: 'center', fontSize: '13px', fontWeight: 600, lineHeight: 1.5, color: '#dc2626', whiteSpace: 'normal', wordBreak: 'break-word' }}>₱{bData.balance.toLocaleString()}</td>
+                                                        </tr>
+                                                    );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                
+                                {/* BAR CHART CONTAINER */}
+                                <div className="lg:w-[40%] flex flex-col" style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.05)', borderRadius: '10px', padding: '16px' }}>
+                                    <h4 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 text-center">Ending Balance Distribution</h4>
+                                    <div className="flex-1 w-full min-h-[220px]">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart
+                                                data={AGING_BUCKETS.map(b => ({
+                                                    name: b.replace(' Days', ''),
+                                                    bucket: b,
+                                                    balance: c.buckets[b].balance,
+                                                    accounts: c.buckets[b].accounts
+                                                }))}
+                                                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                                            >
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" opacity={0.2} />
+                                                <XAxis 
+                                                    dataKey="name" 
+                                                    axisLine={false}
+                                                    tickLine={false}
+                                                    tick={{ fontSize: 9, fill: '#94a3b8', fontWeight: 700 }}
+                                                    interval={0}
+                                                />
+                                                <YAxis 
+                                                    axisLine={false}
+                                                    tickLine={false}
+                                                    tick={{ fontSize: 9, fill: '#94a3b8', fontWeight: 700 }}
+                                                    tickFormatter={(value) => value >= 1000 ? `₱${(value / 1000).toFixed(0)}k` : `₱${value}`}
+                                                />
+                                                <Tooltip 
+                                                    cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
+                                                    content={({ active, payload }) => {
+                                                        if (active && payload && payload.length) {
+                                                            const data = payload[0].payload;
+                                                            return (
+                                                                <div className="bg-slate-800 text-white p-3 rounded-xl shadow-xl border border-slate-700">
+                                                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{data.bucket}</p>
+                                                                    <p className="text-sm font-black text-white">₱{data.balance.toLocaleString()}</p>
+                                                                    <p className="text-[10px] font-bold text-emerald-400 mt-1">{data.accounts} Accounts</p>
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return null;
+                                                    }}
+                                                />
+                                                <Bar dataKey="balance" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                                                    {AGING_BUCKETS.map((b, index) => (
+                                                        <Cell key={`cell-${index}`} fill={getChartColor(b)} />
+                                                    ))}
+                                                </Bar>
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
                             </div>
                             
                             {/* COLLECTOR SUMMARY FOOTER */}
-                            <div className="bg-slate-50/80 dark:bg-slate-900 text-slate-800 dark:text-white font-black py-5 px-8 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center transition-colors duration-300">
-                                <span className="text-[10px] uppercase tracking-[0.2em] opacity-40">Collector Grand Totals</span>
+                            <div className="font-black py-5 px-8 flex justify-between items-center transition-colors duration-300 rounded-b-[14px]" style={{ background: '#F8FAFB', borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+                                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em]">Collector Grand Totals</span>
                                 <div className="flex gap-10">
                                     <div className="text-right">
-                                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Reported</p>
-                                        <p className="text-xs">₱{c.total.reported.toLocaleString()}</p>
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Reported</p>
+                                        <p className="text-sm font-bold text-slate-800">₱{c.total.reported.toLocaleString()}</p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-0.5">Collected</p>
-                                        <p className="text-xs text-emerald-600 dark:text-emerald-400">₱{c.total.collected.toLocaleString()}</p>
+                                        <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mb-0.5">Collected</p>
+                                        <p className="text-sm font-bold text-emerald-600">₱{c.total.collected.toLocaleString()}</p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[8px] font-black text-red-400 uppercase tracking-widest mb-0.5">Balance</p>
-                                        <p className="text-xs text-red-600">₱{c.total.balance.toLocaleString()}</p>
+                                        <p className="text-[9px] font-bold text-red-600 uppercase tracking-widest mb-0.5">Balance</p>
+                                        <p className="text-sm font-black text-red-600">₱{c.total.balance.toLocaleString()}</p>
                                     </div>
                                 </div>
                             </div>

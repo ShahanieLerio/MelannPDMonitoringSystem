@@ -172,10 +172,21 @@ app.get('/api/payments', async (req, res) => {
 app.post('/api/payments', async (req, res) => {
     const { id, loanId, amount, orNumber, date, balanceAfter, recorder, remarks, status, createdAt } = req.body;
     try {
-        await query(
-            'INSERT INTO payments (id, loan_id, amount, or_number, date, balance_after, recorder, remarks, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-            [id, loanId, amount, orNumber, date, balanceAfter, recorder, remarks, status, createdAt]
-        );
+        // Upsert: if a GOOD payment already exists for this loan on this date, replace it.
+        // This prevents duplicate payment dates in the Payment Stream.
+        await query(`
+            INSERT INTO payments (id, loan_id, amount, or_number, date, balance_after, recorder, remarks, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (loan_id, date) DO UPDATE SET
+                id           = EXCLUDED.id,
+                amount       = EXCLUDED.amount,
+                or_number    = EXCLUDED.or_number,
+                balance_after= EXCLUDED.balance_after,
+                recorder     = EXCLUDED.recorder,
+                remarks      = EXCLUDED.remarks,
+                status       = EXCLUDED.status,
+                created_at   = EXCLUDED.created_at
+        `, [id, loanId, amount, orNumber, date, balanceAfter, recorder, remarks, status, createdAt]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -190,162 +190,217 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
     };
 
     return (
-        <div className="space-y-6 animate-fadeIn transition-colors duration-300">
+        <div className="space-y-8 animate-fadeIn transition-colors duration-300 bg-[#f8fafc] dark:bg-slate-900 p-6 md:p-8 rounded-[2rem]">
             <div className="flex justify-between items-center transition-colors duration-300">
                 <div>
-                    <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight transition-colors duration-300">Legal Demand Letters</h2>
-                    <p className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest mt-1 transition-colors duration-300">
-                        Tracking for: <span className="font-black text-slate-800 dark:text-slate-200">{selectedBranch}</span>
+                    <h2 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight transition-colors duration-300">Legal Demand Letters</h2>
+                    <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1 transition-colors duration-300">
+                        Tracking for: <span className="font-semibold text-slate-700 dark:text-slate-200">{selectedBranch}</span>
                     </p>
                 </div>
                 <button
                     onClick={handleOpenAddModal}
-                    className="bg-emerald-600 dark:bg-emerald-500 hover:bg-emerald-700 dark:hover:bg-emerald-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-md shadow-emerald-900/10 dark:shadow-emerald-900/50 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl active:scale-95"
+                    className="bg-[#064e3b] hover:bg-[#043326] text-white px-5 py-2.5 rounded-xl font-medium text-sm flex items-center gap-2 shadow-sm transition-all duration-300 active:scale-95"
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
                     New Legal Action
                 </button>
             </div>
 
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 transition-colors duration-300">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className="relative">
-                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-1 px-1 transition-colors duration-300">Search Profile</label>
+            <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300">
+                <div className="flex flex-col md:flex-row gap-4 items-end">
+                    <div className="relative flex-1 w-full">
+                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-1">Search Profile</label>
+                        <svg className="w-4 h-4 text-slate-400 absolute left-4 top-[2.2rem]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                         <input
                             type="text"
-                            placeholder="Find by name..."
-                            className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-emerald-500 text-sm font-bold text-slate-800 dark:text-white transition-colors duration-300"
+                            placeholder="Enter account holder name..."
+                            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-[#064e3b] focus:border-[#064e3b] text-sm font-medium text-slate-800 dark:text-white transition-colors duration-300 outline-none"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
-                        <svg className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-4 top-10 transition-colors duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     </div>
-                    <div>
-                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-1 px-1 transition-colors duration-300">Collector</label>
-                        <select className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-2xl font-bold appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300" value={filterCollector} onChange={e => setFilterCollector(e.target.value)}>
-                            <option value="">All Field Agents</option>
+                    <div className="w-full md:w-56">
+                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-1">Collector</label>
+                        <select className="w-full text-sm bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 py-2.5 px-4 rounded-lg font-medium appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300 outline-none" value={filterCollector} onChange={e => setFilterCollector(e.target.value)}>
+                            <option value="">All Personnel</option>
                             {collectors.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                     </div>
-                    <div>
-                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-1 px-1 transition-colors duration-300">Case Status</label>
-                        <select className="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 rounded-2xl font-bold appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                    <div className="w-full md:w-56">
+                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-1">Case Status</label>
+                        <select className="w-full text-sm bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 py-2.5 px-4 rounded-lg font-medium appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300 outline-none" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
                             <option value="">All Statuses</option>
                             {Object.values(DemandLetterStatus).map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                     </div>
+                    <button className="w-full md:w-auto bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-8 py-2.5 rounded-lg text-sm font-semibold transition-colors duration-200">
+                        Apply
+                    </button>
                 </div>
             </div>
 
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl max-w-2xl mx-auto shadow-inner mb-6 transition-colors duration-300">
-                {[...Object.values(DemandLetterType), 'For Legal Action'].map((type) => (
-                    <button
-                        key={type}
-                        onClick={() => setFilterType(type as any)}
-                        className={`flex-1 py-3 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                            filterType === type 
-                            ? 'bg-white dark:bg-slate-700 text-emerald-700 dark:text-emerald-400 shadow-sm border border-slate-200/60 dark:border-slate-600/60' 
-                            : 'text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-white/50 dark:hover:bg-slate-700/50'
-                        }`}
-                    >
-                        {type === 'For Legal Action' ? <span className="text-red-500 dark:text-red-400">{type}</span> : type}
-                    </button>
-                ))}
-            </div>
+            <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 overflow-hidden transition-colors duration-300">
+                <div className="flex px-6 pt-6 pb-0 border-b border-slate-100 dark:border-slate-700/50 gap-4 overflow-x-auto scrollbar-hide">
+                    {[...Object.values(DemandLetterType), 'For Legal Action'].map((type) => {
+                        const tabLabel = type === 'For Legal Action' ? 'Litigation' : type === DemandLetterType.THIRD ? 'Final Notice' : type;
+                        return (
+                            <button
+                                key={type}
+                                onClick={() => setFilterType(type as any)}
+                                className={`py-2.5 px-6 rounded-t-xl text-[14px] font-semibold transition-all whitespace-nowrap -mb-[1px] ${
+                                    filterType === type 
+                                    ? 'bg-[#064e3b] text-white shadow-sm' 
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                                }`}
+                            >
+                                {tabLabel}
+                            </button>
+                        );
+                    })}
+                </div>
 
-            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors duration-300">
-                <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700">
+                <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 p-2">
                     <table className="w-full text-sm text-left border-collapse table-auto">
-                        <thead className="sticky top-0 bg-white dark:bg-slate-900 z-10 shadow-sm text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">
+                        <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider transition-colors duration-300 border-b border-slate-100 dark:border-slate-700/50">
                             <tr>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Collector</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Borrower Identity</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Legal</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Prepared</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50 border-l border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10">Received</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Follow-up</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Last Action</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Remarks</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50 text-center">Status</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">Priority</th>
-                                <th className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50 text-center">Action</th>
+                                <th className="px-5 py-4">Collector</th>
+                                <th className="px-5 py-4">Borrower Identity</th>
+                                <th className="px-5 py-4">Prepared</th>
+                                <th className="px-5 py-4">Received</th>
+                                <th className="px-5 py-4">Follow-up</th>
+                                <th className="px-5 py-4">Remarks</th>
+                                <th className="px-5 py-4 text-center">Status</th>
+                                <th className="px-5 py-4 text-center">Action</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50 transition-colors duration-300">
+                        <tbody className="divide-y divide-slate-50 dark:divide-slate-700/50 transition-colors duration-300">
                             {filteredDLs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={10} className="py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px]">No legal records found in this branch.</td>
+                                    <td colSpan={8} className="py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px]">No legal records found in this branch.</td>
                                 </tr>
                             ) : filteredDLs.map((dl) => {
                                 const todayStr = new Date().toISOString().split('T')[0];
-                                const isOverdue = dl.followUpDate && dl.followUpDate <= todayStr;
+                                const tomorrowTemp = new Date();
+                                tomorrowTemp.setDate(tomorrowTemp.getDate() + 1);
+                                const tomorrowStr = tomorrowTemp.toISOString().split('T')[0];
+
+                                const isOverdue = dl.followUpDate && dl.followUpDate <= todayStr && dl.status !== DemandLetterStatus.SETTLED && dl.status !== DemandLetterStatus.COMPLETED;
+                                const isTomorrow = dl.followUpDate && dl.followUpDate === tomorrowStr && dl.status !== DemandLetterStatus.SETTLED && dl.status !== DemandLetterStatus.COMPLETED;
                                 const isThirdDL = dl.type === DemandLetterType.THIRD;
                                 const isSettled = dl.status === DemandLetterStatus.SETTLED;
 
-                                const hasSecond = demandLetters.some(d => d.loanId === dl.loanId && d.type === DemandLetterType.SECOND);
-                                const hasThird = demandLetters.some(d => d.loanId === dl.loanId && d.type === DemandLetterType.THIRD);
+                                const clientDLs = augmentedDLs.filter(d => d.loanId === dl.loanId && d.status !== DemandLetterStatus.SETTLED);
+                                const hasLitigation = clientDLs.some(d => d.type === DemandLetterType.THIRD && d.autoEscalationStatus !== null);
+                                const hasFinalNotice = clientDLs.some(d => d.type === DemandLetterType.THIRD && d.autoEscalationStatus === null);
+                                const hasSecondDemand = clientDLs.some(d => d.type === DemandLetterType.SECOND);
+
+                                const hasThird = hasLitigation || hasFinalNotice;
+                                const hasSecond = hasSecondDemand;
+
+                                let overrideStatusText: string | null = null;
+                                let overrideStatusColor: string | null = null;
+
+                                if (dl.status !== DemandLetterStatus.SETTLED && filterType !== 'For Legal Action') {
+                                    if (dl.type === DemandLetterType.FIRST) {
+                                        if (hasLitigation) {
+                                            overrideStatusText = "For Litigation";
+                                            overrideStatusColor = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+                                        } else if (hasFinalNotice) {
+                                            overrideStatusText = "Final Notice on Process";
+                                            overrideStatusColor = "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400";
+                                        } else if (hasSecondDemand) {
+                                            overrideStatusText = "2nd Demand on Process";
+                                            overrideStatusColor = "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+                                        }
+                                    } else if (dl.type === DemandLetterType.SECOND) {
+                                        if (hasLitigation) {
+                                            overrideStatusText = "For Litigation";
+                                            overrideStatusColor = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+                                        } else if (hasFinalNotice) {
+                                            overrideStatusText = "Final Notice on Process";
+                                            overrideStatusColor = "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400";
+                                        }
+                                    } else if (dl.type === DemandLetterType.THIRD) {
+                                        if (hasLitigation && dl.autoEscalationStatus === null) {
+                                            overrideStatusText = "For Litigation";
+                                            overrideStatusColor = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+                                        }
+                                    }
+                                }
 
                                 const priority = isSettled ? PriorityLevel.LOWEST :
                                     (isOverdue || isThirdDL ? PriorityLevel.TOP : PriorityLevel.FOLLOW_UP);
 
                                 return (
-                                    <tr key={dl.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-all duration-200">
-                                        <td className="px-3 py-2.5 text-slate-400 dark:text-slate-500 font-bold uppercase text-[9px] tracking-widest transition-colors duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 truncate max-w-[100px]">{dl.collectorName}</td>
-                                        <td className="px-3 py-2.5 font-bold text-slate-700 dark:text-slate-300 text-[13px] transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 truncate max-w-[150px]">{dl.borrowerName}</td>
-                                        <td className="px-3 py-2.5">
-                                            <span className="text-emerald-700 dark:text-emerald-400 font-black text-[9px] uppercase tracking-widest bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded transition-colors duration-300">
-                                                {dl.type}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2.5 text-slate-500 dark:text-slate-400 font-medium text-xs transition-colors duration-300">{dl.datePrepared}</td>
-                                        <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300 font-bold text-xs border-l border-emerald-50/50 dark:border-emerald-900/30 bg-emerald-50/10 dark:bg-emerald-900/10 transition-colors duration-300">
-                                            {dl.dateReceived || <span className="text-slate-300 dark:text-slate-600 italic font-medium">Pending</span>}
-                                        </td>
-                                        <td className="px-3 py-2.5">
-                                            <span className={`font-black uppercase text-[9px] tracking-widest transition-colors duration-300 ${priority === PriorityLevel.TOP ? 'text-red-500 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'}`}>
-                                                {dl.followUpDate || '-'}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2.5">
-                                            <div className="flex flex-col">
-                                                <span className={`font-black text-[10px] ${
-                                                    dl.daysSinceLastAction >= 8 ? 'text-red-600 dark:text-red-400' :
-                                                    dl.daysSinceLastAction >= 4 ? 'text-amber-500 dark:text-amber-400' :
-                                                    'text-emerald-600 dark:text-emerald-400'
-                                                }`}>
-                                                    {dl.daysSinceLastAction}d ago
-                                                </span>
-                                                <span className="text-[8px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">{dl.lastActivityDate.toISOString().split('T')[0]}</span>
+                                    <tr key={dl.id} className="group hover:bg-slate-50/70 dark:hover:bg-slate-800/80 transition-all duration-200">
+                                        <td className="px-5 py-4 text-slate-500 dark:text-slate-400 font-medium text-sm transition-colors duration-300 truncate max-w-[100px]">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                                                    {dl.collectorName.substring(0,2).toUpperCase()}
+                                                </div>
+                                                <span className="truncate">{dl.collectorName}</span>
                                             </div>
                                         </td>
-                                        <td className="px-3 py-2.5 max-w-[120px]">
+                                        <td className="px-5 py-4 font-bold text-slate-800 dark:text-slate-200 text-sm transition-all duration-300 truncate max-w-[150px]">
+                                            <div className="flex items-center gap-2.5">
+                                                <div className="flex-none w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center text-xs font-bold">
+                                                    {dl.borrowerName.substring(0, 2).toUpperCase()}
+                                                </div>
+                                                <span className="truncate">{dl.borrowerName}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-5 py-4 text-slate-600 dark:text-slate-400 font-medium text-sm transition-colors duration-300">
+                                            {dl.datePrepared ? new Date(dl.datePrepared).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '-'}
+                                        </td>
+                                        <td className="px-5 py-4 text-slate-600 dark:text-slate-400 font-medium text-sm transition-colors duration-300">
+                                            {dl.dateReceived ? new Date(dl.dateReceived).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : <span className="text-slate-400 italic">Pending</span>}
+                                        </td>
+                                        <td className="px-5 py-4 text-slate-600 dark:text-slate-400 font-medium text-sm transition-colors duration-300">
+                                            {dl.followUpDate ? new Date(dl.followUpDate).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '-'}
+                                        </td>
+                                        <td className="px-5 py-4 max-w-[120px]">
                                             <div className="group/tooltip relative">
-                                                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate italic cursor-help transition-colors duration-300">
-                                                    {dl.remarks ? `"${dl.remarks}"` : <span className="text-slate-300 dark:text-slate-600">No remarks</span>}
+                                                <p className="text-[13px] text-slate-500 dark:text-slate-400 truncate cursor-help transition-colors duration-300">
+                                                    {dl.remarks ? dl.remarks : <span className="text-slate-300 dark:text-slate-600 italic">No remarks</span>}
                                                 </p>
                                                 {dl.remarks && (
-                                                    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] p-2 bg-slate-800 dark:bg-slate-700 text-white text-[10px] rounded-lg shadow-xl opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none whitespace-normal break-words">
+                                                    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] p-2 bg-slate-800 dark:bg-slate-700 text-white text-[11px] rounded-lg shadow-xl opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none whitespace-normal break-words">
                                                         {dl.remarks}
                                                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800 dark:border-t-slate-700"></div>
                                                     </div>
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-3 py-2.5 text-center">
-                                            <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors duration-300 ${
-                                                dl.autoEscalationStatus === 'Ready for Legal Action' ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400' :
-                                                dl.autoEscalationStatus === 'For Legal Review' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400' :
-                                                dl.status === DemandLetterStatus.SETTLED ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400' :
-                                                dl.status === DemandLetterStatus.FOLLOW_UP ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400' :
-                                                    'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold'
-                                                }`}>
-                                                {dl.autoEscalationStatus || (dl.status === DemandLetterStatus.FOLLOW_UP ? 'Follow-up' : dl.status)}
-                                            </span>
+                                        <td className="px-5 py-4 text-center">
+                                            <div className="group/statustooltip relative inline-block">
+                                                <span className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors duration-300 ${
+                                                    overrideStatusColor ? overrideStatusColor :
+                                                    dl.autoEscalationStatus === 'Ready for Legal Action' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                    dl.autoEscalationStatus === 'For Legal Review' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                                    dl.status === DemandLetterStatus.SETTLED ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400' :
+                                                    isOverdue ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                    isTomorrow ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                                                    dl.status === DemandLetterStatus.FOLLOW_UP ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                                                        'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                                    }`}>
+                                                    {overrideStatusText ? overrideStatusText : (
+                                                        dl.autoEscalationStatus || 
+                                                        (dl.status === DemandLetterStatus.SETTLED ? dl.status :
+                                                         isOverdue ? 'Urgent Action Required' :
+                                                         isTomorrow ? 'Upcoming Follow-up' :
+                                                         (dl.status === DemandLetterStatus.FOLLOW_UP ? 'Follow-up' : dl.status))
+                                                    )}
+                                                </span>
+                                                {overrideStatusText && (
+                                                    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[200px] p-2 bg-slate-800 dark:bg-slate-700 text-white text-[11px] rounded-lg shadow-xl opacity-0 group-hover/statustooltip:opacity-100 transition-opacity pointer-events-none whitespace-normal break-words">
+                                                        Client already progressed to {overrideStatusText.replace(' on Process', '')}
+                                                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800 dark:border-t-slate-700"></div>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </td>
-                                        <td className="px-3 py-2.5">
-                                            <PriorityBadge level={priority} />
-                                        </td>
-                                        <td className="px-3 py-2.5 text-center">
+                                        <td className="px-5 py-4 text-center">
                                             <div className="flex items-center justify-center gap-1.5">
                                                 {dl.type === DemandLetterType.FIRST && (
                                                     hasThird ? (
@@ -468,19 +523,7 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
     );
 };
 
-const PriorityBadge: React.FC<{ level: PriorityLevel }> = ({ level }) => {
-    const styles = {
-        [PriorityLevel.TOP]: 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-100 dark:border-red-900/50',
-        [PriorityLevel.FOLLOW_UP]: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-900/50',
-        [PriorityLevel.MONITOR]: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-900/50',
-        [PriorityLevel.LOWEST]: 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-700',
-    };
-    return (
-        <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tight border transition-colors duration-300 ${styles[level]}`}>
-            {level === PriorityLevel.MONITOR ? 'Urgent' : level}
-        </span>
-    );
-};
+
 
 interface FieldVisitModalProps {
     dl: any;
@@ -507,6 +550,7 @@ const FieldVisitModal: React.FC<FieldVisitModalProps> = ({ dl, currentUser, onCl
         const remarkText = `[Field Visit] ${visitData.result} - ${visitData.remarks}`;
         
         await store.addRemark(dl.loanId, remarkText, dl.collectorName, priority, currentUser.username, currentUser.role);
+        store.updateDemandLetter(dl.id, { remarks: remarkText }, currentUser.username, currentUser.role);
         
         if (onSuccess) onSuccess("Field visit successfully logged.");
         onClose();
@@ -611,13 +655,16 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
     // Auto-compute follow-up date based on date received and legal stage
     useEffect(() => {
         if (formData.dateReceived) {
-            const received = new Date(formData.dateReceived);
+            const received = new Date(formData.dateReceived + 'T00:00:00');
             if (formData.type === DemandLetterType.FIRST || formData.type === DemandLetterType.SECOND) {
                 received.setDate(received.getDate() + 10);
             } else if (formData.type === DemandLetterType.THIRD) {
                 received.setDate(received.getDate() + 5);
             }
-            const computedFollowUp = received.toISOString().split('T')[0];
+            const y = received.getFullYear();
+            const m = String(received.getMonth() + 1).padStart(2, '0');
+            const day = String(received.getDate()).padStart(2, '0');
+            const computedFollowUp = `${y}-${m}-${day}`;
             if (formData.followUpDate !== computedFollowUp) {
                 setFormData(prev => ({ ...prev, followUpDate: computedFollowUp }));
             }
@@ -1115,17 +1162,24 @@ interface ReceivedDemandLetterModalProps {
 const ReceivedDemandLetterModal: React.FC<ReceivedDemandLetterModalProps> = ({ dl, currentUser, onClose, onSuccess }) => {
     const today = new Date().toISOString().split('T')[0];
 
+    const getLocalISODate = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+
     // Compute auto follow-up (1st/2nd: +10 days, 3rd: +5 days)
     const computeFollowUp = (received: string) => {
         if (!received) return '';
         const d = new Date(received + 'T00:00:00');
         d.setDate(d.getDate() + (dl.type === DemandLetterType.THIRD ? 5 : 10));
-        return d.toISOString().split('T')[0];
+        return getLocalISODate(d);
     };
 
     const [dateReceived, setDateReceived] = useState(dl.dateReceived || today);
     const [followUpDate, setFollowUpDate] = useState(computeFollowUp(dl.dateReceived || today));
-    const [remarkText, setRemarkText] = useState('');
+    const [remarkText, setRemarkText] = useState(dl.remarks || '');
     const [ptpDate, setPtpDate] = useState('');
     const [schedType, setSchedType] = useState<'monthly' | 'weekly'>('monthly');
     const [recurringEnabled, setRecurringEnabled] = useState(false);
@@ -1149,15 +1203,17 @@ const ReceivedDemandLetterModal: React.FC<ReceivedDemandLetterModalProps> = ({ d
         let month = today.getMonth();
         let year = today.getFullYear();
         for (const day of sorted) {
-            if (day > todayDay) {
+            if (day >= todayDay) {
                 const lastDay = new Date(year, month + 1, 0).getDate();
-                return new Date(year, month, Math.min(day, lastDay)).toISOString().split('T')[0];
+                const d = new Date(year, month, Math.min(day, lastDay));
+                return getLocalISODate(d);
             }
         }
         month += 1;
         if (month > 11) { month = 0; year += 1; }
         const lastDay = new Date(year, month + 1, 0).getDate();
-        return new Date(year, month, Math.min(sorted[0], lastDay)).toISOString().split('T')[0];
+        const d = new Date(year, month, Math.min(sorted[0], lastDay));
+        return getLocalISODate(d);
     };
 
     const computeNextWeekly = (wDays: number[]) => {
@@ -1165,10 +1221,10 @@ const ReceivedDemandLetterModal: React.FC<ReceivedDemandLetterModalProps> = ({ d
         const ref = new Date();
         const cur = ref.getDay();
         for (const d of sorted) {
-            if (d > cur) { ref.setDate(ref.getDate() + (d - cur)); return ref.toISOString().split('T')[0]; }
+            if (d >= cur) { ref.setDate(ref.getDate() + (d - cur)); return getLocalISODate(ref); }
         }
         ref.setDate(ref.getDate() + (7 - cur + sorted[0]));
-        return ref.toISOString().split('T')[0];
+        return getLocalISODate(ref);
     };
 
     const formatSuffix = (d: number) => {
@@ -1187,6 +1243,7 @@ const ReceivedDemandLetterModal: React.FC<ReceivedDemandLetterModalProps> = ({ d
                 dateReceived,
                 followUpDate: followUpDate || undefined,
                 status: DemandLetterStatus.FOLLOW_UP,
+                remarks: remarkText.trim()
             };
             store.updateDemandLetter(dl.id, dlUpdate, currentUser.username, currentUser.role);
 

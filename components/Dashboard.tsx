@@ -9,17 +9,50 @@ interface DashboardProps {
   selectedBranch: Branch;
 }
 
-const KpiCard: React.FC<{ title: string; value: string | number; subValue?: string; icon: string; color?: string }> = ({ title, value, subValue, icon, color = "text-slate-900" }) => (
-  <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 hover:shadow-md hover:border-emerald-100 dark:hover:border-emerald-900/30 transition-all duration-300 group">
-    <div className="flex justify-between items-start mb-2">
-      <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">{title}</span>
-      <span className="text-lg grayscale group-hover:grayscale-0 transition-all duration-300">{icon}</span>
+const KpiCard: React.FC<{ title: string; value: string | number; subValue?: string; icon: string; statusIndicator?: {text: string, type: 'positive' | 'neutral' | 'critical' | 'info'} }> = ({ title, value, subValue, icon, statusIndicator }) => {
+  const statusStyles = {
+    positive: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    info: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+    neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+  };
+
+  return (
+    <div className="bg-white dark:bg-slate-800 p-6 rounded-[1.5rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col justify-between h-full transition-colors duration-300 relative overflow-hidden group mt-2">
+        <div className="flex justify-between items-start mb-6 relative z-10">
+            <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-xl shadow-inner border border-slate-100 dark:border-slate-700 group-hover:scale-110 transition-transform duration-300">
+                    {icon}
+                </div>
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{title}</span>
+            </div>
+            {statusIndicator && (
+                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${statusStyles[statusIndicator.type]}`}>
+                    {statusIndicator.text}
+                </span>
+            )}
+        </div>
+        <div className="flex justify-between items-end relative z-10">
+            <div className="flex flex-col">
+                <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{value}</span>
+                {subValue && <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 mt-1">{subValue}</span>}
+            </div>
+        </div>
+        <div className="absolute -bottom-6 -right-4 text-8xl opacity-[0.03] grayscale pointer-events-none group-hover:scale-110 transition-transform duration-500">{icon}</div>
     </div>
-    <div className="flex flex-col">
-      <span className={`text-xl font-black tracking-tight dark:text-white transition-colors duration-300 ${color}`}>{value}</span>
-      {subValue && <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mt-1 transition-colors duration-300">{subValue}</span>}
+  );
+};
+
+const SecondaryMetricCard: React.FC<{ title: string; value: string | number; subline: string; color: string }> = ({ title, value, subline, color }) => (
+    <div className="bg-white dark:bg-slate-800 py-4 px-6 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between shadow-sm">
+        <div className="flex flex-col">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1">{title}</span>
+            <span className={`text-xl font-black ${color}`}>{value}</span>
+        </div>
+        <div className="text-right flex flex-col items-end">
+            <span className="text-xs font-bold text-slate-500 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-md">{subline}</span>
+        </div>
     </div>
-  </div>
 );
 
 
@@ -31,6 +64,17 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   const [recentPayments, setRecentPayments] = useState(store.getRecentPayments(selectedBranch));
   const [aiInsight, setAiInsight] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [collectorViewMode, setCollectorViewMode] = useState<'Balance View' | 'Performance View'>('Balance View');
+
+  const sortedCollectorData = [...collectorData].sort((a, b) => {
+    if (collectorViewMode === 'Performance View') {
+      const aPerf = a.reportedAmount > 0 ? (a.collectedAmount / a.reportedAmount) : 0;
+      const bPerf = b.reportedAmount > 0 ? (b.collectedAmount / b.reportedAmount) : 0;
+      return bPerf - aPerf;
+    } else {
+      return b.reportedAmount - a.reportedAmount;
+    }
+  });
 
   useEffect(() => {
     const refreshData = () => {
@@ -59,166 +103,166 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   };
 
   return (
-    <div className="space-y-8 animate-fadeIn max-w-[1600px] mx-auto">
-      {/* Primary Summary row - Compact */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard title="Total Accounts" value={stats.totalAccounts} icon="📋" />
-        <KpiCard title="Total Collected" value={`₱${stats.totalCollected.toLocaleString()}`} icon="💰" color="text-green-600" />
-        <KpiCard title="Total Outstanding" value={`₱${stats.totalOutstanding.toLocaleString()}`} icon="📊" color="text-red-600" />
-        <KpiCard title="Running Balance" value={`₱${stats.totalRunning.toLocaleString()}`} icon="📉" color="text-blue-600" />
+    <div className="space-y-6 animate-fadeIn max-w-[1600px] mx-auto pb-10">
+      
+      {/* Header SECTION */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700">
+        <div>
+           <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Institutional Performance Matrix</h1>
+           <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1.5 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+              Daily Settlement & Portfolio Overview — As of {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+           </p>
+        </div>
+        <div className="flex items-center gap-3 w-full md:w-auto">
+           <button className="flex-1 md:flex-none border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300 px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-sm">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+              Last 30 Days
+           </button>
+           <button className="flex-1 md:flex-none bg-[#064e3b] hover:bg-[#043326] text-white px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+              Export CSV
+           </button>
+        </div>
       </div>
 
-      {/* Status Detail row - Compact */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard title="Not Moving" value={`₱${stats.statusData.NM.amount.toLocaleString()}`} subValue={`${stats.statusData.NM.count} Clients`} icon="⏳" color="text-orange-600" />
-        <KpiCard title="Moving" value={`₱${stats.statusData.Moving.amount.toLocaleString()}`} subValue={`${stats.statusData.Moving.count} Clients`} icon="🏃" color="text-blue-600" />
-        <KpiCard title="Paid" value={`₱${stats.statusData.Paid.amount.toLocaleString()}`} subValue={`${stats.statusData.Paid.count} Clients`} icon="✅" color="text-green-600" />
-        <KpiCard title="NM Since Release" value={`₱${stats.statusData.NMSR.amount.toLocaleString()}`} subValue={`${stats.statusData.NMSR.count} Clients`} icon="🚨" color="text-red-600" />
+      {/* KPI Cards (Top Summary) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <KpiCard title="Total Accounts" value={stats.totalAccounts} icon="👥" statusIndicator={{text: 'Stable', type: 'positive'}} />
+        <KpiCard title="Total Collected" value={`₱${stats.totalCollected.toLocaleString()}`} icon="💳" statusIndicator={{text: 'Today', type: 'info'}} />
+        <KpiCard title="Total Outstanding" value={`₱${stats.totalOutstanding.toLocaleString()}`} icon="📈" statusIndicator={{text: 'Pending', type: 'neutral'}} />
+        <KpiCard title="Running Balance" value={`₱${stats.totalRunning.toLocaleString()}`} icon="📉" statusIndicator={{text: 'Critical', type: 'critical'}} />
       </div>
 
+      {/* Secondary Metrics Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <SecondaryMetricCard title="Not Moving" value={`₱${stats.statusData.NM.amount.toLocaleString()}`} subline={`${stats.statusData.NM.count} Clients`} color="text-slate-800 dark:text-white" />
+        <SecondaryMetricCard title="Moving" value={`₱${stats.statusData.Moving.amount.toLocaleString()}`} subline={`${stats.statusData.Moving.count} Clients`} color="text-slate-800 dark:text-white" />
+        <SecondaryMetricCard title="Paid" value={`₱${stats.statusData.Paid.amount.toLocaleString()}`} subline={`${stats.statusData.Paid.count} Clients`} color="text-emerald-600 dark:text-emerald-400" />
+        <SecondaryMetricCard title="NM Since Release" value={`₱${stats.statusData.NMSR.amount.toLocaleString()}`} subline={`${stats.statusData.NMSR.count} Clients`} color="text-red-500 dark:text-red-400" />
+      </div>
 
-      {/* Main Charts Row - Optimized for visibility */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-8 bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 transition-colors duration-300">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white transition-colors duration-300">Collector Performance Matrix</h3>
-            <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest transition-colors duration-300">Branch Profile: {selectedBranch}</span>
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+        
+        {/* LEFT SIDE: Collector Performance Matrix */}
+        <div className="lg:col-span-8 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[500px]">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+            <div>
+               <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Collector Performance Matrix</h3>
+               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Handled balance distribution per field personnel</span>
+            </div>
+            <select 
+                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-300 py-2 px-4 rounded-xl outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-colors"
+                value={collectorViewMode}
+                onChange={(e) => setCollectorViewMode(e.target.value as 'Balance View' | 'Performance View')}
+            >
+                <option value="Balance View">Balance View</option>
+                <option value="Performance View">Performance View</option>
+            </select>
           </div>
-          <div className="h-72 mt-4 ml-[-20px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={collectorData}>
-                <defs>
-                  <linearGradient id="colorTarget" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={1}/>
-                    <stop offset="100%" stopColor="#60a5fa" stopOpacity={0.8}/>
-                  </linearGradient>
-                  <linearGradient id="colorCollected" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#059669" stopOpacity={1}/>
-                    <stop offset="100%" stopColor="#10b981" stopOpacity={0.8}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis 
-                  dataKey="collector" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }} 
-                  dy={10} 
-                  interval={0}
-                  angle={-15}
-                  textAnchor="end"
-                />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }} 
-                  tickFormatter={(value) => `₱${value.toLocaleString()}`}
-                  width={90}
-                />
-                <Tooltip 
-                  cursor={{ fill: 'rgba(5, 150, 105, 0.05)' }} 
-                  contentStyle={{ 
-                    borderRadius: '16px', 
-                    border: '1px solid #e2e8f0', 
-                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
-                    padding: '16px'
-                  }}
-                  itemStyle={{ fontWeight: 900, fontSize: '13px', paddingTop: '4px' }}
-                  labelStyle={{ fontWeight: 900, color: '#64748b', marginBottom: '8px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}
-                  formatter={(value: number) => [`₱${value.toLocaleString()}`, undefined]}
-                />
-                <Bar 
-                  dataKey="reportedAmount" 
-                  name="Target Amount" 
-                  fill="url(#colorTarget)" 
-                  radius={[6, 6, 0, 0]} 
-                  barSize={32} 
-                />
-                <Bar 
-                  dataKey="collectedAmount" 
-                  name="Collected Amount" 
-                  fill="url(#colorCollected)" 
-                  radius={[6, 6, 0, 0]} 
-                  barSize={32} 
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-700 transition-colors duration-300">
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-3xl transition-colors duration-300">
-              <strong>Collector Performance Matrix</strong> shows the total outstanding balance handled by each collector within the selected branch. This visualization helps management quickly identify workload distribution, performance levels, and collection responsibility across field agents. The chart allows supervisors to easily compare collectors and monitor account distribution and recovery focus.
-            </p>
+          
+          <div className="flex-1 overflow-y-auto pr-2 pb-2 custom-scrollbar space-y-6 mt-2">
+             {sortedCollectorData.map(cd => {
+                 const percentage = cd.reportedAmount > 0 ? (cd.collectedAmount / cd.reportedAmount) * 100 : 0;
+                 return (
+                     <div key={cd.collector} className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 group">
+                         <div className="w-full sm:w-32 shrink-0 font-bold text-sm text-slate-700 dark:text-slate-300 truncate">
+                             {cd.collector}
+                         </div>
+                         <div className="flex-1 h-3.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden relative shadow-inner">
+                             <div className="absolute top-0 left-0 h-full bg-[#064e3b] dark:bg-emerald-500 rounded-full transition-all duration-1000" style={{ width: `${Math.max(Math.min(percentage, 100), 1)}%` }}></div>
+                         </div>
+                         <div className="w-full sm:w-32 shrink-0 text-left sm:text-right flex flex-row sm:flex-col justify-between sm:justify-start">
+                             <div className="font-bold text-sm text-slate-800 dark:text-white">₱{cd.collectedAmount.toLocaleString()}</div>
+                             <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">/ ₱{cd.reportedAmount.toLocaleString()}</div>
+                         </div>
+                     </div>
+                 )
+             })}
+             {collectorData.length === 0 && (
+                <div className="h-full flex items-center justify-center text-slate-400 italic text-sm">No data available for the chosen branch.</div>
+             )}
           </div>
         </div>
 
-        <div className="lg:col-span-4 bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col transition-colors duration-300">
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2 transition-colors duration-300">Account Distribution by Collector</h3>
-          <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-6 border-b border-slate-50 dark:border-slate-700 pb-2 transition-colors duration-300">Client load per personnel</p>
-          <div className="h-48 flex items-center justify-center shrink-0">
+        {/* RIGHT SIDE: Account Distribution */}
+        <div className="lg:col-span-4 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[500px]">
+          <div className="mb-4">
+            <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Account Distribution</h3>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Client load by personnel</span>
+          </div>
+          
+          <div className="relative h-56 flex items-center justify-center shrink-0 mb-4">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={collectorDistribution} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={4} dataKey="value">
-                  {collectorDistribution.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
-                  ))}
+                <Pie data={collectorDistribution} cx="50%" cy="50%" innerRadius={70} outerRadius={90} paddingAngle={4} dataKey="value" stroke="none">
+                  {collectorDistribution.map((_, index) => {
+                     const chartColors = ['#064e3b', '#047857', '#10b981', '#34d399', '#6ee7b7', '#94a3b8', '#cbd5e1'];
+                     return <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
+                  })}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold' }}
-                  formatter={(value) => [`${value} Clients`, 'Load']}
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', fontSize: '12px', fontWeight: 'bold' }}
                 />
               </PieChart>
             </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-2">
+               <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{stats.totalAccounts}</span>
+               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Total Clients</span>
+            </div>
           </div>
-          <div className="mt-6 space-y-2.5 overflow-y-auto max-h-[300px] pr-2 custom-scrollbar">
-            {collectorDistribution.map((item, index) => (
-              <div key={item.name} className="flex items-center justify-between text-[11px] group cursor-default">
-                <div className="flex items-center gap-3">
-                  <div className="w-2.5 h-2.5 rounded-full shadow-sm group-hover:scale-125 transition-transform duration-300" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                  <span className="text-slate-600 dark:text-slate-300 font-bold uppercase tracking-tight group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors duration-300">{item.name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-black text-slate-800 dark:text-white transition-colors duration-300">{item.value.toLocaleString()}</span>
-                  <span className="text-[9px] font-black text-slate-300 dark:text-slate-500 uppercase italic transition-colors duration-300">Clients</span>
-                </div>
+          
+          <div className="space-y-1.5 overflow-y-auto pr-2 flex-1 custom-scrollbar">
+            {collectorDistribution.map((item, index) => {
+              const listColors = ['#064e3b', '#047857', '#10b981', '#34d399', '#6ee7b7', '#94a3b8', '#cbd5e1'];
+              const color = listColors[index % listColors.length];
+              return (
+              <div key={item.name} className="flex justify-between items-center py-2.5 px-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors duration-200">
+                 <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 rounded-md shadow-sm" style={{ backgroundColor: color }}></div>
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{item.name}</span>
+                 </div>
+                 <span className="font-bold text-slate-800 dark:text-white">{item.value.toLocaleString()} <span className="text-slate-400 font-medium text-xs ml-1">accts</span></span>
               </div>
-            ))}
+            )})}
             {collectorDistribution.length === 0 && (
-              <div className="py-10 text-center text-slate-400 italic text-xs">No collectors assigned yet.</div>
+                <div className="py-8 text-center text-slate-400 italic text-sm">No clients assigned.</div>
             )}
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 transition-colors duration-300">
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2 transition-colors duration-300">
-            <svg className="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch mt-6">
+        <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[400px]">
+          <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
+            <svg className="w-5 h-5 text-[#064e3b] dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
             Recent Collections
           </h3>
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto pr-2 flex-1 custom-scrollbar">
             {recentPayments.map((payment) => (
-              <div key={payment.id} className="group flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-xl hover:bg-emerald-50 dark:hover:bg-slate-700 hover:shadow-sm hover:-translate-y-0.5 transition-all duration-300 border border-transparent hover:border-emerald-100 dark:hover:border-slate-600 cursor-pointer">
+              <div key={payment.id} className="group flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl hover:bg-emerald-50 dark:hover:bg-slate-700/50 hover:shadow-sm transition-all duration-300 border border-transparent hover:border-emerald-100 dark:hover:border-slate-600">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-lg flex items-center justify-center shadow-sm text-lg font-bold text-emerald-600 dark:text-emerald-400 transition-colors duration-300">₱</div>
+                  <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center shadow-sm text-lg font-bold text-[#064e3b] dark:text-emerald-400">₱</div>
                   <div>
-                    <p className="font-bold text-slate-800 dark:text-white transition-colors duration-300">{payment.borrowerName}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium transition-colors duration-300">{payment.date}</p>
+                    <p className="font-bold text-slate-800 dark:text-white text-sm">{payment.borrowerName}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">{payment.date}</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="font-bold text-emerald-600 dark:text-emerald-400 transition-colors duration-300">+₱{payment.amount.toLocaleString()}</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase transition-colors duration-300">Recorded by {payment.recorder}</p>
+                  <p className="font-bold text-[#064e3b] dark:text-emerald-400">+₱{payment.amount.toLocaleString()}</p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider mt-0.5">Recorded by {payment.recorder}</p>
                 </div>
               </div>
             ))}
             {recentPayments.length === 0 && (
-              <p className="text-center py-8 text-slate-400 italic">No recent transactions in this branch.</p>
+              <p className="text-center py-8 text-slate-400 italic text-sm">No recent transactions in this branch.</p>
             )}
           </div>
         </div>
 
-        <div className="bg-[#064e3b] text-white p-8 rounded-2xl shadow-xl shadow-emerald-900/20 relative overflow-hidden flex flex-col justify-center">
-          <div className="absolute top-0 right-0 p-4 opacity-5">
+        <div className="bg-[#064e3b] text-white p-6 md:p-8 rounded-[2rem] shadow-xl shadow-emerald-900/20 relative overflow-hidden flex flex-col justify-center h-[400px]">
+          <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
             <svg className="w-64 h-64" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
           </div>
           <div className="relative z-10 h-full flex flex-col">
@@ -229,20 +273,20 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
               <button
                 onClick={fetchAiInsight}
                 disabled={isAiLoading}
-                className="bg-white/10 backdrop-blur hover:bg-white/20 text-white px-4 py-2 rounded-xl font-bold text-xs transition-all disabled:opacity-50"
+                className="bg-white/10 backdrop-blur hover:bg-white/20 text-white px-5 py-2.5 rounded-xl font-bold text-xs transition-all disabled:opacity-50 border border-white/10"
               >
                 {isAiLoading ? 'Analyzing...' : 'Refresh Insights'}
               </button>
             </div>
-            <div className="flex-1 bg-black/20 backdrop-blur-md p-6 rounded-2xl border border-white/10">
+            <div className="flex-1 bg-black/20 backdrop-blur-md p-6 rounded-2xl border border-white/10 overflow-y-auto custom-scrollbar">
               {aiInsight ? (
                 <div className="prose prose-invert prose-sm max-w-none">
                   <p className="leading-relaxed text-emerald-50 font-medium whitespace-pre-wrap">{aiInsight}</p>
                 </div>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-center py-6">
-                  <div className="w-12 h-12 bg-emerald-800 rounded-full flex items-center justify-center mb-4 text-xl">🤖</div>
-                  <p className="italic text-emerald-300 font-medium">Click "Refresh Insights" to let Gemini scan branch data for collection strategies.</p>
+                  <div className="w-14 h-14 bg-emerald-800/80 rounded-2xl flex items-center justify-center mb-4 text-2xl shadow-inner border border-white/5">🤖</div>
+                  <p className="italic text-emerald-300 font-medium text-sm">Click "Refresh Insights" to let Gemini scan branch data for collection strategies.</p>
                 </div>
               )}
             </div>

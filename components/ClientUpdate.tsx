@@ -2,10 +2,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
 import { PriorityLevel, Branch, User, Loan } from '../types.ts';
+import ClientModal from './ClientModal.tsx';
+import ClientFormModal from './ClientFormModal.tsx';
+import RemarksModal from './RemarksModal.tsx';
+import { useClientUpdates } from '../hooks/useClientUpdates.ts';
 
 interface ClientUpdateProps {
   selectedBranch: Branch;
   currentUser: User;
+  activeView?: 'All' | 'Priority' | 'Monitoring' | 'Follow-up' | 'Updates Log';
 }
 
 interface ReminderItem {
@@ -15,9 +20,9 @@ interface ReminderItem {
   context: string;
 }
 
-const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser }) => {
-  const [loans, setLoans] = useState(store.getLoans(selectedBranch));
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Priority' | 'Monitoring' | 'Follow-up' | 'Updates Log'>('All');
+const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser, activeView }) => {
+  const { loans, updateList, topPriorityList, reminderList, closeMonitoringList, filteredMainList } = useClientUpdates(selectedBranch);
+  const activeFilter = activeView || 'All';
   const [collapsedSections, setCollapsedSections] = useState({
     priority: false,
     monitoring: false,
@@ -25,13 +30,17 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     log: false
   });
 
-  useEffect(() => {
-    setLoans(store.getLoans(selectedBranch));
-    // Subscribe to store updates for real-time sync
-    const unsubscribe = store.subscribe(() => {
-      setLoans(store.getLoans(selectedBranch));
-    });
+  const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
+  const [editLoan, setEditLoan] = useState<Loan | null>(null);
+  const [remarksLoan, setRemarksLoan] = useState<Loan | null>(null);
 
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const refreshData = () => {
+    // Rely on the hook's subscription for updates
+  };
+
+  useEffect(() => {
     // Run Same-Day No-Payment Check
     // If a client in Top Priority (remark date != today) AND not paid -> Downgrade priority
     const checkExpiredPriority = async () => {
@@ -49,49 +58,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
       });
     };
     checkExpiredPriority();
-
-    return () => unsubscribe();
   }, [selectedBranch]);
-
-  const updateList = useMemo(() => {
-    return loans
-      .filter(l => l.remarks.length > 0)
-      .map(l => ({
-        ...l,
-        latestRemark: l.remarks[l.remarks.length - 1]
-      }))
-      .sort((a, b) => new Date(b.latestRemark.timestamp).getTime() - new Date(a.latestRemark.timestamp).getTime());
-  }, [loans]);
-
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
-  const tomorrowStr = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
-  }, []);
-  
-  const checkIsPriority = (l: any) => {
-    // Auto-detect fulfilled commitments: If they paid today, they shouldn't be in Critical Action today
-    const hasGoodPaymentToday = (l.payments || []).some((p: any) => p.status === 'GOOD' && p.date.startsWith(todayStr));
-    if (hasGoodPaymentToday) return false;
-
-    const isTopAi = l.aiPriority === PriorityLevel.TOP;
-    const isUnpaid = l.runningBalance > 0 && l.status !== 'Paid';
-    // Primary check: loan-level fields (synced from remarks on load/add)
-    const isDueToday = !!l.promiseToPayDate && l.promiseToPayDate === todayStr && isUnpaid;
-    const isFollowUpToday = !!l.followUpDate && l.followUpDate === todayStr && isUnpaid;
-    // Fallback: check the latest remark's ptpDate/followUpDate directly — guards against
-    // stale loan-level fields (e.g. if syncLoanInteractionDates hasn't run yet after load)
-    const latestRemark = l.remarks?.length > 0 ? l.remarks[l.remarks.length - 1] : null;
-    const remarkPtpToday = !!latestRemark?.ptpDate && latestRemark.ptpDate === todayStr && isUnpaid;
-    const remarkFuToday = !!latestRemark?.followUpDate && latestRemark.followUpDate === todayStr && isUnpaid;
-    return isTopAi || isDueToday || isFollowUpToday || remarkPtpToday || remarkFuToday;
-  };
-
-  // Logic for Top Priority Section
-  const topPriorityList = useMemo(() => {
-    return updateList.filter(l => checkIsPriority(l));
-  }, [updateList, todayStr]);
 
   const handleMarkCommitmentDone = async (loan: any) => {
     const isPaid = loan.outstandingBalance <= 0 || loan.status === 'Paid';
@@ -100,90 +67,6 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     // Optimistic update locally if needed, but store subscription should handle it
     await store.updateLoan(loan.id, { aiPriority: newPriority }, currentUser.username, currentUser.role);
   };
-
-  // Logic for Reminder Section (Advance early notification - triggers strictly 1 day prior)
-  const reminderList = useMemo(() => {
-    const reminders: ReminderItem[] = [];
-
-    updateList.forEach(l => {
-      if (l.status === 'Paid') return;
-      if (checkIsPriority(l)) {
-        return;
-      }
-
-      const isTomorrowPTP = !!l.promiseToPayDate && l.promiseToPayDate === tomorrowStr;
-      const isTomorrowFU = !!l.followUpDate && l.followUpDate === tomorrowStr;
-
-      if (isTomorrowPTP || isTomorrowFU) {
-        const type = isTomorrowPTP ? 'Payment' : 'Follow-up';
-        const dateStr = isTomorrowPTP ? l.promiseToPayDate : l.followUpDate;
-        
-        reminders.push({
-          loan: l,
-          date: new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' }),
-          type: type as any,
-          context: l.latestRemark.text
-        });
-      }
-    });
-
-    return reminders;
-  }, [updateList, todayStr, tomorrowStr]);
-
-  // Logic for Close Monitoring (Clients with critical dates reached but NO payment recorded after the date)
-  const closeMonitoringList = useMemo(() => {
-    return updateList.map(l => {
-      if (l.status === 'Paid') return null;
-      if (checkIsPriority(l)) return null;
-
-      // Only trigger if promised or follow-up date has passed
-      const hasPassedPTP = !!l.promiseToPayDate && l.promiseToPayDate < todayStr;
-      const hasPassedFollowUp = !!l.followUpDate && l.followUpDate < todayStr;
-      
-      if (!hasPassedPTP && !hasPassedFollowUp) return null;
-
-      // Determine the most recent critical date that triggered this monitoring
-      const passedDates = [];
-      if (hasPassedPTP) passedDates.push(l.promiseToPayDate);
-      if (hasPassedFollowUp) passedDates.push(l.followUpDate);
-      passedDates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-      const mostRecentPassedDate = passedDates[0];
-
-      // If they made a GOOD payment on or after the most recent critical date, they fulfilled the past commitment
-      const hasSatisfyingPayment = (l.payments || []).some((p: any) => p.status === 'GOOD' && p.date >= mostRecentPassedDate);
-      if (hasSatisfyingPayment) return null;
-
-      const goodPayments = (l.payments || []).filter((p: any) => p.status === 'GOOD');
-      let lastPaymentDateStr = null;
-      let daysWithoutPayment = 'N/A';
-
-      if (goodPayments.length > 0) {
-        const sortedPayments = goodPayments.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        lastPaymentDateStr = sortedPayments[0].date;
-        const diffMs = new Date().getTime() - new Date(lastPaymentDateStr).getTime();
-        daysWithoutPayment = Math.max(0, Math.floor(diffMs / (1000 * 3600 * 24))).toString();
-      }
-
-      return {
-        ...l,
-        lastPaymentDateStr,
-        daysWithoutPayment: daysWithoutPayment !== 'N/A' ? parseInt(daysWithoutPayment) : -1
-      };
-    }).filter(Boolean);
-  }, [updateList, todayStr]);
-
-  // Logic for All Client Updates (Main List) - Single-State Rule
-  // Must exclude: Top Priority, Need Attention, Advance Reminders AND Close Monitoring
-  const filteredMainList = useMemo(() => {
-    const reminderIds = new Set(reminderList.map(r => r.loan.id));
-    const monitoringIds = new Set(closeMonitoringList.map((m: any) => m.id));
-
-    return updateList.filter(u =>
-      !checkIsPriority(u) &&
-      !reminderIds.has(u.id) &&
-      !monitoringIds.has(u.id)
-    );
-  }, [updateList, reminderList, closeMonitoringList, todayStr]);
 
   const noActivityList = useMemo(() => {
     return loans.filter(l => l.remarks.length === 0);
@@ -205,33 +88,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
         </div>
       </div>
 
-      {/* QUICK FILTERS & COUNT SUMMARY */}
-      <div className="flex flex-wrap items-center justify-between gap-6 p-2 bg-white rounded-3xl border border-slate-200 shadow-sm">
-        <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl">
-          <FilterTab active={activeFilter === 'All'} label="All Activity" onClick={() => setActiveFilter('All')} />
-          <FilterTab active={activeFilter === 'Monitoring'} label="Close Monitoring" count={closeMonitoringList.length} onClick={() => setActiveFilter('Monitoring')} color="red" />
-          <FilterTab active={activeFilter === 'Priority'} label="Critical Action" count={topPriorityList.length} onClick={() => setActiveFilter('Priority')} color="red" />
-          <FilterTab active={activeFilter === 'Follow-up'} label="Advance Reminders" count={reminderList.length} onClick={() => setActiveFilter('Follow-up')} color="amber" />
-          <FilterTab active={activeFilter === 'Updates Log'} label="All Client Updates Log" count={updateList.length} onClick={() => setActiveFilter('Updates Log')} color="slate" />
-        </div>
-        <div className="px-6 flex gap-8">
-          <div className="flex flex-col">
-            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Close Monitoring</span>
-            <span className="text-lg font-black text-rose-600 leading-none">{closeMonitoringList.length}</span>
-          </div>
-          <div className="w-px h-8 bg-slate-200 self-center"></div>
-          <div className="flex flex-col">
-            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Critical Action</span>
-            <span className="text-lg font-black text-red-600 leading-none">{topPriorityList.length}</span>
-          </div>
-          <div className="w-px h-8 bg-slate-200 self-center"></div>
-          <div className="flex flex-col">
-            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Advance Reminders</span>
-            <span className="text-lg font-black text-amber-600 leading-none">{reminderList.length}</span>
-          </div>
-        </div>
-      </div>
-
+      {/* QUICK FILTERS REMOVED (Now handled by Sidebar) */}
 
       {/* 1️⃣ CLOSE MONITORING — Highest Priority */}
       {(activeFilter === 'All' || activeFilter === 'Monitoring') && (
@@ -247,7 +104,12 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
           </div>
           
           {!collapsedSections.monitoring && (
-             <CloseMonitoringTable data={closeMonitoringList} />
+             <CloseMonitoringTable 
+               data={closeMonitoringList} 
+               onViewDetails={setSelectedLoan}
+               onEdit={setEditLoan}
+               onAddRemark={setRemarksLoan}
+             />
           )}
         </section>
       )}
@@ -291,7 +153,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                       </div>
                       <h4 className="font-black text-[#111827] text-lg mb-1">{item.borrowerName}</h4>
                       <p className="text-[#6B7280] text-xs mb-4 font-bold uppercase tracking-widest flex items-center gap-2">
-                        <span className="text-[10px]">👤</span> {item.latestRemark.collector}
+                        <span className="text-[10px]">👤</span> {item.collector}
                       </p>
                       
                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col gap-3 shadow-inner">
@@ -382,9 +244,9 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                     
                     <div className="flex items-center gap-3 text-[10px] text-[#6B7280] font-black uppercase tracking-[0.1em] border-t border-slate-100 pt-4 mt-auto">
                       <div className="w-8 h-8 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700 font-black shadow-sm group-hover:scale-110 transition-transform">
-                        {item.loan.latestRemark.collector.charAt(0)}
+                        {item.loan.collector.charAt(0)}
                       </div>
-                      {item.loan.latestRemark.collector}
+                      {item.loan.collector}
                     </div>
                   </div>
                 ))}
@@ -426,6 +288,27 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
             )
           )}
         </section>
+      )}
+
+      {selectedLoan && <ClientModal loan={selectedLoan} onClose={() => setSelectedLoan(null)} />}
+      {(editLoan) && (
+        <ClientFormModal
+          loan={editLoan || undefined}
+          currentUser={currentUser}
+          selectedBranch={selectedBranch}
+          onClose={() => { setEditLoan(null); refreshData(); }}
+          onViewProfile={(l) => {
+            setEditLoan(null);
+            setSelectedLoan(l);
+          }}
+        />
+      )}
+      {remarksLoan && (
+        <RemarksModal
+          loan={remarksLoan}
+          currentUser={currentUser}
+          onClose={() => { setRemarksLoan(null); refreshData(); }}
+        />
       )}
     </div>
   );
@@ -552,7 +435,7 @@ function ClientUpdateCard({ update }: { update: any; key?: string | number }) {
                   </span>
                 )}
                 <p className="text-[#4B5563] text-[11px] font-bold leading-relaxed italic">
-                  "{remark.text.replace('[DL_MARKER]', '').trim()}"
+                  "{remark.text.replace(/\[DL_MARKER\]/g, '').replace(/\[DL_RECEIVED\]\s*Demand Letter received on \d{4}-\d{2}-\d{2}\.?\s*/g, '').replace(/\[DL_RECEIVED\]\s*/g, '').trim() || 'No additional remarks.'}"
                 </p>
               </div>
             </div>
@@ -594,7 +477,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
 
   const getUpdateType = (text: string) => {
     const lower = text.toLowerCase();
-    if (text.includes('[DL_MARKER]')) return { label: 'Demand Letter', color: 'bg-red-100 text-red-700 border-red-200' };
+    if (text.includes('[DL_MARKER]') || text.includes('[DL_RECEIVED]')) return { label: 'DEMAND LETTER', color: 'bg-red-100 text-red-700 border-red-200' };
     if (lower.includes('pay') || lower.includes('bayad') || lower.includes('settle')) return { label: 'Payment Cmt.', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
     if (lower.includes('visit') || lower.includes('puntahan')) return { label: 'Field Visit', color: 'bg-blue-100 text-blue-700 border-blue-200' };
     if (lower.includes('call') || lower.includes('tawag')) return { label: 'Callback', color: 'bg-purple-100 text-purple-700 border-purple-200' };
@@ -603,8 +486,8 @@ function ClientUpdateTable({ data }: { data: any[] }) {
 
   const categorizedData = useMemo(() => {
     return data.map(item => {
-      const isDemand = item.latestRemark?.text?.includes('[DL_MARKER]') || 
-                       getUpdateType(item.latestRemark?.text || '').label === 'Demand Letter';
+      const isDemand = item.latestRemark?.text?.includes('[DL_MARKER]') || item.latestRemark?.text?.includes('[DL_RECEIVED]') || 
+                       getUpdateType(item.latestRemark?.text || '').label === 'DEMAND LETTER';
       return {
         ...item,
         source_type: isDemand ? 'demand_letter' : 'regular'
@@ -619,7 +502,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
     if (item.source_type !== logTab) return false;
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
-    return item.borrowerName.toLowerCase().includes(term) || item.latestRemark.collector.toLowerCase().includes(term);
+    return item.borrowerName.toLowerCase().includes(term) || item.collector.toLowerCase().includes(term);
   }).sort((a, b) => {
     let aVal: any, bVal: any;
     if (sortKey === 'date') {
@@ -717,7 +600,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
                 Pulse <SortIcon columnKey="priority" />
               </th>
               <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer hover:bg-slate-50 transition-colors">
-                Latest Update & Type
+                {logTab === 'demand_letter' ? 'Latest Update' : 'Latest Update & Type'}
               </th>
               <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleSort('date')}>
                 Time Logged <SortIcon columnKey="date" />
@@ -733,7 +616,25 @@ function ClientUpdateTable({ data }: { data: any[] }) {
           <tbody className="divide-y divide-slate-100">
             {sortedAndFiltered.map((row, idx) => {
               const uType = getUpdateType(row.latestRemark.text);
-              const cleanText = row.latestRemark.text.replace('[DL_MARKER]', '').trim();
+              let cleanText = row.latestRemark.text.replace(/\[DL_MARKER\]/g, '').replace(/\[DL_RECEIVED\]\s*Demand Letter received on \d{4}-\d{2}-\d{2}\.?\s*/g, '').replace(/\[DL_RECEIVED\]\s*/g, '').trim();
+              
+              let dlStageBadge = null;
+              const dlMatch = cleanText.match(/^(1st|2nd|3rd)\s+Demand Letter Update:\s*/i);
+              if (dlMatch) {
+                dlStageBadge = dlMatch[1];
+                cleanText = cleanText.substring(dlMatch[0].length).trim();
+              }
+              
+              if (!dlStageBadge && logTab === 'demand_letter') {
+                const clientDL = store.getDemandLetters().find(d => d.loanId === row.id);
+                if (clientDL) {
+                  if (clientDL.type === '1st Demand Letter') dlStageBadge = '1st';
+                  else if (clientDL.type === '2nd Demand Letter') dlStageBadge = '2nd';
+                  else if (clientDL.type === '3rd Demand Letter') dlStageBadge = '3rd';
+                }
+              }
+              
+              if (!cleanText) cleanText = "No additional remarks.";
               
               return (
                 <tr key={row.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-emerald-50/50 transition-colors group`}>
@@ -757,7 +658,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
                   {/* Collector */}
                   <td className="p-4 align-top">
                     <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border border-slate-200">
-                      {row.latestRemark.collector}
+                      {row.collector}
                     </span>
                   </td>
 
@@ -770,9 +671,20 @@ function ClientUpdateTable({ data }: { data: any[] }) {
                   <td className="p-4 min-w-[300px]">
                     <div className="flex flex-col gap-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${uType.color}`}>
-                          {uType.label}
-                        </span>
+                        {logTab !== 'demand_letter' && (
+                          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${uType.color}`}>
+                            {uType.label}
+                          </span>
+                        )}
+                        {logTab === 'demand_letter' && dlStageBadge && (
+                          <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border shadow-sm flex items-center gap-1 ${
+                            dlStageBadge.toLowerCase() === '1st' ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                            dlStageBadge.toLowerCase() === '2nd' ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                            'bg-red-100 text-red-700 border-red-200'
+                          }`}>
+                            {dlStageBadge} DL
+                          </span>
+                        )}
                         {row.latestRemark.ptpDate && (
                           <span className="bg-orange-50 text-orange-700 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border border-orange-200 shadow-sm flex items-center gap-1">
                             PTP: {new Date(row.latestRemark.ptpDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}
@@ -842,7 +754,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
   );
 }
 
-function CloseMonitoringTable({ data }: { data: any[] }) {
+function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark }: { data: any[], onViewDetails: (l: any) => void, onEdit: (l: any) => void, onAddRemark: (l: any) => void }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState<'name' | 'days'>('days');
   const [sortDesc, setSortDesc] = useState(true);
@@ -850,7 +762,7 @@ function CloseMonitoringTable({ data }: { data: any[] }) {
   const sortedAndFiltered = data.filter((item) => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
-    return item.borrowerName.toLowerCase().includes(term) || item.latestRemark.collector.toLowerCase().includes(term) || item.code.toLowerCase().includes(term);
+    return item.borrowerName.toLowerCase().includes(term) || item.collector.toLowerCase().includes(term) || item.code.toLowerCase().includes(term);
   }).sort((a, b) => {
     let aVal: any, bVal: any;
     if (sortKey === 'name') {
@@ -932,7 +844,8 @@ function CloseMonitoringTable({ data }: { data: any[] }) {
           </thead>
           <tbody className="divide-y divide-rose-50/50">
             {sortedAndFiltered.map((row, idx) => {
-              const cleanText = row.latestRemark.text.replace('[DL_MARKER]', '').trim();
+              let cleanText = row.latestRemark.text.replace(/\[DL_MARKER\]/g, '').replace(/\[DL_RECEIVED\]\s*Demand Letter received on \d{4}-\d{2}-\d{2}\.?\s*/g, '').replace(/\[DL_RECEIVED\]\s*/g, '').trim();
+              if (!cleanText) cleanText = "No additional remarks.";
               let daysColor = 'text-emerald-700 bg-emerald-50 border-emerald-200 shadow-sm';
               let statusBadge = '🟢 Active';
               
@@ -972,7 +885,7 @@ function CloseMonitoringTable({ data }: { data: any[] }) {
                   {/* Collector */}
                   <td className="p-4 align-top">
                     <span className="bg-slate-50 text-slate-600 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border border-slate-200">
-                      {row.latestRemark.collector}
+                      {row.collector}
                     </span>
                   </td>
 
@@ -1019,9 +932,23 @@ function CloseMonitoringTable({ data }: { data: any[] }) {
 
                   {/* Action */}
                   <td className="p-4 px-6 align-top text-right">
-                     <button className="px-4 py-2 bg-slate-800 text-white hover:bg-rose-600 rounded-xl text-[9px] font-black uppercase tracking-widest shadow-sm hover:shadow-rose-200 transition-all active:scale-95">
-                        Review
-                     </button>
+                     <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => onAddRemark(row)}
+                          className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors relative"
+                          title="Remarks"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                          {row.remarks && row.remarks.length > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-800"></span>}
+                        </button>
+                        <button
+                          onClick={() => onViewDetails(row)}
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-100 rounded-lg transition-colors"
+                          title="Client Details"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                        </button>
+                      </div>
                   </td>
                 </tr>
               );

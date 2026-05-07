@@ -70,7 +70,8 @@ const App: React.FC = () => {
     if (!currentUser) return [];
     const loans = store.getLoans(selectedBranch);
     const demandLetters = store.getDemandLetters(selectedBranch);
-    const todayStr = new Date().toISOString().split('T')[0];
+    const date = new Date();
+    const todayStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
     const loanMsgs = loans.flatMap(l => {
       const msgs = [];
@@ -137,6 +138,7 @@ const App: React.FC = () => {
         role={currentUser.role}
         onLogout={handleLogout}
         username={currentUser.username}
+        selectedBranch={selectedBranch}
       />
 
       <main className={`flex-1 overflow-y-auto transition-all duration-300 ${isSidebarOpen ? 'ml-72' : 'ml-20'}`}>
@@ -150,7 +152,7 @@ const App: React.FC = () => {
             </button>
             <div className="flex items-center gap-3">
               <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-widest transition-colors duration-300">
-                {activeTab.replace('-', ' ')}
+                {activeTab.replace(/-/g, ' ')}
               </h2>
             </div>
 
@@ -211,13 +213,13 @@ const App: React.FC = () => {
 
         <div className="p-8">
           <ErrorBoundary>
-            {activeTab === 'dashboard' && <Dashboard selectedBranch={selectedBranch} />}
-            {activeTab === 'loans' && <LoanGrid currentUser={currentUser} selectedBranch={selectedBranch} />}
-            {activeTab === 'client-update' && <ClientUpdate currentUser={currentUser} selectedBranch={selectedBranch} />}
-            {activeTab === 'receive-payment' && <PaymentForm currentUser={currentUser} selectedBranch={selectedBranch} />}
+            {activeTab.startsWith('dashboard') && <Dashboard selectedBranch={selectedBranch} />}
+            {activeTab.startsWith('loans') && <LoanGrid currentUser={currentUser} selectedBranch={selectedBranch} activeAction={activeTab === 'loans' ? null : activeTab.replace('loans-', '') as 'import' | 'add'} onActionComplete={() => setActiveTab('loans')} />}
+            {activeTab.startsWith('client-update') && <ClientUpdate currentUser={currentUser} selectedBranch={selectedBranch} activeView={activeTab === 'client-update' ? 'All' : activeTab === 'client-update-advance' ? 'Follow-up' : activeTab === 'client-update-critical' ? 'Priority' : activeTab === 'client-update-monitoring' ? 'Monitoring' : 'Updates Log'} />}
+            {activeTab.startsWith('receive-payment') && <PaymentForm currentUser={currentUser} selectedBranch={selectedBranch} activeView={activeTab === 'receive-payment-reverse' ? 'reverse' : 'post'} />}
             {activeTab === 'collection-sheet' && <CollectionSheet currentUser={currentUser} selectedBranch={selectedBranch} />}
             {activeTab === 'dcr' && <DailyCollectionReport selectedBranch={selectedBranch} />}
-            {activeTab === 'reports' && <Reports selectedBranch={selectedBranch} />}
+            {activeTab.startsWith('reports') && <Reports selectedBranch={selectedBranch} activeView={activeTab === 'reports-monthly' ? 'monthly-performance' : activeTab === 'reports-aging' ? 'aging' : 'performance'} />}
             {activeTab === 'demand-letters' && <DemandLetterComponent currentUser={currentUser} selectedBranch={selectedBranch} />}
             {activeTab === 'collectors' && <Collectors selectedBranch={selectedBranch} />}
             {activeTab === 'users' && currentUser.role === UserRole.SUPER_ADMIN && <UserManagement currentUser={currentUser} />}

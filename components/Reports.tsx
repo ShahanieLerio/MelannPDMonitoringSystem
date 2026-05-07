@@ -7,6 +7,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 interface ReportsProps {
   selectedBranch: Branch;
+  activeView?: 'performance' | 'monthly-performance' | 'aging';
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -39,9 +40,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-const Reports: React.FC<ReportsProps> = ({ selectedBranch }) => {
+const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
   const [collectorData, setCollectorData] = useState(store.getCollectorPerformance(selectedBranch));
-  const [activeReport, setActiveReport] = useState<'performance' | 'aging' | 'monthly-performance'>('performance');
+  const activeReport = activeView || 'performance';
 
   useEffect(() => {
     setCollectorData(store.getCollectorPerformance(selectedBranch));
@@ -74,28 +75,6 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch }) => {
 
   return (
     <div className="space-y-8 animate-fadeIn">
-      {/* PILL TABS NAVIGATION */}
-      <div className="inline-flex p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm transition-all duration-300">
-        <button
-          onClick={() => setActiveReport('performance')}
-          className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] transition-all duration-300 ${activeReport === 'performance' ? 'bg-emerald-600 dark:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-        >
-          Collector Performance
-        </button>
-        <button
-          onClick={() => setActiveReport('monthly-performance')}
-          className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] transition-all duration-300 ${activeReport === 'monthly-performance' ? 'bg-emerald-600 dark:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-        >
-          Monthly Performance
-        </button>
-        <button
-          onClick={() => setActiveReport('aging')}
-          className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] transition-all duration-300 ${activeReport === 'aging' ? 'bg-emerald-600 dark:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-        >
-          Aging of Receivables
-        </button>
-      </div>
-
       {activeReport === 'performance' ? (
         <div className="space-y-8">
           {/* Graph Section */}
@@ -154,55 +133,87 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch }) => {
               )}
             </div>
           </div>
-          <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors duration-300">
-            <div className="p-8 border-b border-slate-100 dark:border-slate-700/50 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50 transition-colors duration-300">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-100 dark:border-slate-700 overflow-hidden">
+            <div className="p-6 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div>
-                <h3 className="text-xl font-black text-slate-800 dark:text-white tracking-tight transition-colors duration-300">Collector Efficiency Matrix</h3>
-                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1 transition-colors duration-300">Real-time stats for: <span className="text-emerald-600 dark:text-emerald-400 font-black">{selectedBranch}</span></p>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Collector Efficiency Matrix</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  Real-time stats for: <span className="font-semibold">{selectedBranch}</span>
+                </p>
               </div>
-              <button className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-200 dark:hover:border-emerald-500/50 transition-all duration-300">Export Report</button>
+              <button className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Export Report
+              </button>
             </div>
+            
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50/80 dark:bg-slate-900/80 text-slate-400 dark:text-slate-500 uppercase text-[10px] font-black tracking-widest transition-colors duration-300">
+              <table className="w-full text-left whitespace-nowrap">
+                <thead className="bg-slate-50/50 dark:bg-slate-900/50 border-y border-slate-100 dark:border-slate-700/50">
                   <tr>
-                    <th className="px-8 py-5">Collector Identity</th>
-                    <th className="px-8 py-5 text-center">Accounts</th>
-                    <th className="px-8 py-5 text-right">Target Amount</th>
-                    <th className="px-8 py-5 text-right">Actual Collected</th>
-                    <th className="px-8 py-5 text-right">Running Balance</th>
-                    <th className="px-8 py-5 text-center">Efficiency Rate (%)</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Collector Identity</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Accounts</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Target</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Collected</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Balance</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Efficiency Rate</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50 font-medium transition-colors duration-300">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                   {sortedData.map((p, index) => {
                     const rank = index + 1;
+                    const isTopThree = rank <= 3;
+                    const isHighEfficiency = p.collectionRate >= 75;
+                    const isMediumEfficiency = p.collectionRate >= 25 && p.collectionRate < 75;
+                    
                     return (
-                      <tr key={p.collector} className="group hover:bg-emerald-50 dark:hover:bg-slate-700/50 transition-all duration-300">
-                        <td className="px-8 py-5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-black text-slate-800 dark:text-white uppercase tracking-tight transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:underline decoration-emerald-500/30 underline-offset-4">{p.collector}</span>
-                            {rank === 1 && (
-                              <span className="bg-emerald-600 dark:bg-emerald-500 text-white text-[8px] px-1.5 py-0.5 rounded-lg font-black shadow-sm shadow-emerald-900/20 dark:shadow-emerald-900/50 animate-pulse">#1 RANK</span>
-                            )}
-                            {(rank === 2 || rank === 3) && (
-                              <span className="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 text-[8px] px-1.5 py-0.5 rounded-lg font-black transition-colors duration-300">TOP {rank}</span>
-                            )}
+                      <tr key={p.collector} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <td className="px-6 py-4 align-middle">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-lg">
+                              {p.collector.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900 dark:text-white">
+                                  {p.collector}
+                                </span>
+                                {isTopThree && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                    {rank === 1 ? '#1 RANK' : `TOP ${rank}`}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs text-slate-500">Field Agent</span>
+                            </div>
                           </div>
-                          <div className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase transition-colors duration-300">Field Agent</div>
                         </td>
-                        <td className="px-8 py-5 text-center font-bold text-slate-600 dark:text-slate-300 transition-colors duration-300">{p.totalAccounts}</td>
-                        <td className="px-8 py-5 text-right text-slate-500 dark:text-slate-400 transition-colors duration-300">₱{p.reportedAmount.toLocaleString()}</td>
-                        <td className="px-8 py-5 text-right font-black text-emerald-600 dark:text-emerald-400 transition-colors duration-300">₱{p.collectedAmount.toLocaleString()}</td>
-                        <td className="px-8 py-5 text-right font-black text-slate-800 dark:text-white transition-colors duration-300">₱{p.runningBalance.toLocaleString()}</td>
-                        <td className="px-8 py-5 text-center">
-                          <div className="flex flex-col items-center gap-1.5">
-                            <span className={`text-[11px] font-black transition-colors duration-300 ${p.collectionRate > 50 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                        <td className="px-6 py-4 text-right align-middle text-slate-700 dark:text-slate-300">
+                          {p.totalAccounts}
+                        </td>
+                        <td className="px-6 py-4 text-right align-middle text-slate-500">
+                          ₱{p.reportedAmount.toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 text-right align-middle">
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            ₱{p.collectedAmount.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right align-middle">
+                          <span className="font-bold text-slate-900 dark:text-slate-100">
+                            ₱{p.runningBalance.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 align-middle">
+                          <div className="flex items-center justify-end gap-3">
+                            <span className="font-bold text-sm text-slate-700 dark:text-slate-300">
                               {p.collectionRate.toFixed(1)}%
                             </span>
-                            <div className="w-24 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden border border-slate-200/50 dark:border-slate-600/50 transition-colors duration-300">
+                            <div className="w-24 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
                               <div
-                                className={`h-full transition-all duration-1000 ${p.collectionRate > 50 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                                className={`h-full rounded-full transition-all duration-1000 ${isHighEfficiency ? 'bg-emerald-500' : isMediumEfficiency ? 'bg-orange-500' : 'bg-red-500'}`}
                                 style={{ width: `${p.collectionRate}%` }}
                               ></div>
                             </div>
@@ -213,7 +224,9 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch }) => {
                   })}
                   {sortedData.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px] transition-colors duration-300">No field data available for this branch.</td>
+                      <td colSpan={6} className="py-12 text-center text-slate-500">
+                        No field data available for this branch
+                      </td>
                     </tr>
                   )}
                 </tbody>

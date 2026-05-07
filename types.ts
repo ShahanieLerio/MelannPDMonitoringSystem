@@ -119,6 +119,9 @@ export interface Loan {
   lastName: string;
   monthReported: string; // YYYY-MM
   dueDate: string;
+  dateRelease?: string | null;
+  principal?: number | null;
+  totalLoan?: number | null;
   outstandingBalance: number;
   amountCollected: number;
   runningBalance: number;
