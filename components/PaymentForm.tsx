@@ -355,23 +355,24 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
   };
 
   return (
-    <div className="max-w-6xl mx-auto animate-fadeIn pb-20 relative">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+    <div className="max-w-[1400px] mx-auto animate-fadeIn pb-20 relative">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_330px] gap-8 items-start">
         
         {/* MAIN PANEL (LEFT) */}
-        <div className="lg:col-span-2 space-y-8">
+        <div className="space-y-8">
           {activeTab === 'post' ? (
-            <div className="space-y-8 animate-slideUp">
+            <div className={`animate-slideUp ${loan ? 'grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-6 items-start' : 'space-y-8'}`}>
+              <div className={loan ? 'space-y-6 xl:sticky xl:top-24' : ''}>
               
               {/* STEP 1: LOOKUP CLIENT CARD */}
-              <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-xl shadow-slate-900/5 border border-slate-200 dark:border-slate-700 transition-colors duration-300">
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-[1.5rem] shadow-xl shadow-slate-900/5 border border-slate-200 dark:border-slate-700 transition-colors duration-300">
                 <div className="flex items-center gap-3 mb-6">
                    <div className="w-8 h-8 bg-emerald-600 text-white rounded-lg flex items-center justify-center text-xs font-black shadow-lg shadow-emerald-900/20">1</div>
                    <h3 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-widest transition-colors duration-300">Step 1: Find Client</h3>
                 </div>
 
                 <div className="relative">
-                  <div className="flex items-stretch gap-4 p-2 bg-slate-50 dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus-within:border-emerald-500 transition-all duration-300 group">
+                  <div className="flex flex-col sm:flex-row items-stretch gap-3 p-2 bg-slate-50 dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-700 rounded-2xl focus-within:border-emerald-500 transition-all duration-300 group">
                     <div className="flex items-center pl-3">
                       <svg className="w-5 h-5 text-slate-400 group-focus-within:text-emerald-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                     </div>
@@ -379,7 +380,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
                       ref={codeRef}
                       type="text"
                       placeholder="Enter Client Code (e.g. 101010)"
-                      className="flex-1 bg-transparent border-none focus:ring-0 font-bold text-lg text-slate-800 dark:text-white py-3 transition-colors duration-300"
+                      className="min-w-0 flex-1 bg-transparent border-none focus:ring-0 font-bold text-base text-slate-800 dark:text-white py-3 transition-colors duration-300"
                       value={code}
                       onChange={(e) => setCode(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -387,7 +388,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
                     <button
                       onClick={handleSearch}
                       disabled={isVerifying || isSaving}
-                      className="px-8 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 transition-all shadow-lg active:scale-95 text-xs uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-6 py-4 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 transition-all shadow-lg active:scale-95 text-xs uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isVerifying ? 'Wait...' : 'Verify'}
                     </button>
@@ -402,24 +403,24 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
               </div>
 
               {loan && (
-                <div className="space-y-8 animate-slideUp">
+                <>
                   
                   {/* STEP 2: CLIENT INFO SUMMARY */}
-                  <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-xl shadow-slate-900/5 border border-slate-200 dark:border-slate-700 transition-colors duration-300">
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-[1.5rem] shadow-xl shadow-slate-900/5 border border-slate-200 dark:border-slate-700 transition-colors duration-300">
                     <div className="flex items-center gap-3 mb-6">
                       <div className="w-8 h-8 bg-emerald-600 text-white rounded-lg flex items-center justify-center text-xs font-black">2</div>
                       <h3 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-widest transition-colors duration-300">Step 2: Client Profile</h3>
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-slate-50 dark:bg-slate-900/50 p-6 rounded-2xl border border-slate-100 dark:border-slate-700 transition-colors duration-300">
+                    <div className="grid grid-cols-1 gap-4 bg-slate-50 dark:bg-slate-900/50 p-5 rounded-2xl border border-slate-100 dark:border-slate-700 transition-colors duration-300">
                       <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Borrower Name</p>
-                        <p className="text-lg font-black text-slate-800 dark:text-white truncate">{loan.borrowerName}</p>
+                        <p className="text-base font-black text-slate-800 dark:text-white leading-tight">{loan.borrowerName}</p>
                       </div>
-                      <div className="text-center md:text-left border-t md:border-t-0 md:border-l border-slate-200 dark:border-slate-700 md:pl-6 pt-4 md:pt-0 transition-colors duration-300">
+                      <div className="border-t border-slate-200 dark:border-slate-700 pt-4 transition-colors duration-300">
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Running Balance</p>
-                        <div className="flex flex-col items-center md:items-start h-[40px]">
-                          <p className={`text-lg font-black transition-colors duration-300 ${isFullyPaid ? 'text-emerald-500 scale-105' : 'text-red-600'}`}>
+                        <div className="flex flex-col min-h-[42px]">
+                          <p className={`text-xl font-black transition-colors duration-300 ${isFullyPaid ? 'text-emerald-500 scale-105' : 'text-red-600'}`}>
                             ₱{previewBalance.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                           </p>
                           {isFullyPaid && (
@@ -434,11 +435,11 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
                           )}
                         </div>
                       </div>
-                      <div className="text-center md:text-left border-t md:border-t-0 md:border-l border-slate-200 dark:border-slate-700 md:pl-6 pt-4 md:pt-0">
+                      <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center justify-center md:justify-start gap-1">👤 COLLECTOR</p>
-                        <p className="text-lg font-black text-slate-800 dark:text-slate-300 truncate">{loan.collector || 'Unassigned'}</p>
+                        <p className="text-base font-black text-slate-800 dark:text-slate-300 truncate">{loan.collector || 'Unassigned'}</p>
                       </div>
-                      <div className="text-center md:text-left border-t md:border-t-0 md:border-l border-slate-200 dark:border-slate-700 md:pl-6 pt-4 md:pt-0">
+                      <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Location Status</p>
                         <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${loan.location === 'LOCATED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                           {loan.location}
@@ -446,9 +447,14 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
                       </div>
                     </div>
                   </div>
+                </>
+              )}
+              </div>
 
+              {loan && (
+                <div className="animate-slideUp">
                   {/* STEP 3: PAYMENT INPUT */}
-                  <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-2xl shadow-emerald-900/5 border-2 border-emerald-500/20 transition-all duration-300">
+                  <div className="bg-white dark:bg-slate-800 p-6 lg:p-8 rounded-[1.75rem] shadow-2xl shadow-emerald-900/5 border-2 border-emerald-500/20 transition-all duration-300">
                     <div className="flex items-center gap-3 mb-8">
                       <div className="w-8 h-8 bg-emerald-600 text-white rounded-lg flex items-center justify-center text-xs font-black shadow-lg shadow-emerald-900/20">3</div>
                       <h3 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-widest transition-colors duration-300">Step 3: Entry</h3>

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { store } from '../services/dataStore.ts';
 import { Collector, Branch } from '../types.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
@@ -15,6 +15,7 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
   const [name, setName] = useState('');
   const [nickname, setNickname] = useState('');
   const [address, setAddress] = useState('');
+  const [photoUrl, setPhotoUrl] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
   const showSuccess = (msg: string) => {
@@ -58,6 +59,18 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
     return () => unsubscribe();
   }, [selectedBranch]);
 
+  const arrangedCollectors = useMemo(() => {
+    return collectors
+      .map((collector, index) => ({ collector, index }))
+      .sort((a, b) => {
+        const aHasPhoto = Boolean(a.collector.photoUrl);
+        const bHasPhoto = Boolean(b.collector.photoUrl);
+        if (aHasPhoto === bHasPhoto) return a.index - b.index;
+        return aHasPhoto ? -1 : 1;
+      })
+      .map(({ collector }) => collector);
+  }, [collectors]);
+
   const handleSave = async () => {
     if (!name.trim()) return;
     const branchToUse = selectedBranch === Branch.ALL ? Branch.NAVAL : selectedBranch;
@@ -67,10 +80,10 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
 
     try {
       if (editingCollector) {
-        await store.updateCollector(editingCollector.id, finalName, branchToUse, address.trim(), finalNick);
+        await store.updateCollector(editingCollector.id, finalName, branchToUse, address.trim(), finalNick, photoUrl);
         showSuccess("Collector successfully updated!");
       } else {
-        await store.addCollector(finalName, branchToUse, address.trim(), finalNick);
+        await store.addCollector(finalName, branchToUse, address.trim(), finalNick, photoUrl);
         showSuccess("Collector successfully added!");
       }
       closeModal();
@@ -98,13 +111,22 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
       setName(c.name);
       setNickname(c.nickname || '');
       setAddress(c.address || '');
+      setPhotoUrl(c.photoUrl || '');
     } else {
       setEditingCollector(null);
       setName('');
       setNickname('');
       setAddress('');
+      setPhotoUrl('');
     }
     setIsModalOpen(true);
+  };
+
+  const handlePhotoChange = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setPhotoUrl(String(reader.result || ''));
+    reader.readAsDataURL(file);
   };
 
   const closeModal = () => {
@@ -130,29 +152,41 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {collectors.map(c => (
-          <div key={c.id} className="bg-white dark:bg-slate-800 p-5 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 group hover:border-emerald-500 dark:hover:border-emerald-500/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:shadow-emerald-900/10 dark:hover:shadow-emerald-900/20">
-            <div className="flex justify-between items-start mb-3 transition-colors duration-300">
-              <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center font-black text-emerald-600 dark:text-emerald-400 text-base group-hover:bg-emerald-600 dark:group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
-                {c.name.charAt(0)}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+        {arrangedCollectors.map(c => (
+          <div key={c.id} className="bg-white dark:bg-slate-800 p-4 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 group hover:border-emerald-500 dark:hover:border-emerald-500/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:shadow-emerald-900/10 dark:hover:shadow-emerald-900/20">
+            <div className="flex items-start gap-4">
+              <div className="shrink-0">
+                {c.photoUrl ? (
+                  <img
+                    src={c.photoUrl}
+                    alt={c.name}
+                    className="w-20 h-20 rounded-2xl object-cover object-top border-3 border-emerald-50 dark:border-emerald-900/50 shadow-md shadow-slate-900/10 transition-all duration-300 group-hover:scale-[1.03] group-hover:border-emerald-200 dark:group-hover:border-emerald-700"
+                  />
+                ) : (
+                  <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center font-black text-emerald-600 dark:text-emerald-400 text-2xl border-3 border-emerald-50 dark:border-emerald-900/50 group-hover:bg-emerald-600 dark:group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
+                    {c.name.charAt(0)}
+                  </div>
+                )}
               </div>
-              <div className="flex gap-1">
+              <div className="min-w-0 flex-1">
+                <div className="flex justify-end gap-1 mb-2">
                 <button onClick={() => openModal(c)} className="p-2 text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-all active:scale-90">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                 </button>
                 <button onClick={() => handleDelete(c.id, c.name)} className="p-2 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all active:scale-90">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                 </button>
+                </div>
+                <h4 className="text-base font-black text-slate-800 dark:text-white uppercase tracking-tight leading-tight transition-colors duration-300">{c.name}</h4>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1 transition-colors duration-300">
+                  {c.nickname && <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded transition-colors duration-300">@{c.nickname}</span>}
+                  <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest border border-slate-100 dark:border-slate-700 px-1.5 py-0.5 rounded transition-colors duration-300">{c.branch}</span>
+                </div>
               </div>
             </div>
-            <h4 className="text-base font-black text-slate-800 dark:text-white uppercase tracking-tight leading-tight transition-colors duration-300">{c.name}</h4>
-            <div className="flex items-center gap-1.5 mt-0.5 transition-colors duration-300">
-              {c.nickname && <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded transition-colors duration-300">@{c.nickname}</span>}
-              <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest border border-slate-100 dark:border-slate-700 px-1.5 py-0.5 rounded transition-colors duration-300">{c.branch}</span>
-            </div>
             {c.address && (
-              <p className="mt-3 text-slate-500 dark:text-slate-400 text-[12px] font-medium flex items-start gap-1.5 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700 transition-colors duration-300">
+              <p className="mt-3 text-slate-500 dark:text-slate-400 text-[12px] font-medium flex items-start gap-1.5 bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700 transition-colors duration-300">
                 <svg className="w-3.5 h-3.5 shrink-0 text-slate-300 dark:text-slate-600 mt-0.5 transition-colors duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
                 <span className="leading-snug">{c.address}</span>
               </p>
@@ -175,6 +209,37 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
               <p className="text-emerald-100/60 dark:text-emerald-400/60 text-xs font-bold uppercase tracking-widest mt-1 transition-colors duration-300">Assigning to: {selectedBranch === Branch.ALL ? Branch.NAVAL : selectedBranch}</p>
             </div>
             <div className="p-10 space-y-6">
+              <div className="flex items-center gap-4">
+                {photoUrl ? (
+                  <img
+                    src={photoUrl}
+                    alt="Collector preview"
+                    className="w-20 h-20 rounded-3xl object-cover border-2 border-emerald-100 dark:border-emerald-900/50 shadow-sm"
+                  />
+                ) : (
+                  <div className="w-20 h-20 rounded-3xl bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                    {(name || 'P').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1 space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1 transition-colors duration-300">Collector Image</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={e => handlePhotoChange(e.target.files?.[0])}
+                    className="w-full text-xs font-bold text-slate-500 dark:text-slate-400 file:mr-3 file:rounded-xl file:border-0 file:bg-emerald-600 file:px-4 file:py-2 file:text-[10px] file:font-black file:uppercase file:tracking-widest file:text-white hover:file:bg-emerald-700"
+                  />
+                  {photoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setPhotoUrl('')}
+                      className="text-[10px] font-black uppercase tracking-widest text-red-500 hover:text-red-600"
+                    >
+                      Remove Image
+                    </button>
+                  )}
+                </div>
+              </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1 transition-colors duration-300">Full Identity Name</label>
                 <input

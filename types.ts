@@ -88,6 +88,7 @@ export interface Collector {
   name: string;
   nickname?: string;
   address?: string;
+  photoUrl?: string;
   branch: Branch;
 }
 
@@ -140,6 +141,8 @@ export interface Loan {
   followUpDate?: string | null;
   recurringSchedule?: RecurringSchedule | null;
   branch: Branch;
+  actionNote?: string | null;
+  actionStage?: string | null;
 }
 
 export interface CollectorPerformance {

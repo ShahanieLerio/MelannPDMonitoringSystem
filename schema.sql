@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS collectors (
     name TEXT NOT NULL,
     nickname TEXT,
     address TEXT,
+    photo_url TEXT,
     branch TEXT NOT NULL
 );
 
@@ -46,6 +47,8 @@ CREATE TABLE IF NOT EXISTS loans (
     area TEXT,
     city TEXT,
     barangay TEXT,
+
+
     full_address TEXT,
     contact_number TEXT,
     branch TEXT NOT NULL,
@@ -53,6 +56,8 @@ CREATE TABLE IF NOT EXISTS loans (
     promise_to_pay_date TEXT,
     follow_up_date TEXT,
     recurring_schedule JSONB,
+    action_note TEXT,
+    action_stage TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

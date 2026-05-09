@@ -1,9 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import React, { useState, useEffect, useMemo } from 'react';
+import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { store } from '../services/dataStore.ts';
 import { getLoanInsights } from '../services/geminiService.ts';
-import { MovingStatus, Branch } from '../types.ts';
+import { MovingStatus, Branch, Loan, PaymentStatus } from '../types.ts';
+import { getCollectorDisplayName } from '../services/collectorUtils.ts';
+import * as XLSX from 'xlsx';
 
 interface DashboardProps {
   selectedBranch: Branch;
@@ -58,30 +60,18 @@ const SecondaryMetricCard: React.FC<{ title: string; value: string | number; sub
 
 
 const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
-  const [stats, setStats] = useState(store.getStats(selectedBranch));
-  const [collectorData, setCollectorData] = useState(store.getCollectorPerformance(selectedBranch));
-  const [collectorDistribution, setCollectorDistribution] = useState(store.getCollectorDistribution(selectedBranch));
-  const [recentPayments, setRecentPayments] = useState(store.getRecentPayments(selectedBranch));
+  const [allLoans, setAllLoans] = useState(store.getLoans(selectedBranch));
+  const [allCollectors, setAllCollectors] = useState(store.getCollectors(Branch.ALL));
   const [aiInsight, setAiInsight] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [collectorViewMode, setCollectorViewMode] = useState<'Balance View' | 'Performance View'>('Balance View');
-
-  const sortedCollectorData = [...collectorData].sort((a, b) => {
-    if (collectorViewMode === 'Performance View') {
-      const aPerf = a.reportedAmount > 0 ? (a.collectedAmount / a.reportedAmount) : 0;
-      const bPerf = b.reportedAmount > 0 ? (b.collectedAmount / b.reportedAmount) : 0;
-      return bPerf - aPerf;
-    } else {
-      return b.reportedAmount - a.reportedAmount;
-    }
-  });
+  const [nearFullCollectorFilter, setNearFullCollectorFilter] = useState<string>('');
+  const [dateFilter, setDateFilter] = useState<'all' | 'last30'>('all');
 
   useEffect(() => {
     const refreshData = () => {
-      setStats(store.getStats(selectedBranch));
-      setCollectorData(store.getCollectorPerformance(selectedBranch));
-      setCollectorDistribution(store.getCollectorDistribution(selectedBranch));
-      setRecentPayments(store.getRecentPayments(selectedBranch));
+      setAllLoans(store.getLoans(selectedBranch));
+      setAllCollectors(store.getCollectors(Branch.ALL));
     };
 
     refreshData();
@@ -93,6 +83,115 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     return () => unsubscribe();
   }, [selectedBranch]);
 
+  // --- Filtered loans based on date toggle ---
+  const loans = useMemo(() => {
+    if (dateFilter === 'all') return allLoans;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+    return allLoans.filter(l => {
+      // Include loan if it has any active payment within the last 30 days
+      const hasRecentPayment = l.payments.some(p => p.status !== 'REVERSED' && p.date >= cutoffStr);
+      // Or if the monthReported is within the last 30 days window
+      const reportedMonth = l.monthReported; // YYYY-MM
+      const cutoffMonth = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
+      const hasRecentReport = reportedMonth >= cutoffMonth;
+      return hasRecentPayment || hasRecentReport;
+    });
+  }, [allLoans, dateFilter]);
+
+  // --- Compute stats from filtered loans ---
+  const stats = useMemo(() => {
+    const totalAccounts = loans.length;
+    const totalCollected = loans.reduce((sum, l) => sum + l.amountCollected, 0);
+    const totalOutstanding = loans.reduce((sum, l) => sum + l.outstandingBalance, 0);
+    const totalRunning = loans.reduce((sum, l) => sum + l.runningBalance, 0);
+    const statusData: Record<string, { count: number; amount: number }> = {
+      Paid: { count: 0, amount: 0 },
+      Moving: { count: 0, amount: 0 },
+      NM: { count: 0, amount: 0 },
+      NMSR: { count: 0, amount: 0 },
+    };
+    const statusKeyMap: Record<string, string> = {
+      [MovingStatus.PAID]: 'Paid',
+      [MovingStatus.MOVING]: 'Moving',
+      [MovingStatus.NM]: 'NM',
+      [MovingStatus.NMSR]: 'NMSR',
+    };
+    loans.forEach(l => {
+      const key = statusKeyMap[l.status];
+      if (key && statusData[key]) {
+        statusData[key].count++;
+        statusData[key].amount += (l.status === MovingStatus.PAID ? l.amountCollected : l.runningBalance);
+      }
+    });
+    return { totalAccounts, totalCollected, totalOutstanding, totalRunning, statusData };
+  }, [loans]);
+
+  // --- Compute collector performance from filtered loans ---
+  const collectorData = useMemo(() => {
+    const collectors: Record<string, { collector: string; totalAccounts: number; reportedAmount: number; collectedAmount: number; runningBalance: number; collectionRate: number; paidCount: number }> = {};
+    loans.forEach(loan => {
+      const coll = getCollectorDisplayName(loan.collector, allCollectors);
+      if (!coll || coll === 'N/A' || coll === 'UNDEFINED' || coll === 'UNASSIGNED') return;
+      if (!collectors[coll]) {
+        collectors[coll] = { collector: coll, totalAccounts: 0, reportedAmount: 0, collectedAmount: 0, runningBalance: 0, collectionRate: 0, paidCount: 0 };
+      }
+      const p = collectors[coll];
+      p.totalAccounts++;
+      p.reportedAmount += loan.outstandingBalance;
+      p.collectedAmount += loan.amountCollected;
+      p.runningBalance += loan.runningBalance;
+      if (loan.status === MovingStatus.PAID) p.paidCount++;
+    });
+    return Object.values(collectors).map(p => ({ ...p, collectionRate: p.reportedAmount > 0 ? (p.collectedAmount / p.reportedAmount) * 100 : 0 }));
+  }, [loans, allCollectors]);
+
+  // --- Compute collector distribution from filtered loans ---
+  const collectorDistribution = useMemo(() => {
+    const distribution: Record<string, number> = {};
+    loans.forEach(loan => {
+      const coll = loan.collector?.trim();
+      if (!coll || coll === 'N/A' || coll === 'undefined' || coll === 'UNASSIGNED') return;
+      distribution[coll] = (distribution[coll] || 0) + 1;
+    });
+    return Object.entries(distribution)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [loans]);
+
+  // --- Compute Today's Action Summary ---
+  const todayActions = useMemo(() => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    let ptpDue = 0;
+    let followUpDue = 0;
+    let missed = 0;
+
+    allLoans.forEach(loan => {
+      if (loan.status === MovingStatus.PAID) return;
+      const isPtpToday = loan.promiseToPayDate === today;
+      const isFuToday = loan.followUpDate === today;
+      const isMissed = (loan.promiseToPayDate && loan.promiseToPayDate < today) || (loan.followUpDate && loan.followUpDate < today);
+
+      if (isPtpToday) ptpDue++;
+      if (isFuToday) followUpDue++;
+      if (isMissed) missed++;
+    });
+
+    return { ptpDue, followUpDue, missed };
+  }, [allLoans]);
+
+  const sortedCollectorData = [...collectorData].sort((a, b) => {
+    if (collectorViewMode === 'Performance View') {
+      const aPerf = a.reportedAmount > 0 ? (a.collectedAmount / a.reportedAmount) : 0;
+      const bPerf = b.reportedAmount > 0 ? (b.collectedAmount / b.reportedAmount) : 0;
+      return bPerf - aPerf;
+    } else {
+      return b.reportedAmount - a.reportedAmount;
+    }
+  });
+
   const COLORS = ['#3b82f6', '#059669', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f43f5e', '#6366f1'];
 
   const fetchAiInsight = async () => {
@@ -100,6 +199,88 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     const insight = await getLoanInsights(store.getLoans(selectedBranch));
     setAiInsight(insight || "No insights available.");
     setIsAiLoading(false);
+  };
+
+  const handleExportExcel = () => {
+    const exportData: any[][] = [
+      ['Melann Lending — Dashboard Export'],
+      ['Branch', selectedBranch],
+      ['Date', new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })],
+      [],
+      ['Metric', 'Value'],
+      ['Total Accounts', stats.totalAccounts],
+      ['Total Collected', stats.totalCollected],
+      ['Total Outstanding', stats.totalOutstanding],
+      ['Running Balance', stats.totalRunning],
+      [],
+      ['Status Breakdown', 'Amount', 'Count'],
+      ['Not Moving', stats.statusData.NM.amount, stats.statusData.NM.count],
+      ['Moving', stats.statusData.Moving.amount, stats.statusData.Moving.count],
+      ['Paid', stats.statusData.Paid.amount, stats.statusData.Paid.count],
+      ['NM Since Release', stats.statusData.NMSR.amount, stats.statusData.NMSR.count],
+      [],
+      ['COLLECTOR PERFORMANCE MATRIX'],
+      ['Collector', 'Total Accounts', 'Reported Amount', 'Collected Amount', 'Running Balance', 'Collection Rate (%)', 'Paid Count'],
+      ...sortedCollectorData.map(cd => [
+        cd.collector,
+        cd.totalAccounts,
+        cd.reportedAmount,
+        cd.collectedAmount,
+        cd.runningBalance,
+        cd.reportedAmount > 0 ? Math.round((cd.collectedAmount / cd.reportedAmount) * 10000) / 100 : 0,
+        cd.paidCount
+      ]),
+      [],
+      ['NEAR FULL PAYMENT (≤₱1,000)'],
+      ['Borrower Name', 'Collector', 'Running Balance']
+    ];
+
+    const nearFullClients = loans
+      .filter(l => l.runningBalance > 0 && l.runningBalance <= 1000 && l.status !== MovingStatus.PAID)
+      .sort((a, b) => a.runningBalance - b.runningBalance);
+
+    if (nearFullClients.length > 0) {
+      nearFullClients.forEach(loan => {
+        exportData.push([
+          loan.borrowerName,
+          getCollectorDisplayName(loan.collector, allCollectors),
+          loan.runningBalance
+        ]);
+      });
+    } else {
+      exportData.push(['No clients with ≤₱1,000 balance']);
+    }
+
+    exportData.push([]);
+    exportData.push(['ACCOUNT DISTRIBUTION']);
+    exportData.push(['Collector', 'Accounts']);
+    
+    if (collectorDistribution.length > 0) {
+      collectorDistribution.forEach(item => {
+        exportData.push([item.name, item.value]);
+      });
+    } else {
+      exportData.push(['No data']);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(exportData);
+    // Set column widths based on the widest fields
+    ws['!cols'] = [
+      { wch: 28 }, // Collector / Borrower Name
+      { wch: 20 }, // Total Accounts / Collector
+      { wch: 18 }, // Reported Amount
+      { wch: 18 }, // Collected Amount
+      { wch: 18 }, // Running Balance
+      { wch: 18 }, // Collection Rate
+      { wch: 12 }  // Paid Count
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Dashboard Report');
+
+    const branchTag = selectedBranch.replace(/\s+/g, '_');
+    const today = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `Dashboard_${branchTag}_${today}.xlsx`);
   };
 
   return (
@@ -115,13 +296,20 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
            </p>
         </div>
         <div className="flex items-center gap-3 w-full md:w-auto">
-           <button className="flex-1 md:flex-none border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300 px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-sm">
+           <button
+              onClick={() => setDateFilter(f => f === 'all' ? 'last30' : 'all')}
+              className={`flex-1 md:flex-none px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-sm ${
+                dateFilter === 'last30'
+                  ? 'bg-emerald-600 text-white border border-emerald-600 hover:bg-emerald-700'
+                  : 'border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300'
+              }`}
+           >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-              Last 30 Days
+              {dateFilter === 'last30' ? '✓ Last 30 Days' : 'Last 30 Days'}
            </button>
-           <button className="flex-1 md:flex-none bg-[#064e3b] hover:bg-[#043326] text-white px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95">
+           <button onClick={handleExportExcel} className="flex-1 md:flex-none bg-[#064e3b] hover:bg-[#043326] text-white px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-              Export CSV
+              Export Excel
            </button>
         </div>
       </div>
@@ -135,18 +323,150 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       </div>
 
       {/* Secondary Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-6">
         <SecondaryMetricCard title="Not Moving" value={`₱${stats.statusData.NM.amount.toLocaleString()}`} subline={`${stats.statusData.NM.count} Clients`} color="text-slate-800 dark:text-white" />
         <SecondaryMetricCard title="Moving" value={`₱${stats.statusData.Moving.amount.toLocaleString()}`} subline={`${stats.statusData.Moving.count} Clients`} color="text-slate-800 dark:text-white" />
         <SecondaryMetricCard title="Paid" value={`₱${stats.statusData.Paid.amount.toLocaleString()}`} subline={`${stats.statusData.Paid.count} Clients`} color="text-emerald-600 dark:text-emerald-400" />
         <SecondaryMetricCard title="NM Since Release" value={`₱${stats.statusData.NMSR.amount.toLocaleString()}`} subline={`${stats.statusData.NMSR.count} Clients`} color="text-red-500 dark:text-red-400" />
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        
-        {/* LEFT SIDE: Collector Performance Matrix */}
-        <div className="lg:col-span-8 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[500px]">
+      {/* Main 3-Column Content Grid */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch mt-6">
+        {/* Collection Trend Chart */}
+      {(() => {
+        // Compute daily collection data for the last 30 days
+        const now = new Date();
+        const days30Ago = new Date();
+        days30Ago.setDate(now.getDate() - 29);
+
+        // Build a map of date -> { amount, count }
+        const dailyMap: Record<string, { amount: number; count: number }> = {};
+        // Pre-fill all 30 days with zeros
+        for (let i = 0; i < 30; i++) {
+          const d = new Date(days30Ago);
+          d.setDate(days30Ago.getDate() + i);
+          const key = d.toISOString().split('T')[0];
+          dailyMap[key] = { amount: 0, count: 0 };
+        }
+        // Aggregate payments
+        loans.forEach(loan => {
+          loan.payments.forEach(p => {
+            if (p.status === PaymentStatus.GOOD && dailyMap[p.date] !== undefined) {
+              dailyMap[p.date].amount += p.amount;
+              dailyMap[p.date].count += 1;
+            }
+          });
+        });
+
+        const sortedDates = Object.keys(dailyMap).sort();
+        let cumulative = 0;
+        const trendData = sortedDates.map(date => {
+          cumulative += dailyMap[date].amount;
+          const d = new Date(date + 'T00:00:00');
+          return {
+            date,
+            label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            amount: dailyMap[date].amount,
+            cumulative,
+            count: dailyMap[date].count,
+          };
+        });
+
+        const totalCollected30 = trendData.reduce((s, d) => s + d.amount, 0);
+        const totalTransactions30 = trendData.reduce((s, d) => s + d.count, 0);
+        const avgDaily = totalCollected30 / 30;
+        const peakDay = trendData.reduce((best, d) => d.amount > best.amount ? d : best, trendData[0]);
+
+        return (
+          <div className="xl:col-span-5 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300 flex flex-col h-[500px]">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-[#064e3b] dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                  Collection Trend
+                </h3>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Daily collection activity over the last 30 days</p>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">30-Day Total</div>
+                  <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">₱{totalCollected30.toLocaleString()}</div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Avg / Day</div>
+                  <div className="text-sm font-black text-slate-800 dark:text-white">₱{Math.round(avgDaily).toLocaleString()}</div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Transactions</div>
+                  <div className="text-sm font-black text-slate-800 dark:text-white">{totalTransactions30.toLocaleString()}</div>
+                </div>
+                {peakDay && peakDay.amount > 0 && (
+                  <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Peak Day</div>
+                    <div className="text-sm font-black text-blue-600 dark:text-blue-400">{peakDay.label} — ₱{peakDay.amount.toLocaleString()}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex-1 mt-4 min-h-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradientAmount" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#064e3b" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#064e3b" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 10, fontWeight: 600, fill: '#94a3b8' }}
+                    tickLine={false}
+                    axisLine={false}
+                    interval={Math.floor(trendData.length / 7)}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fontWeight: 600, fill: '#94a3b8' }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v: number) => v >= 1000 ? `₱${(v / 1000).toFixed(0)}k` : `₱${v}`}
+                    width={55}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: '14px',
+                      border: 'none',
+                      boxShadow: '0 10px 25px -5px rgba(0,0,0,0.12)',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      padding: '12px 16px',
+                    }}
+                    formatter={(value: number, name: string) => [
+                      `₱${value.toLocaleString()}`,
+                      name === 'amount' ? 'Daily Collection' : 'Cumulative'
+                    ]}
+                    labelFormatter={(label: string) => `📅 ${label}`}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="amount"
+                    stroke="#064e3b"
+                    strokeWidth={2.5}
+                    fill="url(#gradientAmount)"
+                    dot={false}
+                    activeDot={{ r: 5, strokeWidth: 2, fill: '#fff', stroke: '#064e3b' }}
+                    name="amount"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      })()}
+
+        {/* CENTER: Collector Performance Matrix */}
+        <div className="xl:col-span-4 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[500px]">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
             <div>
                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Collector Performance Matrix</h3>
@@ -187,7 +507,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
         </div>
 
         {/* RIGHT SIDE: Account Distribution */}
-        <div className="lg:col-span-4 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[500px]">
+        <div className="xl:col-span-3 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[500px]">
           <div className="mb-4">
             <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Account Distribution</h3>
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Client load by personnel</span>
@@ -233,31 +553,94 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch mt-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-stretch mt-6">
+        {/* Today's Action Summary */}
         <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[400px]">
-          <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
-            <svg className="w-5 h-5 text-[#064e3b] dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            Recent Collections
-          </h3>
-          <div className="space-y-4 overflow-y-auto pr-2 flex-1 custom-scrollbar">
-            {recentPayments.map((payment) => (
-              <div key={payment.id} className="group flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl hover:bg-emerald-50 dark:hover:bg-slate-700/50 hover:shadow-sm transition-all duration-300 border border-transparent hover:border-emerald-100 dark:hover:border-slate-600">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center shadow-sm text-lg font-bold text-[#064e3b] dark:text-emerald-400">₱</div>
-                  <div>
-                    <p className="font-bold text-slate-800 dark:text-white text-sm">{payment.borrowerName}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">{payment.date}</p>
+          <div className="mb-4">
+            <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+              <svg className="w-5 h-5 text-[#064e3b] dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+              Today's Action Summary
+            </h3>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Tasks requiring immediate attention</p>
+          </div>
+          <div className="flex-1 flex flex-col justify-center gap-3">
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl border border-blue-100 dark:border-blue-800/30 flex items-center justify-between">
+               <div>
+                  <div className="text-blue-800 dark:text-blue-300 font-bold">Promises to Pay</div>
+                  <div className="text-blue-600/70 dark:text-blue-400/70 text-xs font-semibold mt-0.5">Due today</div>
+               </div>
+               <div className="text-2xl font-black text-blue-700 dark:text-blue-400 bg-white dark:bg-slate-800 w-12 h-12 rounded-xl flex items-center justify-center shadow-sm">{todayActions.ptpDue}</div>
+            </div>
+            
+            <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl border border-amber-100 dark:border-amber-800/30 flex items-center justify-between">
+               <div>
+                  <div className="text-amber-800 dark:text-amber-300 font-bold">Follow-ups</div>
+                  <div className="text-amber-600/70 dark:text-amber-400/70 text-xs font-semibold mt-0.5">Scheduled today</div>
+               </div>
+               <div className="text-2xl font-black text-amber-700 dark:text-amber-400 bg-white dark:bg-slate-800 w-12 h-12 rounded-xl flex items-center justify-center shadow-sm">{todayActions.followUpDue}</div>
+            </div>
+
+            <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-2xl border border-red-100 dark:border-red-800/30 flex items-center justify-between">
+               <div>
+                  <div className="text-red-800 dark:text-red-300 font-bold">Overdue / Missed</div>
+                  <div className="text-red-600/70 dark:text-red-400/70 text-xs font-semibold mt-0.5">Past due promises & follow-ups</div>
+               </div>
+               <div className="text-2xl font-black text-red-700 dark:text-red-400 bg-white dark:bg-slate-800 w-12 h-12 rounded-xl flex items-center justify-center shadow-sm">{todayActions.missed}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Near Full Payment */}
+        <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[400px]">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+            <div>
+              <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+                <svg className="w-5 h-5 text-[#064e3b] dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Near Full Payment
+              </h3>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Clients with ₱1,000 or less remaining balance</p>
+            </div>
+            <select
+              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-300 py-2 px-4 rounded-xl outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-colors"
+              value={nearFullCollectorFilter}
+              onChange={(e) => setNearFullCollectorFilter(e.target.value)}
+            >
+              <option value="">All Collectors</option>
+              {Array.from(new Set(loans.map(l => getCollectorDisplayName(l.collector, allCollectors)))).sort().map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-3 overflow-y-auto pr-2 flex-1 custom-scrollbar">
+            {(() => {
+              const nearFullPaymentClients = loans
+                .filter(l => l.runningBalance > 0 && l.runningBalance <= 1000 && l.status !== MovingStatus.PAID)
+                .filter(l => nearFullCollectorFilter === '' || getCollectorDisplayName(l.collector, allCollectors) === nearFullCollectorFilter)
+                .sort((a, b) => a.runningBalance - b.runningBalance);
+
+              if (nearFullPaymentClients.length === 0) {
+                return <p className="text-center py-8 text-slate-400 italic text-sm">No clients with ₱1,000 or less balance in this branch.</p>;
+              }
+
+              return nearFullPaymentClients.map((loan) => {
+                const collectorName = getCollectorDisplayName(loan.collector, allCollectors);
+                return (
+                  <div key={loan.id} className="group flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl hover:bg-emerald-50 dark:hover:bg-slate-700/50 hover:shadow-sm transition-all duration-300 border border-transparent hover:border-emerald-100 dark:hover:border-slate-600">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/40 rounded-xl flex items-center justify-center shadow-sm text-lg">✅</div>
+                      <div>
+                        <p className="font-bold text-slate-800 dark:text-white text-sm">{loan.borrowerName}</p>
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider mt-0.5">Collector: {collectorName}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-black text-emerald-600 dark:text-emerald-400">₱{loan.runningBalance.toLocaleString()}</p>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider mt-0.5">Remaining</p>
+                    </div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-[#064e3b] dark:text-emerald-400">+₱{payment.amount.toLocaleString()}</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider mt-0.5">Recorded by {payment.recorder}</p>
-                </div>
-              </div>
-            ))}
-            {recentPayments.length === 0 && (
-              <p className="text-center py-8 text-slate-400 italic text-sm">No recent transactions in this branch.</p>
-            )}
+                );
+              });
+            })()}
           </div>
         </div>
 

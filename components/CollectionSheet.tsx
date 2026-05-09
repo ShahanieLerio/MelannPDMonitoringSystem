@@ -4,14 +4,13 @@ import { store } from '../services/dataStore.ts';
 import { Loan, Collector, User, Branch } from '../types.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 import { formatMMDDYYYY } from '../constants.tsx';
-import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface CollectionSheetProps {
   currentUser: User;
   selectedBranch: Branch;
 }
 
-const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selectedBranch }) => {
+const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => {
   const [selectedCollector, setSelectedCollector] = useState<Collector | null>(null);
   const [loans, setLoans] = useState(store.getLoans(selectedBranch));
   const [collectors, setCollectors] = useState(store.getCollectors(selectedBranch));
@@ -26,38 +25,6 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
       const d = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
       return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
     } catch(e) { return dateString; }
-  };
-
-  const [payments, setPayments] = useState<Record<string, string>>({});
-  const [expense, setExpense] = useState<string>('0');
-  const [success, setSuccess] = useState('');
-
-  const [confirmConfig, setConfirmConfig] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-    type?: 'danger' | 'warning' | 'info';
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => { },
-  });
-
-  const closeConfirm = () => setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-
-  const askConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'warning') => {
-    setConfirmConfig({
-      isOpen: true,
-      title,
-      message,
-      onConfirm: () => {
-        onConfirm();
-        closeConfirm();
-      },
-      type
-    });
   };
 
   useEffect(() => {
@@ -93,42 +60,17 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
     }, {} as Record<string, Record<string, Loan[]>>);
   }, [collectorLoans]);
 
-  const totalCollected = useMemo(() => {
-    return (Object.values(payments) as string[]).reduce((sum: number, val: string) => sum + (parseFloat(val) || 0), 0);
-  }, [payments]);
-
-  const totalExpenseValue = parseFloat(expense) || 0;
-  const grandTotalValue = totalCollected - totalExpenseValue;
-
-  const handlePostAll = () => {
-    const paymentList = (Object.entries(payments) as [string, string][]).filter(([_, val]) => (parseFloat(val) || 0) > 0);
-    if (paymentList.length === 0) return;
-
-    askConfirm(
-      "Confirm Batch Posting",
-      `Are you sure you want to post ${paymentList.length} payments for ${selectedCollector?.name}? This will affect multiple client portfolios.`,
-      () => {
-        paymentList.forEach(([loanId, val]) => {
-          const amount = parseFloat(val);
-          store.recordPayment(
-            loanId,
-            amount,
-            new Date().toISOString().split('T')[0],
-            'Batch post via Collection Sheet',
-            currentUser.username,
-            currentUser.role,
-            `BATCH-${Date.now().toString().slice(-4)}`
-          );
-        });
-
-        setSuccess(`Successfully posted ${paymentList.length} collections!`);
-        setPayments({});
-        setLoans(store.getLoans(selectedBranch));
-        setTimeout(() => setSuccess(''), 5000);
-      },
-      'info'
-    );
-  };
+  const arrangedCollectors = useMemo(() => {
+    return collectors
+      .map((collector, index) => ({ collector, index }))
+      .sort((a, b) => {
+        const aHasPhoto = Boolean(a.collector.photoUrl);
+        const bHasPhoto = Boolean(b.collector.photoUrl);
+        if (aHasPhoto === bHasPhoto) return a.index - b.index;
+        return aHasPhoto ? -1 : 1;
+      })
+      .map(({ collector }) => collector);
+  }, [collectors]);
 
   // ── Scoped print styles: injected on mount, removed on unmount ──────────────
   // Applies ONLY when Collection Sheet is active. No other module is affected.
@@ -351,15 +293,23 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
           <p className="text-slate-500 dark:text-slate-400 font-medium transition-colors duration-300">Select a collector for branch: <span className="text-emerald-600 dark:text-emerald-400 font-bold">{selectedBranch}</span></p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 mt-6">
-          {collectors.map(c => (
+          {arrangedCollectors.map(c => (
             <button
               key={c.id}
               onClick={() => setSelectedCollector(c)}
               className="bg-white dark:bg-slate-800 p-5 rounded-3xl border-b-4 border-slate-200 dark:border-slate-700 text-left hover:border-emerald-600 dark:hover:border-emerald-500 hover:-translate-y-1 transition-all group relative overflow-hidden shadow-md hover:shadow-xl hover:shadow-emerald-900/10 dark:hover:shadow-emerald-900/40 active:translate-y-0 active:border-b-0"
             >
-              <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-900/40 flex items-center justify-center font-black text-emerald-600 dark:text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white dark:group-hover:bg-emerald-500 transition-all mb-3 rounded-xl text-base">
-                {(c.nickname || c.name).charAt(0)}
-              </div>
+              {c.photoUrl ? (
+                <img
+                  src={c.photoUrl}
+                  alt={c.nickname || c.name}
+                  className="w-20 h-20 rounded-2xl object-cover object-top border-4 border-emerald-50 dark:border-emerald-900/50 shadow-md shadow-slate-900/10 transition-all duration-300 group-hover:scale-[1.03] group-hover:border-emerald-200 dark:group-hover:border-emerald-700 mb-3"
+                />
+              ) : (
+                <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-900/40 flex items-center justify-center font-black text-emerald-600 dark:text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white dark:group-hover:bg-emerald-500 transition-all mb-3 rounded-2xl text-2xl border-4 border-emerald-50 dark:border-emerald-900/50">
+                  {(c.nickname || c.name).charAt(0)}
+                </div>
+              )}
               <h4 className="text-base font-black text-slate-900 dark:text-white uppercase tracking-tight leading-tight transition-colors duration-300">{c.nickname || c.name}</h4>
               <p className="text-slate-400 dark:text-slate-500 text-[9px] font-black uppercase tracking-widest mt-0.5 transition-colors duration-300">Field Spreadsheet</p>
 
@@ -401,10 +351,6 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
               </div>
             </div>
             <div className="flex gap-4">
-              <div className="text-right px-4 flex flex-col justify-center">
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-black uppercase tracking-widest text-[8px] transition-colors duration-300">Current Total</p>
-                <p className="font-black text-emerald-600 dark:text-emerald-400 text-lg transition-colors duration-300">₱{totalCollected.toLocaleString()}</p>
-              </div>
               <button
                 onClick={handlePrint}
                 className="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-6 py-2 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-black dark:hover:bg-white transition-all flex items-center gap-2"
@@ -412,38 +358,10 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                 Print
               </button>
-              <button
-                onClick={handlePostAll}
-                disabled={totalCollected === 0}
-                className="px-6 py-2 bg-emerald-600 dark:bg-emerald-500 text-white font-black rounded-xl text-xs uppercase tracking-widest hover:bg-emerald-700 dark:hover:bg-emerald-600 transition-all disabled:opacity-50 shadow-lg shadow-emerald-900/10 dark:shadow-emerald-900/50"
-              >
-                Post All
-              </button>
             </div>
           </div>
 
-          <div className="px-6 pb-6 grid grid-cols-4 gap-4 bg-white dark:bg-slate-900 transition-colors duration-300">
-            <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 text-center transition-colors duration-300">
-              <p className="text-[8px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1 transition-colors duration-300">Expense Adjustment</p>
-              <input
-                type="number"
-                className="bg-transparent text-center font-black text-slate-800 dark:text-white text-lg w-full focus:outline-none transition-colors duration-300"
-                value={expense}
-                onChange={e => setExpense(e.target.value)}
-              />
-            </div>
-            <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-800/50 text-center transition-colors duration-300">
-              <p className="text-[8px] font-black text-emerald-600/60 dark:text-emerald-400/60 uppercase tracking-widest mb-1 transition-colors duration-300">Grand Total</p>
-              <p className="font-black text-emerald-900 dark:text-emerald-400 text-lg transition-colors duration-300">₱{grandTotalValue.toLocaleString()}</p>
-            </div>
-          </div>
         </div>
-
-        {success && (
-          <div className="mx-6 mt-4 p-4 bg-emerald-600 dark:bg-emerald-500 text-white font-black text-center rounded-2xl animate-pulse text-xs uppercase tracking-widest transition-colors duration-300">
-            {success}
-          </div>
-        )}
 
         {/* Filter Section */}
         <div className="mx-6 mb-4 mt-6 p-4 bg-slate-50 dark:bg-slate-800/20 rounded-[16px] border border-slate-200 dark:border-slate-700 flex flex-col md:flex-row items-center justify-between gap-4">
@@ -491,7 +409,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
 
         {/* SpreadSheet Matrix View (Encoding) */}
         <div className="p-6 overflow-x-auto">
-          <table className="w-full text-xs text-left border-collapse border border-slate-200 dark:border-slate-700 min-w-[1000px] rounded-3xl overflow-hidden shadow-sm transition-colors duration-300">
+          <table className="w-full text-xs text-left border-collapse border border-slate-200 dark:border-slate-700 min-w-[820px] rounded-3xl overflow-hidden shadow-sm transition-colors duration-300">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-300 dark:border-slate-700 transition-colors duration-300">
                 <th className="p-4 border-r border-slate-200 dark:border-slate-700 w-24 text-center font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">CODE</th>
@@ -499,19 +417,18 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
                 <th className="p-4 border-r border-slate-200 dark:border-slate-700 font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">FULL ADDRESS</th>
                 <th className="p-4 border-r border-slate-200 dark:border-slate-700 w-32 font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">DUE DATE</th>
                 <th className="p-4 border-r border-slate-200 dark:border-slate-700 text-right w-40 font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">BALANCE</th>
-                <th className="p-4 w-48 text-center font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest uppercase transition-colors duration-300">Payment Entry</th>
               </tr>
             </thead>
             <tbody>
               {Object.entries(groupedLoans).map(([city, barangays]) => (
                 <React.Fragment key={city}>
                   <tr className="bg-slate-100/50 dark:bg-slate-800 font-black border-b border-slate-200 dark:border-slate-700 transition-colors duration-300">
-                    <td colSpan={6} className="p-3 px-6 uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500 text-[10px] transition-colors duration-300">CITY: {city}</td>
+                    <td colSpan={5} className="p-3 px-6 uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500 text-[10px] transition-colors duration-300">CITY: {city}</td>
                   </tr>
                   {Object.entries(barangays).map(([barangay, items]) => (
                     <React.Fragment key={barangay}>
                        <tr className="bg-emerald-50/20 dark:bg-emerald-900/10 font-bold border-b border-slate-200 dark:border-slate-700 transition-colors duration-300">
-                        <td colSpan={6} className="p-2 px-10 uppercase tracking-widest text-emerald-600/50 dark:text-emerald-400/50 text-[10px] transition-colors duration-300">BARANGAY: {barangay}</td>
+                        <td colSpan={5} className="p-2 px-10 uppercase tracking-widest text-emerald-600/50 dark:text-emerald-400/50 text-[10px] transition-colors duration-300">BARANGAY: {barangay}</td>
                       </tr>
                       {items.map(l => (
                         <tr key={l.id} className="group border-b border-slate-100 dark:border-slate-700/50 hover:bg-emerald-50 dark:hover:bg-slate-800/50 transition-all duration-300">
@@ -520,18 +437,6 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-slate-500 dark:text-slate-400 font-medium italic transition-colors duration-300">{l.fullAddress || "—"}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-slate-600 dark:text-slate-400 font-bold transition-colors duration-300">{formatMMDDYYYY(l.dueDate)}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-right font-black text-slate-800 dark:text-white transition-colors duration-300">₱{l.runningBalance.toLocaleString()}</td>
-                          <td className="p-2 px-6">
-                            <div className="flex items-center border border-slate-200 dark:border-slate-700 focus-within:border-emerald-600 dark:focus-within:border-emerald-500 rounded-xl bg-white dark:bg-slate-900 transition-all duration-300">
-                              <span className="px-3 text-emerald-600 dark:text-emerald-400 font-black transition-colors duration-300">₱</span>
-                              <input
-                                type="number"
-                                className="w-full py-2 bg-transparent focus:outline-none font-black text-center text-emerald-700 dark:text-emerald-400 transition-colors duration-300"
-                                placeholder="0.00"
-                                value={payments[l.id] || ''}
-                                onChange={e => setPayments({ ...payments, [l.id]: e.target.value })}
-                              />
-                            </div>
-                          </td>
                         </tr>
                       ))}
                     </React.Fragment>
@@ -760,14 +665,6 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ currentUser, selected
           </div>
         </div>
       </div>
-      <ConfirmationModal
-        isOpen={confirmConfig.isOpen}
-        title={confirmConfig.title}
-        message={confirmConfig.message}
-        onConfirm={confirmConfig.onConfirm}
-        onCancel={closeConfirm}
-        type={confirmConfig.type}
-      />
     </>
   );
 };

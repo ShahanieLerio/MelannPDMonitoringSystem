@@ -17,7 +17,6 @@ const INITIAL_USERS: User[] = [
 
 const INITIAL_COLLECTORS: Collector[] = [
   { id: 'c1', name: 'John Doe', nickname: 'JOHN', address: '123 Collector St, Baybay City', branch: Branch.NAVAL },
-  { id: 'c2', name: 'Jane Smith', nickname: 'JANE', address: '456 Agent Ave, Palompon', branch: Branch.ORMOC },
 ];
 
 const INITIAL_LOANS: Loan[] = [
@@ -47,31 +46,6 @@ const INITIAL_LOANS: Loan[] = [
     aiPriority: PriorityLevel.TOP,
     promiseToPayDate: null,
     branch: Branch.NAVAL
-  },
-  {
-    id: 'l2',
-    collector: 'Jane Smith',
-    code: '1002',
-    firstName: 'Ricardo',
-    lastName: 'Dalisay',
-    borrowerName: 'Dalisay, Ricardo',
-    monthReported: '2023-09',
-    dueDate: '2023-10-10',
-    outstandingBalance: 25000,
-    amountCollected: 25000,
-    runningBalance: 0,
-    status: MovingStatus.PAID,
-    location: LocationStatus.LOCATED,
-    area: 'Area 2',
-    city: 'Manila',
-    barangay: 'Binondo',
-    fullAddress: '456 Binondo Square, Manila',
-    payments: [],
-    remarks: [],
-    history: [],
-    aiPriority: PriorityLevel.LOWEST,
-    promiseToPayDate: null,
-    branch: Branch.ORMOC
   }
 ];
 
@@ -114,7 +88,13 @@ class DataStore {
         return val;
       };
 
-      const mappedCollectors = dedupeCollectors(dbCollectors as unknown as Collector[]);
+      const mappedCollectors = dedupeCollectors(dbCollectors.map((c: any) => {
+        const existingCollector = this.collectors.find(local => local.id === c.id);
+        return {
+          ...c,
+          photoUrl: c.photoUrl || c.photo_url || existingCollector?.photoUrl || '',
+        };
+      }) as Collector[]);
 
       const mappedLoans = dbLoans.map((l: any) => ({
         id: l.id,
@@ -142,6 +122,8 @@ class DataStore {
         followUpDate: l.follow_up_date || null,
         aiPriority: l.ai_priority,
         recurringSchedule: parseJson(l.recurring_schedule) || null,
+        actionNote: l.action_note || null,
+        actionStage: l.action_stage || null,
         branch: l.branch || Branch.ALL,
         payments: dbPayments.filter((p: any) => p.loan_id === l.id).map((p: any) => ({ 
           id: p.id,
@@ -389,13 +371,13 @@ class DataStore {
     return collectors.filter(c => c.branch === branch);
   }
 
-  async addCollector(name: string, branch: Branch, address?: string, nickname?: string) {
+  async addCollector(name: string, branch: Branch, address?: string, nickname?: string, photoUrl?: string) {
     if (hasDuplicateCollectorIdentity(this.collectors, { name, nickname })) {
       throw new Error('Collector already exists. Please use the existing collector record.');
     }
 
     const id = Math.random().toString(36).substring(2, 9);
-    const newCollector: Collector = { id, name, nickname, address, branch };
+    const newCollector: Collector = { id, name, nickname, address, photoUrl, branch };
     
     // Await server confirmation
     await this.api('/collectors', 'POST', newCollector);
@@ -405,7 +387,7 @@ class DataStore {
     return newCollector;
   }
 
-  async updateCollector(id: string, name: string, branch: Branch, address?: string, nickname?: string) {
+  async updateCollector(id: string, name: string, branch: Branch, address?: string, nickname?: string, photoUrl?: string) {
     const index = this.collectors.findIndex(c => c.id === id);
     if (index !== -1) {
       if (hasDuplicateCollectorIdentity(this.collectors, { name, nickname }, id)) {
@@ -416,9 +398,9 @@ class DataStore {
       const oldNick = this.collectors[index].nickname;
       
       // Await server confirmation
-      await this.api(`/collectors/${id}`, 'PUT', { name, nickname, address, branch });
+      await this.api(`/collectors/${id}`, 'PUT', { name, nickname, address, photoUrl, branch });
 
-      this.collectors[index] = { ...this.collectors[index], name, address, branch, nickname };
+      this.collectors[index] = { ...this.collectors[index], name, address, branch, nickname, photoUrl };
       this.loans.forEach(l => {
         if (l.collector === oldName || (oldNick && l.collector === oldNick)) {
           l.collector = nickname || name;
@@ -574,8 +556,9 @@ class DataStore {
   }
 
   getLoans(branch?: Branch) {
-    if (!branch || branch === Branch.ALL) return this.loans;
-    return this.loans.filter(l => l.branch === branch);
+    const cleanLoans = this.loans.filter(l => !(l.code === '1002' && l.borrowerName === 'Dalisay, Ricardo'));
+    if (!branch || branch === Branch.ALL) return cleanLoans;
+    return cleanLoans.filter(l => l.branch === branch);
   }
 
   async addLoan(loanData: Omit<Loan, 'id' | 'payments' | 'remarks' | 'amountCollected' | 'runningBalance' | 'borrowerName' | 'aiPriority' | 'history' | 'promiseToPayDate'>, user: string, role: string) {

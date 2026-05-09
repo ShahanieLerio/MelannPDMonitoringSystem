@@ -11,6 +11,7 @@ import ConfirmationModal from './ConfirmationModal.tsx';
 import BulkImportModal from './BulkImportModal.tsx';
 import MultiSelectFilter from './MultiSelectFilter.tsx';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
+import * as XLSX from 'xlsx';
 
 interface LoanGridProps {
   currentUser: User;
@@ -133,6 +134,52 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
 
   const refreshData = () => setLoans(store.getLoans(selectedBranch));
 
+  const handleExportExcel = () => {
+    if (filteredLoans.length === 0) return;
+
+    const data = filteredLoans.map(l => ({
+      'Collector': getCollectorDisplayName(l.collector, allCollectors),
+      'Area': l.area,
+      'City': l.city,
+      'Barangay': l.barangay,
+      'Client Code': l.code,
+      'Borrower\'s Name': `${l.lastName}, ${l.firstName}`,
+      'Month Reported': formatReportedMonth(l.monthReported),
+      'Due Date': formatMMDDYYYY(l.dueDate),
+      'O/S Balance': l.outstandingBalance,
+      'Collected': l.amountCollected,
+      'Running Balance': l.runningBalance,
+      'Location': l.location,
+      'Status': l.status,
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+
+    // Set column widths for readability
+    ws['!cols'] = [
+      { wch: 16 }, // Collector
+      { wch: 14 }, // Area
+      { wch: 14 }, // City
+      { wch: 14 }, // Barangay
+      { wch: 12 }, // Client Code
+      { wch: 26 }, // Borrower's Name
+      { wch: 14 }, // Month Reported
+      { wch: 12 }, // Due Date
+      { wch: 14 }, // O/S Balance
+      { wch: 14 }, // Collected
+      { wch: 14 }, // Running Balance
+      { wch: 8 },  // Location
+      { wch: 10 }, // Status
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Client Portfolio');
+
+    const branchTag = selectedBranch.replace(/\s+/g, '_');
+    const today = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `LoanGrid_${branchTag}_${today}.xlsx`);
+  };
+
   const handleDelete = (id: string, name: string) => {
     askConfirm(
       "Are you sure you want to delete this record?",
@@ -209,9 +256,17 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
             Displaying data for: <span className="text-emerald-600">{selectedBranch}</span>
           </p>
         </div>
+        <button
+          onClick={handleExportExcel}
+          disabled={filteredLoans.length === 0}
+          className="flex items-center gap-2 px-5 py-2.5 bg-[#064e3b] hover:bg-[#043326] text-white rounded-xl font-semibold text-sm shadow-sm transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+          Export Excel
+        </button>
       </div>
 
-      <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 transition-colors duration-300">
+      <div className="relative z-40 bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 transition-colors duration-300">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="relative">
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Search Client</label>
@@ -331,12 +386,12 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
                 const collectorNick = getCollectorDisplayName(l.collector, allCollectors);
                 return (
                   <tr key={l.id} className="group hover:bg-emerald-50 dark:hover:bg-slate-700/50 transition-all duration-300">
-                    <td className="sticky left-0 bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 font-bold z-10 px-3 py-4 text-emerald-700 dark:text-emerald-400 border-r border-slate-50 dark:border-slate-700 min-w-[100px] truncate transition-colors duration-300" title={l.collector}>{collectorNick}</td>
-                    <td className="sticky left-[100px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 border-r border-slate-50 dark:border-slate-700 min-w-[90px] truncate transition-colors duration-300">{l.area}</td>
-                    <td className="sticky left-[190px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 border-r border-slate-50 dark:border-slate-700 min-w-[90px] truncate transition-colors duration-300">{l.city}</td>
-                    <td className="sticky left-[280px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 border-r border-slate-50 dark:border-slate-700 min-w-[100px] truncate transition-colors duration-300">{l.barangay}</td>
-                    <td className="sticky left-[380px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 font-black text-emerald-600 dark:text-emerald-400 border-r border-slate-50 dark:border-slate-700 min-w-[85px] transition-colors duration-300">{l.code}</td>
-                    <td className="sticky left-[465px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 font-bold text-slate-700 dark:text-slate-200 cursor-pointer border-r border-slate-50 dark:border-slate-700 min-w-[160px] max-w-[160px] truncate transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:font-black group-hover:underline decoration-emerald-500/30 underline-offset-4" title={`${l.lastName}, ${l.firstName}`} onClick={() => setSelectedLoan(l)}>
+                    <td className="sticky left-0 bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 font-bold z-10 px-3 py-4 text-emerald-700 dark:text-emerald-400 min-w-[100px] truncate transition-colors duration-300" title={l.collector}>{collectorNick}</td>
+                    <td className="sticky left-[100px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 min-w-[90px] truncate transition-colors duration-300">{l.area}</td>
+                    <td className="sticky left-[190px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 min-w-[90px] truncate transition-colors duration-300">{l.city}</td>
+                    <td className="sticky left-[280px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 min-w-[100px] truncate transition-colors duration-300">{l.barangay}</td>
+                    <td className="sticky left-[380px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 font-black text-emerald-600 dark:text-emerald-400 min-w-[85px] transition-colors duration-300">{l.code}</td>
+                    <td className="sticky left-[465px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 font-bold text-slate-700 dark:text-slate-200 cursor-pointer min-w-[160px] max-w-[160px] truncate transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:font-black group-hover:underline decoration-emerald-500/30 underline-offset-4" title={`${l.lastName}, ${l.firstName}`} onClick={() => setSelectedLoan(l)}>
                       {l.lastName}, {l.firstName}
                     </td>
                     <td className="px-3 py-4 text-slate-600 dark:text-slate-300">{formatReportedMonth(l.monthReported)}</td>

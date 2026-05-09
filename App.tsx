@@ -13,10 +13,12 @@ import Collectors from './components/Collectors.tsx';
 import CollectionSheet from './components/CollectionSheet.tsx';
 import LoginPage from './components/LoginPage.tsx';
 import DemandLetterComponent from './components/DemandLetter.tsx';
+import ClientActionTracker from './components/ClientActionTracker.tsx';
 import BackupRestore from './components/BackupRestore.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import DailyCollectionReport from './components/DailyCollectionReport.tsx';
 import ThemeToggle from './components/ThemeToggle.tsx';
+import Documentation from './components/Documentation.tsx';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -129,7 +131,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-900 overflow-hidden transition-colors duration-300">
+    <div className="flex h-screen bg-[#f0f4f8] dark:bg-slate-900 overflow-hidden transition-colors duration-300">
       <Sidebar
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
@@ -215,13 +217,15 @@ const App: React.FC = () => {
           <ErrorBoundary>
             {activeTab.startsWith('dashboard') && <Dashboard selectedBranch={selectedBranch} />}
             {activeTab.startsWith('loans') && <LoanGrid currentUser={currentUser} selectedBranch={selectedBranch} activeAction={activeTab === 'loans' ? null : activeTab.replace('loans-', '') as 'import' | 'add'} onActionComplete={() => setActiveTab('loans')} />}
-            {activeTab.startsWith('client-update') && <ClientUpdate currentUser={currentUser} selectedBranch={selectedBranch} activeView={activeTab === 'client-update' ? 'All' : activeTab === 'client-update-advance' ? 'Follow-up' : activeTab === 'client-update-critical' ? 'Priority' : activeTab === 'client-update-monitoring' ? 'Monitoring' : 'Updates Log'} />}
+            {activeTab.startsWith('client-update') && <ClientUpdate currentUser={currentUser} selectedBranch={selectedBranch} activeView={activeTab === 'client-update' ? 'Updates Log' : activeTab === 'client-update-advance' ? 'Follow-up' : activeTab === 'client-update-critical' ? 'Priority' : activeTab === 'client-update-monitoring' ? 'Monitoring' : activeTab === 'client-update-no-activity' ? 'No Activity' : 'Updates Log'} />}
             {activeTab.startsWith('receive-payment') && <PaymentForm currentUser={currentUser} selectedBranch={selectedBranch} activeView={activeTab === 'receive-payment-reverse' ? 'reverse' : 'post'} />}
             {activeTab === 'collection-sheet' && <CollectionSheet currentUser={currentUser} selectedBranch={selectedBranch} />}
             {activeTab === 'dcr' && <DailyCollectionReport selectedBranch={selectedBranch} />}
             {activeTab.startsWith('reports') && <Reports selectedBranch={selectedBranch} activeView={activeTab === 'reports-monthly' ? 'monthly-performance' : activeTab === 'reports-aging' ? 'aging' : 'performance'} />}
             {activeTab === 'demand-letters' && <DemandLetterComponent currentUser={currentUser} selectedBranch={selectedBranch} />}
+            {activeTab === 'action-tracker' && <ClientActionTracker currentUser={currentUser} selectedBranch={selectedBranch} />}
             {activeTab === 'collectors' && <Collectors selectedBranch={selectedBranch} />}
+            {activeTab === 'documentation' && <Documentation selectedBranch={selectedBranch} role={currentUser.role} />}
             {activeTab === 'users' && currentUser.role === UserRole.SUPER_ADMIN && <UserManagement currentUser={currentUser} />}
             {activeTab === 'database' && <BackupRestore currentUser={currentUser} selectedBranch={selectedBranch} />}
           </ErrorBoundary>

@@ -11,7 +11,7 @@ import { useClientUpdates } from '../hooks/useClientUpdates.ts';
 interface ClientUpdateProps {
   selectedBranch: Branch;
   currentUser: User;
-  activeView?: 'All' | 'Priority' | 'Monitoring' | 'Follow-up' | 'Updates Log';
+  activeView?: 'All' | 'Priority' | 'Monitoring' | 'No Activity' | 'Follow-up' | 'Updates Log';
 }
 
 interface ReminderItem {
@@ -21,6 +21,38 @@ interface ReminderItem {
   context: string;
 }
 
+type CommitmentOutcome = 'Paid' | 'Missed' | 'Rescheduled' | 'Visited' | 'No Contact';
+
+const COMMITMENT_OUTCOMES: Record<CommitmentOutcome, { label: string; remark: string; className: string }> = {
+  Paid: {
+    label: 'Paid',
+    remark: 'Commitment outcome logged: payment confirmed or balance already settled.',
+    className: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+  },
+  Missed: {
+    label: 'Missed',
+    remark: 'Commitment outcome logged: client missed the promised action.',
+    className: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+  },
+  Rescheduled: {
+    label: 'Rescheduled',
+    remark: 'Commitment outcome logged: client commitment needs a new schedule.',
+    className: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+  },
+  Visited: {
+    label: 'Visited',
+    remark: 'Commitment outcome logged: collector visit completed.',
+    className: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+  },
+  'No Contact': {
+    label: 'No Contact',
+    remark: 'Commitment outcome logged: no successful contact with client.',
+    className: 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+  }
+};
+
+const COLLECTOR_ACCOUNTABILITY_ORDER = ['ALDIE', 'EDDIE', 'NOEL', 'LITO', 'MASOY', 'TATA'];
+
 const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser, activeView }) => {
   const { loans, updateList, topPriorityList, reminderList, closeMonitoringList, filteredMainList } = useClientUpdates(selectedBranch);
   const activeFilter = activeView || 'All';
@@ -28,6 +60,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     priority: false,
     monitoring: false,
     reminders: false,
+    noActivity: false,
     log: false
   });
 
@@ -62,17 +95,73 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     checkExpiredPriority();
   }, [selectedBranch]);
 
-  const handleMarkCommitmentDone = async (loan: any) => {
-    const isPaid = loan.outstandingBalance <= 0 || loan.status === 'Paid';
-    const newPriority = isPaid ? PriorityLevel.LOWEST : PriorityLevel.NEED_ATTENTION;
-
-    // Optimistic update locally if needed, but store subscription should handle it
-    await store.updateLoan(loan.id, { aiPriority: newPriority }, currentUser.username, currentUser.role);
-  };
-
   const noActivityList = useMemo(() => {
     return loans.filter(l => l.remarks.length === 0);
   }, [loans]);
+
+  const collectorSummary = useMemo(() => {
+    const summary = new Map<string, {
+      collector: string;
+      critical: number;
+      followUps: number;
+      monitoring: number;
+      noActivity: number;
+      total: number;
+    }>();
+
+    const ensureCollector = (collector?: string) => {
+      const name = collector?.trim() || 'UNASSIGNED';
+      if (!summary.has(name)) {
+        summary.set(name, { collector: name, critical: 0, followUps: 0, monitoring: 0, noActivity: 0, total: 0 });
+      }
+      return summary.get(name)!;
+    };
+
+    loans.forEach(loan => {
+      ensureCollector(loan.collector).total += 1;
+    });
+    topPriorityList.forEach((loan: any) => {
+      ensureCollector(loan.collector).critical += 1;
+    });
+    reminderList.forEach(item => {
+      ensureCollector(item.loan.collector).followUps += 1;
+    });
+    closeMonitoringList.forEach((loan: any) => {
+      ensureCollector(loan.collector).monitoring += 1;
+    });
+    noActivityList.forEach(loan => {
+      ensureCollector(loan.collector).noActivity += 1;
+    });
+
+    return Array.from(summary.values())
+      .filter(item => item.total > 0)
+      .sort((a, b) => {
+        const aOrder = COLLECTOR_ACCOUNTABILITY_ORDER.indexOf(a.collector.trim().toUpperCase());
+        const bOrder = COLLECTOR_ACCOUNTABILITY_ORDER.indexOf(b.collector.trim().toUpperCase());
+        if (aOrder !== -1 || bOrder !== -1) {
+          return (aOrder === -1 ? Number.MAX_SAFE_INTEGER : aOrder) - (bOrder === -1 ? Number.MAX_SAFE_INTEGER : bOrder);
+        }
+        const aWork = a.critical + a.monitoring + a.followUps + a.noActivity;
+        const bWork = b.critical + b.monitoring + b.followUps + b.noActivity;
+        return bWork - aWork || a.collector.localeCompare(b.collector);
+      });
+  }, [loans, topPriorityList, reminderList, closeMonitoringList, noActivityList]);
+
+  const handleCommitmentOutcome = async (loan: any, outcome: CommitmentOutcome) => {
+    const outcomeConfig = COMMITMENT_OUTCOMES[outcome];
+    const isFullyPaid = loan.runningBalance <= 0 || loan.outstandingBalance <= 0 || loan.status === 'Paid';
+    const newPriority = outcome === 'Paid' && isFullyPaid
+      ? PriorityLevel.LOWEST
+      : outcome === 'Rescheduled'
+        ? PriorityLevel.FOLLOW_UP
+        : outcome === 'Visited'
+          ? PriorityLevel.MONITOR
+          : PriorityLevel.NEED_ATTENTION;
+    const remarkText = `[COMMITMENT_STATUS:${outcome}] ${outcomeConfig.remark}`;
+
+    await store.addRemark(loan.id, remarkText, currentUser.username, newPriority, currentUser.username, currentUser.role);
+    await store.updateLoan(loan.id, { aiPriority: newPriority }, currentUser.username, currentUser.role);
+  };
 
   const toggleSection = (section: keyof typeof collapsedSections) => {
     setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -93,6 +182,8 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
       {/* QUICK FILTERS REMOVED (Now handled by Sidebar) */}
 
       {/* 1️⃣ CLOSE MONITORING — Highest Priority */}
+      <CollectorAccountabilitySummary summary={collectorSummary} />
+
       {(activeFilter === 'All' || activeFilter === 'Monitoring') && (
         <section className="bg-rose-50/30 rounded-[1.5rem] p-6 shadow-sm border border-rose-200 space-y-6 relative">
           <div className="flex items-center justify-between">
@@ -106,13 +197,14 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
           </div>
           
           {!collapsedSections.monitoring && (
-             <CloseMonitoringTable 
-               data={closeMonitoringList} 
-               onViewDetails={setSelectedLoan}
-               onEdit={setEditLoan}
-               onAddRemark={setRemarksLoan}
-               onVisitLog={setVisitLogLoan}
-             />
+              <CloseMonitoringTable 
+                data={closeMonitoringList} 
+                onViewDetails={setSelectedLoan}
+                onEdit={setEditLoan}
+                onAddRemark={setRemarksLoan}
+                onVisitLog={setVisitLogLoan}
+                onOutcome={handleCommitmentOutcome}
+              />
           )}
         </section>
       )}
@@ -193,11 +285,12 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                         </button>
                       </div>
                       <button
-                        onClick={() => handleMarkCommitmentDone(item)}
+                        onClick={() => handleCommitmentOutcome(item, 'Paid')}
                         className="w-full py-2.5 bg-slate-900 border border-slate-800 text-white rounded-xl text-[9px] font-black uppercase tracking-[0.2em] transition-all duration-300 hover:bg-slate-800 hover:shadow-md hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-2"
                       >
-                        <span className="bg-white/20 w-4 h-4 rounded-full flex items-center justify-center text-[8px]">✓</span> Settle Commitment
+                        <span className="bg-white/20 w-4 h-4 rounded-full flex items-center justify-center text-[8px]">✓</span> Log Paid Outcome
                       </button>
+                      <CommitmentOutcomeButtons loan={item} onOutcome={handleCommitmentOutcome} compact />
                     </div>
                   </div>
                 ))}
@@ -300,7 +393,37 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
         </section>
       )}
 
-      {/* 4️⃣ ALL CLIENT UPDATES LOG — Full Logs */}
+      {/* 4️⃣ NO ACTIVITY QUEUE */}
+      {activeFilter === 'No Activity' && (
+        <section className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm space-y-6 relative">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em]">No Activity Queue</h3>
+              <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black px-2 py-1 rounded-lg border border-indigo-100">{noActivityList.length}</span>
+            </div>
+            <button onClick={() => toggleSection('noActivity')} className="p-2 hover:bg-slate-100 rounded-xl transition-colors group">
+              <span className={`block text-md transition-transform duration-300 text-slate-400 group-hover:text-indigo-600 ${collapsedSections.noActivity ? 'rotate-180' : ''}`}>v</span>
+            </button>
+          </div>
+
+          {!collapsedSections.noActivity && (
+            noActivityList.length === 0 ? (
+              <div className="p-10 bg-slate-50 border-2 border-slate-200 border-dashed rounded-[2rem] flex items-center justify-center h-36">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">All clients have at least one field update.</p>
+              </div>
+            ) : (
+              <NoActivityTable
+                data={noActivityList}
+                onViewDetails={setSelectedLoan}
+                onEdit={setEditLoan}
+                onAddRemark={setRemarksLoan}
+              />
+            )
+          )}
+        </section>
+      )}
+
       {(activeFilter === 'All' || activeFilter === 'Updates Log') && (
         <section className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm space-y-6 relative">
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
@@ -321,7 +444,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                 <p className="text-[#6B7280] font-bold text-xs mt-2">No client updates to display.</p>
               </div>
             ) : (
-              <ClientUpdateTable data={activeFilter === 'Updates Log' ? updateList : filteredMainList} />
+              <ClientUpdateTable data={activeFilter === 'Updates Log' ? updateList : filteredMainList} onOutcome={handleCommitmentOutcome} />
             )
           )}
         </section>
@@ -357,6 +480,155 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     </div>
   );
 };
+
+function CollectorAccountabilitySummary({ summary }: { summary: Array<{ collector: string; critical: number; followUps: number; monitoring: number; noActivity: number; total: number }> }) {
+  if (summary.length === 0) return null;
+
+  return (
+    <section className="bg-white rounded-2xl p-3 border border-slate-200 shadow-sm">
+      <div className="flex items-center justify-between gap-3 mb-3 px-1">
+        <div>
+          <h3 className="text-[12px] font-black text-slate-800 uppercase tracking-[0.18em]">Collector Accountability</h3>
+          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Daily workload by queue</p>
+        </div>
+        <span className="shrink-0 text-[9px] font-black text-slate-400 uppercase tracking-widest">{summary.length} Collectors</span>
+      </div>
+      <div className="flex gap-2.5 overflow-x-auto pb-1 snap-x">
+        {summary.map(item => {
+          const activeWork = item.critical + item.monitoring + item.followUps + item.noActivity;
+          return (
+            <div key={item.collector} className="min-w-[220px] max-w-[220px] snap-start border border-slate-200 rounded-xl p-2.5 bg-slate-50/40">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="min-w-0">
+                  <p className="font-black text-slate-800 text-[12px] leading-tight truncate">{item.collector}</p>
+                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{activeWork} Active / {item.total} Total</p>
+                </div>
+                <div className="w-7 h-7 shrink-0 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600">
+                  {item.collector.charAt(0)}
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                <QueueMiniStat label="Crit" value={item.critical} color="text-red-700 bg-red-50 border-red-100" />
+                <QueueMiniStat label="Mon" value={item.monitoring} color="text-rose-700 bg-rose-50 border-rose-100" />
+                <QueueMiniStat label="F/U" value={item.followUps} color="text-amber-700 bg-amber-50 border-amber-100" />
+                <QueueMiniStat label="None" value={item.noActivity} color="text-indigo-700 bg-indigo-50 border-indigo-100" />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function QueueMiniStat({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className={`rounded-lg border px-1.5 py-1.5 text-center ${color}`}>
+      <div className="text-[12px] font-black leading-none">{value}</div>
+      <div className="text-[7px] font-black uppercase tracking-widest mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+function CommitmentOutcomeButtons({ loan, onOutcome, compact = false }: { loan: any; onOutcome: (loan: any, outcome: CommitmentOutcome) => void; compact?: boolean }) {
+  const outcomes: CommitmentOutcome[] = compact ? ['Missed', 'Rescheduled', 'Visited', 'No Contact'] : ['Paid', 'Missed', 'Rescheduled', 'Visited', 'No Contact'];
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] px-1">Commitment Outcome Tracking</p>
+      <div className="grid grid-cols-2 gap-1.5">
+        {outcomes.map(outcome => (
+          <button
+            key={outcome}
+            type="button"
+            onClick={() => onOutcome(loan, outcome)}
+            className={`px-2 py-2 rounded-lg border text-[8px] font-black uppercase tracking-widest transition-all active:scale-95 ${COMMITMENT_OUTCOMES[outcome].className}`}
+            title={`Log outcome: ${outcome}`}
+          >
+            {COMMITMENT_OUTCOMES[outcome].label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NoActivityTable({ data, onViewDetails, onEdit, onAddRemark }: { data: Loan[]; onViewDetails: (l: Loan) => void; onEdit: (l: Loan) => void; onAddRemark: (l: Loan) => void }) {
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filtered = data.filter(item => {
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return item.borrowerName.toLowerCase().includes(term) || item.collector.toLowerCase().includes(term) || item.code.toLowerCase().includes(term);
+  });
+
+  return (
+    <div className="bg-white rounded-[2rem] border border-indigo-100 overflow-hidden shadow-xl shadow-indigo-900/5 animate-slideIn">
+      <div className="px-5 py-3 border-b border-indigo-100 flex justify-between items-center bg-indigo-50/30">
+        <h3 className="font-black text-indigo-800 uppercase tracking-widest text-xs flex items-center gap-2">
+          <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 shadow-sm text-[10px]">{filtered.length}</span>
+          No Field Activity
+        </h3>
+        <div className="relative w-64">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          </div>
+          <input
+            type="text"
+            placeholder="Search Client or Collector..."
+            className="w-full pl-9 pr-3 py-1.5 bg-white border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none text-[11px] font-bold text-slate-700 shadow-sm transition-all placeholder:text-slate-400 placeholder:font-medium"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-indigo-50 border-b border-indigo-100">
+              <th className="py-2 px-4 text-[9px] font-black text-indigo-500 uppercase tracking-widest">Client Details</th>
+              <th className="py-2 px-3 text-[9px] font-black text-indigo-400 uppercase tracking-widest">Collector</th>
+              <th className="py-2 px-3 text-[9px] font-black text-indigo-400 uppercase tracking-widest">Balance Risk</th>
+              <th className="py-2 px-4 text-right text-[9px] font-black text-indigo-400 uppercase tracking-widest">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-indigo-50">
+            {filtered.map((row, idx) => (
+              <tr key={row.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-indigo-50/60 transition-colors`}>
+                <td className="py-3 px-4">
+                  <div className="flex flex-col">
+                    <span className="font-black text-slate-800 text-[13px] leading-tight">{row.borrowerName}</span>
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
+                  </div>
+                </td>
+                <td className="py-3 px-3">
+                  <span className="bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-slate-200">
+                    {row.collector}
+                  </span>
+                </td>
+                <td className="py-3 px-3">
+                  <span className="text-sm font-black text-slate-800">₱{row.runningBalance.toLocaleString()}</span>
+                </td>
+                <td className="py-3 px-4 text-right">
+                  <div className="flex justify-end gap-1">
+                    <button onClick={() => onAddRemark(row)} className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-colors">Log</button>
+                    <button onClick={() => onViewDetails(row)} className="px-2.5 py-1.5 bg-white text-slate-600 border border-slate-200 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-slate-50 transition-colors">Details</button>
+                    <button onClick={() => onEdit(row)} className="px-2.5 py-1.5 bg-white text-slate-500 border border-slate-200 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-slate-50 transition-colors">Edit</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={4} className="p-8 text-center text-slate-400 font-bold text-sm">No matches found.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 interface FilterTabProps {
   active: boolean;
@@ -503,7 +775,7 @@ function ClientUpdateCard({ update }: { update: any; key?: string | number }) {
   );
 }
 
-function ClientUpdateTable({ data }: { data: any[] }) {
+function ClientUpdateTable({ data, onOutcome }: { data: any[]; onOutcome: (loan: any, outcome: CommitmentOutcome) => void }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState<'date' | 'balance' | 'priority' | 'name' | 'interactions'>('date');
   const [sortDesc, setSortDesc] = useState(true);
@@ -521,6 +793,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
 
   const getUpdateType = (text: string) => {
     const lower = text.toLowerCase();
+    if (text.includes('[COMMITMENT_STATUS:')) return { label: 'Commitment', color: 'bg-cyan-100 text-cyan-700 border-cyan-200' };
     if (text.includes('[DL_MARKER]') || text.includes('[DL_RECEIVED]')) return { label: 'DEMAND LETTER', color: 'bg-red-100 text-red-700 border-red-200' };
     if (lower.includes('pay') || lower.includes('bayad') || lower.includes('settle')) return { label: 'Payment Cmt.', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
     if (lower.includes('visit') || lower.includes('puntahan')) return { label: 'Field Visit', color: 'bg-blue-100 text-blue-700 border-blue-200' };
@@ -655,12 +928,17 @@ function ClientUpdateTable({ data }: { data: any[] }) {
               <th className="p-4 px-6 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleSort('balance')}>
                 Balance Risk <SortIcon columnKey="balance" />
               </th>
+              <th className="p-4 px-6 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">
+                Outcome
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {sortedAndFiltered.map((row, idx) => {
               const uType = getUpdateType(row.latestRemark.text);
-              let cleanText = row.latestRemark.text.replace(/\[DL_MARKER\]/g, '').replace(/\[DL_RECEIVED\]\s*Demand Letter received on \d{4}-\d{2}-\d{2}\.?\s*/g, '').replace(/\[DL_RECEIVED\]\s*/g, '').trim();
+              const outcomeMatch = row.latestRemark.text.match(/\[COMMITMENT_STATUS:([^\]]+)\]/);
+              const commitmentOutcome = outcomeMatch?.[1] as CommitmentOutcome | undefined;
+              let cleanText = row.latestRemark.text.replace(/\[COMMITMENT_STATUS:[^\]]+\]\s*/g, '').replace(/\[DL_MARKER\]/g, '').replace(/\[DL_RECEIVED\]\s*Demand Letter received on \d{4}-\d{2}-\d{2}\.?\s*/g, '').replace(/\[DL_RECEIVED\]\s*/g, '').trim();
               
               let dlStageBadge = null;
               const dlMatch = cleanText.match(/^(1st|2nd|3rd)\s+Demand Letter Update:\s*/i);
@@ -718,6 +996,11 @@ function ClientUpdateTable({ data }: { data: any[] }) {
                         {logTab !== 'demand_letter' && (
                           <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${uType.color}`}>
                             {uType.label}
+                          </span>
+                        )}
+                        {commitmentOutcome && (
+                          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border bg-cyan-50 text-cyan-700 border-cyan-200">
+                            Outcome: {commitmentOutcome}
                           </span>
                         )}
                         {logTab === 'demand_letter' && dlStageBadge && (
@@ -781,12 +1064,15 @@ function ClientUpdateTable({ data }: { data: any[] }) {
                       <div className="w-1.5 h-1.5 bg-red-500 rounded-full inline-block ml-2 animate-ping" title="High Risk Action Needed"></div>
                     )}
                   </td>
+                  <td className="p-4 px-6 align-top text-right min-w-[220px]">
+                    <CommitmentOutcomeButtons loan={row} onOutcome={onOutcome} compact />
+                  </td>
                 </tr>
               );
             })}
             {sortedAndFiltered.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-8 text-center text-slate-400 font-bold text-sm">
+                <td colSpan={8} className="p-8 text-center text-slate-400 font-bold text-sm">
                   No matches found for your search criteria.
                 </td>
               </tr>
@@ -798,7 +1084,7 @@ function ClientUpdateTable({ data }: { data: any[] }) {
   );
 }
 
-function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisitLog }: { data: any[], onViewDetails: (l: any) => void, onEdit: (l: any) => void, onAddRemark: (l: any) => void, onVisitLog: (l: any) => void }) {
+function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisitLog, onOutcome }: { data: any[], onViewDetails: (l: any) => void, onEdit: (l: any) => void, onAddRemark: (l: any) => void, onVisitLog: (l: any) => void, onOutcome: (loan: any, outcome: CommitmentOutcome) => void }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState<'name' | 'days'>('days');
   const [sortDesc, setSortDesc] = useState(true);
@@ -880,6 +1166,9 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisi
               </th>
               <th className="py-2 px-3 text-center text-[9px] font-black text-rose-400 uppercase tracking-widest cursor-pointer hover:bg-rose-100/50 transition-colors" onClick={() => handleSort('days')}>
                 Days Since Last Payment <SortIcon columnKey="days" />
+              </th>
+              <th className="py-2 px-3 text-[9px] font-black text-rose-400 uppercase tracking-widest">
+                Outcome
               </th>
               <th className="py-2 px-4 text-right text-[9px] font-black text-rose-400 uppercase tracking-widest">
                 Action
@@ -974,6 +1263,10 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisi
                     </div>
                   </td>
 
+                  <td className="py-2 px-3 align-middle min-w-[210px]">
+                    <CommitmentOutcomeButtons loan={row} onOutcome={onOutcome} compact />
+                  </td>
+
                   {/* Action */}
                   <td className="py-2 px-4 align-middle text-right">
                      <div className="flex justify-end gap-0.5">
@@ -1007,7 +1300,7 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisi
             })}
             {sortedAndFiltered.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-12 text-center">
+                <td colSpan={7} className="p-12 text-center">
                    <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest opacity-80">Clear Queue (No active monitoring cases)</p>
                 </td>
               </tr>

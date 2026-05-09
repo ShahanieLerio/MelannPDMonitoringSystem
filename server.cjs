@@ -2,12 +2,19 @@
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config({ path: '.env.local' });
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+const UPLOAD_ROOT = path.join(__dirname, 'public', 'uploads');
+const COLLECTOR_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'collectors');
+fs.mkdirSync(COLLECTOR_UPLOAD_DIR, { recursive: true });
+app.use('/uploads', express.static(UPLOAD_ROOT));
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -19,6 +26,10 @@ pool.connect((err, client, release) => {
         return console.error('Error acquiring client', err.stack);
     }
     console.log('Successfully connected to Local PostgreSQL');
+
+    client.query('ALTER TABLE collectors ADD COLUMN IF NOT EXISTS photo_url TEXT', (err) => {
+        if (err) console.error('Failed to ensure collectors photo column', err.message);
+    });
 
     // Seed default admin if table is empty
     client.query('SELECT COUNT(*) FROM users', (err, result) => {
@@ -66,6 +77,39 @@ const assertCollectorIsUnique = async ({ name, nickname }, excludeId) => {
         error.status = 409;
         throw error;
     }
+};
+
+const getPhotoExtension = (mimeType) => {
+    const extensionMap = {
+        'image/jpeg': 'jpg',
+        'image/jpg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+        'image/gif': 'gif',
+    };
+    return extensionMap[mimeType] || 'png';
+};
+
+const toSafeFileSegment = (value) =>
+    String(value || 'collector')
+        .replace(/[^a-z0-9_-]/gi, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .toLowerCase() || 'collector';
+
+const persistCollectorPhoto = (collectorId, photoUrl) => {
+    if (!photoUrl) return null;
+    if (!photoUrl.startsWith('data:image/')) return photoUrl;
+
+    const match = photoUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!match) return photoUrl;
+
+    const [, mimeType, base64Data] = match;
+    const extension = getPhotoExtension(mimeType);
+    const fileName = `${toSafeFileSegment(collectorId)}-${Date.now()}.${extension}`;
+    const filePath = path.join(COLLECTOR_UPLOAD_DIR, fileName);
+    fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+    return `/uploads/collectors/${fileName}`;
 };
 
 // --- API ENDPOINTS ---
@@ -116,12 +160,12 @@ app.post('/api/loans/bulk', async (req, res) => {
     try {
         await client.query('BEGIN');
         for (const loan of loans) {
-            const { id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule } = loan;
+            const { id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule, actionNote, actionStage } = loan;
             try {
                 const scheduleVal = recurringSchedule ? (typeof recurringSchedule === 'string' ? recurringSchedule : JSON.stringify(recurringSchedule)) : null;
                 await client.query(
-                    'INSERT INTO loans (id, collector, code, first_name, last_name, borrower_name, month_reported, due_date, outstanding_balance, amount_collected, running_balance, status, location, area, city, barangay, full_address, contact_number, branch, ai_priority, promise_to_pay_date, follow_up_date, recurring_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)',
-                    [id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, scheduleVal]
+                    'INSERT INTO loans (id, collector, code, first_name, last_name, borrower_name, month_reported, due_date, outstanding_balance, amount_collected, running_balance, status, location, area, city, barangay, full_address, contact_number, branch, ai_priority, promise_to_pay_date, follow_up_date, recurring_schedule, action_note, action_stage) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)',
+                    [id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, scheduleVal, actionNote ?? null, actionStage ?? null]
                 );
             } catch (innerErr) {
                 console.error(`Error inserting loan ${code} (${borrowerName}):`, innerErr.message);
@@ -141,12 +185,12 @@ app.post('/api/loans/bulk', async (req, res) => {
 });
 
 app.post('/api/loans', async (req, res) => {
-    const { id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule } = req.body;
+    const { id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule, actionNote, actionStage } = req.body;
     try {
         const scheduleVal = recurringSchedule ? (typeof recurringSchedule === 'string' ? recurringSchedule : JSON.stringify(recurringSchedule)) : null;
         await query(
-            'INSERT INTO loans (id, collector, code, first_name, last_name, borrower_name, month_reported, due_date, outstanding_balance, amount_collected, running_balance, status, location, area, city, barangay, full_address, contact_number, branch, ai_priority, promise_to_pay_date, follow_up_date, recurring_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)',
-            [id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, scheduleVal]
+            'INSERT INTO loans (id, collector, code, first_name, last_name, borrower_name, month_reported, due_date, outstanding_balance, amount_collected, running_balance, status, location, area, city, barangay, full_address, contact_number, branch, ai_priority, promise_to_pay_date, follow_up_date, recurring_schedule, action_note, action_stage) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)',
+            [id, collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, scheduleVal, actionNote ?? null, actionStage ?? null]
         );
         res.json({ success: true });
     } catch (err) {
@@ -159,12 +203,12 @@ app.post('/api/loans', async (req, res) => {
 
 app.put('/api/loans/:id', async (req, res) => {
     const { id } = req.params;
-    const { collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule } = req.body;
+    const { collector, code, firstName, lastName, borrowerName, monthReported, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber, branch, aiPriority, promiseToPayDate, followUpDate, recurringSchedule, actionNote, actionStage } = req.body;
     try {
         const scheduleVal = recurringSchedule ? (typeof recurringSchedule === 'string' ? recurringSchedule : JSON.stringify(recurringSchedule)) : null;
         await query(
-            'UPDATE loans SET collector=$1, first_name=$2, last_name=$3, borrower_name=$4, due_date=$5, outstanding_balance=$6, amount_collected=$7, running_balance=$8, status=$9, location=$10, area=$11, city=$12, barangay=$13, full_address=$14, contact_number=$15, branch=$16, ai_priority=$17, promise_to_pay_date=$18, follow_up_date=$19, month_reported=$20, recurring_schedule=$21, code=$23 WHERE id=$22',
-            [collector, firstName, lastName, borrowerName, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, monthReported ?? null, scheduleVal, id, code ?? null]
+            'UPDATE loans SET collector=$1, first_name=$2, last_name=$3, borrower_name=$4, due_date=$5, outstanding_balance=$6, amount_collected=$7, running_balance=$8, status=$9, location=$10, area=$11, city=$12, barangay=$13, full_address=$14, contact_number=$15, branch=$16, ai_priority=$17, promise_to_pay_date=$18, follow_up_date=$19, month_reported=$20, recurring_schedule=$21, code=$23, action_note=$24, action_stage=$25 WHERE id=$22',
+            [collector, firstName, lastName, borrowerName, dueDate, outstandingBalance, amountCollected, runningBalance, status, location, area, city, barangay, fullAddress, contactNumber ?? null, branch, aiPriority ?? null, promiseToPayDate ?? null, followUpDate ?? null, monthReported ?? null, scheduleVal, id, code ?? null, actionNote ?? null, actionStage ?? null]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -238,20 +282,22 @@ app.get('/api/collectors', async (req, res) => {
 });
 
 app.post('/api/collectors', async (req, res) => {
-    const { id, name, nickname, address, branch } = req.body;
+    const { id, name, nickname, address, photoUrl, branch } = req.body;
     try {
         await assertCollectorIsUnique({ name, nickname });
-        await query('INSERT INTO collectors (id, name, nickname, address, branch) VALUES ($1, $2, $3, $4, $5)', [id, name, nickname, address, branch]);
+        const savedPhotoUrl = persistCollectorPhoto(id, photoUrl);
+        await query('INSERT INTO collectors (id, name, nickname, address, photo_url, branch) VALUES ($1, $2, $3, $4, $5, $6)', [id, name, nickname, address, savedPhotoUrl, branch]);
         res.json({ success: true });
     } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
 app.put('/api/collectors/:id', async (req, res) => {
     const { id } = req.params;
-    const { name, nickname, address, branch } = req.body;
+    const { name, nickname, address, photoUrl, branch } = req.body;
     try {
         await assertCollectorIsUnique({ name, nickname }, id);
-        await query('UPDATE collectors SET name=$1, nickname=$2, address=$3, branch=$4 WHERE id=$5', [name, nickname, address, branch, id]);
+        const savedPhotoUrl = persistCollectorPhoto(id, photoUrl);
+        await query('UPDATE collectors SET name=$1, nickname=$2, address=$3, photo_url=$4, branch=$5 WHERE id=$6', [name, nickname, address, savedPhotoUrl, branch, id]);
         res.json({ success: true });
     } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
