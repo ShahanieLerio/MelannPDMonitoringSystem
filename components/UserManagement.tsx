@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { store } from '../services/dataStore';
-import { User, UserStatus } from '../types';
+import { ACCOUNT_ROLE_DESCRIPTIONS, ACCOUNT_ROLE_OPTIONS, User, UserStatus, getUserRoleLabel } from '../types';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface UserManagementProps {
@@ -14,7 +14,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) => {
     isOpen: boolean;
     title: string;
     message: string;
-    onConfirm: () => void;
+    onConfirm: () => void | Promise<void>;
     type?: 'danger' | 'warning' | 'info';
   }>({
     isOpen: false,
@@ -25,13 +25,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) => {
 
   const closeConfirm = () => setConfirmConfig(prev => ({ ...prev, isOpen: false }));
 
-  const askConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'warning') => {
+  const askConfirm = (title: string, message: string, onConfirm: () => void | Promise<void>, type: 'danger' | 'warning' | 'info' = 'warning') => {
     setConfirmConfig({
       isOpen: true,
       title,
       message,
-      onConfirm: () => {
-        onConfirm();
+      onConfirm: async () => {
+        await onConfirm();
         closeConfirm();
       },
       type
@@ -56,8 +56,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) => {
     askConfirm(
       title,
       message,
-      () => {
-        store.updateUserStatus(id, newStatus, currentUser.username);
+      async () => {
+        await store.updateUserStatus(id, newStatus, currentUser.username);
         setUsers([...store.getUsers()]);
       },
       type
@@ -66,6 +66,30 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) => {
 
   return (
     <div className="space-y-6 animate-fadeIn">
+      <section className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-6 border-b border-slate-100 bg-slate-50/70">
+          <h3 className="text-lg font-black text-slate-800 tracking-tight">Account Role Descriptions</h3>
+          <p className="text-sm text-slate-500 mt-1">Reference guide for approving registrations and assigning the correct access level.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-6">
+          {ACCOUNT_ROLE_OPTIONS.map(option => (
+            <div key={option.value} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-[10px] font-black uppercase text-emerald-700 bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg">
+                  {option.label}
+                </span>
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-300">
+                  Role
+                </span>
+              </div>
+              <p className="mt-3 text-xs leading-5 font-semibold text-slate-600">
+                {ACCOUNT_ROLE_DESCRIPTIONS[option.value]}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-8 border-b border-slate-100 bg-slate-50/50">
           <h3 className="text-xl font-black text-slate-800 tracking-tight">System User Registrations</h3>
@@ -96,7 +120,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) => {
                   <td className="px-8 py-5">
                     <div className="flex flex-col gap-1">
                       <span className="text-[10px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-1 rounded w-fit">
-                        {user.role.replace('_', ' ')}
+                        {getUserRoleLabel(user.role)}
                       </span>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2">
                         📍 {user.branch}

@@ -1,6 +1,7 @@
-import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction } from '../types';
-import { dedupeCollectors, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorKey } from './collectorUtils';
-const API_URL = 'http://localhost:5000/api';
+import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction, ContactLog, ContactMethod, DeletedLoan, MigrationBatch, ManagementDisposition, DispositionType, DispositionStatus, isAllBranchRole, canApproveWriteOff } from '../types';
+import { dedupeCollectors, getCollectorDisplayMatchKeys, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorAliasKey, normalizeCollectorKey, normalizeCollectorLooseKey } from './collectorUtils';
+import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReportableCollectionPayment } from './loanUtils';
+const API_URL = `http://${window.location.hostname}:5000/api`;
 
 const INITIAL_USERS: User[] = [
   {
@@ -55,10 +56,95 @@ class DataStore {
   private collectors: Collector[] = [];
   private demandLetters: DemandLetter[] = [];
   private visitLogs: VisitLog[] = [];
+  private contactLogs: ContactLog[] = [];
+  private deletedLoans: DeletedLoan[] = [];
+  private managementDispositions: ManagementDisposition[] = [];
   private listeners: (() => void)[] = [];
 
   private getCollectorDisplayName(collector?: string | null) {
     return getCollectorDisplayName(collector, this.collectors);
+  }
+
+  private hashPassword(password: string): string {
+    const input = `melann-v1:${password}`;
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `melann-v1:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  private normalizeCollectorReferences(matchNames: (string | undefined)[], activeName: string) {
+    const matchKeys = new Set(matchNames.flatMap(name => [
+      normalizeCollectorKey(name),
+      normalizeCollectorAliasKey(name),
+      normalizeCollectorLooseKey(name)
+    ]).filter(Boolean));
+    const activeCollector = this.collectors.find(c => normalizeCollectorKey(c.nickname || c.name) === normalizeCollectorKey(activeName));
+    activeCollector?.name
+      .split(' ')
+      .forEach(namePart => {
+        const normalized = normalizeCollectorKey(namePart);
+        if (normalized) matchKeys.add(normalized);
+      });
+    if (activeCollector) {
+      getCollectorDisplayMatchKeys(activeCollector).forEach(key => matchKeys.add(key));
+    }
+    const shouldUpdate = (value?: string | null) => {
+      const key = normalizeCollectorKey(value);
+      const aliasKey = normalizeCollectorAliasKey(value);
+      const looseKey = normalizeCollectorLooseKey(value);
+      return matchKeys.has(key) ||
+        Boolean(aliasKey && matchKeys.has(aliasKey)) ||
+        Boolean(looseKey && matchKeys.has(looseKey));
+    };
+    const normalizedActiveName = normalizeCollectorKey(activeName);
+
+    const affectedLoans: Loan[] = [];
+    const affectedRemarks: Remark[] = [];
+    const affectedDemandLetters: DemandLetter[] = [];
+
+    this.loans.forEach(loan => {
+      let loanChanged = false;
+
+      if (shouldUpdate(loan.collector)) {
+        loan.collector = normalizedActiveName;
+        loanChanged = true;
+      }
+
+      loan.remarks.forEach(remark => {
+        if (shouldUpdate(remark.collector)) {
+          remark.collector = normalizedActiveName;
+          affectedRemarks.push(remark);
+          loanChanged = true;
+        }
+      });
+
+      if (loanChanged) {
+        affectedLoans.push(loan);
+      }
+    });
+
+    this.demandLetters.forEach(dl => {
+      if (shouldUpdate(dl.collectorName)) {
+        dl.collectorName = normalizedActiveName;
+        affectedDemandLetters.push(dl);
+      }
+    });
+
+    this.deletedLoans.forEach(deleted => {
+      if (shouldUpdate(deleted.originalLoanData.collector)) {
+        deleted.originalLoanData.collector = normalizedActiveName;
+      }
+      deleted.originalLoanData.remarks?.forEach(remark => {
+        if (shouldUpdate(remark.collector)) {
+          remark.collector = normalizedActiveName;
+        }
+      });
+    });
+
+    return { affectedLoans, affectedRemarks, affectedDemandLetters };
   }
 
   constructor() {
@@ -69,7 +155,7 @@ class DataStore {
   async refresh() {
     try {
       console.log('Syncing with Local PostgreSQL via Bridge...');
-      const [dbLoans, dbUsers, dbCollectors, dbDLs, dbPayments, dbRemarks, dbLogs, dbVisitLogs] = await Promise.all([
+      const [dbLoans, dbUsers, dbCollectors, dbDLs, dbPayments, dbRemarks, dbLogs, dbVisitLogs, dbContactLogs, dbDeletedLoans, dbDispositions] = await Promise.all([
         fetch(`${API_URL}/loans`).then(r => r.json()),
         fetch(`${API_URL}/users`).then(r => r.json()),
         fetch(`${API_URL}/collectors`).then(r => r.json()),
@@ -77,7 +163,10 @@ class DataStore {
         fetch(`${API_URL}/payments`).then(r => r.json()),
         fetch(`${API_URL}/remarks`).then(r => r.json()),
         fetch(`${API_URL}/activity_logs`).then(r => r.json()),
-        fetch(`${API_URL}/visit_logs`).then(r => r.json())
+        fetch(`${API_URL}/visit_logs`).then(r => r.json()),
+        fetch(`${API_URL}/contact_logs`).then(r => r.json()),
+        fetch(`${API_URL}/recycle_bin`).then(r => r.json()),
+        fetch(`${API_URL}/management_dispositions`).then(r => r.json()).catch(() => [])
       ]);
 
       // Mapping logic...
@@ -92,6 +181,7 @@ class DataStore {
         const existingCollector = this.collectors.find(local => local.id === c.id);
         return {
           ...c,
+          assignedSupervisor: c.assignedSupervisor || c.assigned_supervisor || existingCollector?.assignedSupervisor || '',
           photoUrl: c.photoUrl || c.photo_url || existingCollector?.photoUrl || '',
         };
       }) as Collector[]);
@@ -141,7 +231,7 @@ class DataStore {
           id: r.id, 
           text: r.text, 
           timestamp: r.timestamp, 
-          collector: r.collector, 
+          collector: getCollectorDisplayName(r.collector, mappedCollectors),
           ptpDate: r.ptp_date, 
           followUpDate: r.follow_up_date 
         })) as unknown as Remark[],
@@ -161,7 +251,7 @@ class DataStore {
       const serverIDs = new Set(mappedLoans.map(l => l.id));
       const localOnly = this.loans.filter(l => !serverIDs.has(l.id));
       
-      this.loans = [...mappedLoans, ...localOnly];
+      this.loans = [...mappedLoans, ...localOnly].filter(isLoanAllowedInActivePortfolio);
 
       // Auto-sync offline loans to backend
       if (localOnly.length > 0) {
@@ -177,7 +267,11 @@ class DataStore {
       // Also sync interaction dates (PTP/FollowUp) from remarks → loan fields so
       // checkIsPriority in ClientUpdate sees the correct promiseToPayDate / followUpDate.
       this.loans.forEach(loan => {
-        this.recalculateLoanFinances(loan.id);
+        if (this.isPreservedPaidMonitoringLoan(loan)) {
+          this.syncPreservedPaidMonitoringLoan(loan);
+        } else {
+          this.recalculateLoanFinances(loan.id);
+        }
         this.syncLoanInteractionDates(loan.id);
       });
 
@@ -185,6 +279,7 @@ class DataStore {
         id: u.id,
         username: u.username,
         fullName: u.full_name,
+        passwordHash: u.password_hash || u.passwordHash,
         role: u.role,
         status: u.status,
         branch: u.branch,
@@ -205,7 +300,8 @@ class DataStore {
         followUpDate: d.follow_up_date,
         status: d.status,
         remarks: d.remarks,
-        branch: d.branch
+        branch: d.branch,
+        courrier: d.courrier
       })) as unknown as DemandLetter[];
 
       this.visitLogs = (dbVisitLogs || []).map((v: any) => ({
@@ -219,6 +315,31 @@ class DataStore {
         loggedBy: v.logged_by,
         timestamp: v.timestamp
       })) as VisitLog[];
+
+      this.contactLogs = (dbContactLogs || []).map((c: any) => ({
+        id: c.id,
+        loanId: c.loan_id,
+        contactDate: c.contact_date,
+        method: c.method || ContactMethod.CALL,
+        notes: c.notes,
+        clientResponse: c.client_response || '',
+        hasResponse: c.has_response || false,
+        loggedBy: c.logged_by,
+        timestamp: c.timestamp
+      })) as ContactLog[];
+
+      this.deletedLoans = (dbDeletedLoans || []).map((d: any) => this.mapDeletedLoan(d));
+
+      this.managementDispositions = (dbDispositions || []).map((d: any) => ({
+        id: d.id,
+        loanId: d.loan_id,
+        type: d.type as DispositionType,
+        reason: d.reason,
+        evidence: typeof d.evidence === 'string' ? JSON.parse(d.evidence) : d.evidence,
+        status: d.status as DispositionStatus,
+        decidedBy: d.decided_by,
+        decisionDate: d.decision_date
+      })) as ManagementDisposition[];
 
     } catch (err) {
       console.error('DB Sync Error, falling back to LocalStorage:', err);
@@ -239,15 +360,87 @@ class DataStore {
     return res.json();
   }
 
+  private mapMigrationBatch(row: any): MigrationBatch {
+    const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : (row.payload || {});
+    return {
+      id: row.id,
+      cycleStart: row.cycle_start || row.cycleStart,
+      cycleEnd: row.cycle_end || row.cycleEnd,
+      status: row.status,
+      detectedCount: Number(row.detected_count ?? row.detectedCount ?? 0),
+      paymentCount: Number(row.payment_count ?? row.paymentCount ?? 0),
+      payload,
+      sourcePath: row.source_path || row.sourcePath || payload.sourcePath || '',
+      detectedAt: row.detected_at || row.detectedAt,
+      migratedAt: row.migrated_at || row.migratedAt || null,
+      migratedBy: row.migrated_by || row.migratedBy || null,
+      error: row.error || null
+    };
+  }
+
+  private mapDeletedLoan(row: any): DeletedLoan {
+    const rawLoan = typeof row.original_loan_data === 'string'
+      ? JSON.parse(row.original_loan_data)
+      : (row.original_loan_data || {});
+    const fallbackName = `${rawLoan.last_name || rawLoan.lastName || ''}, ${rawLoan.first_name || rawLoan.firstName || ''}`.trim();
+    const originalLoanData = {
+      ...rawLoan,
+      id: rawLoan.id || row.id,
+      code: String(rawLoan.code ?? ''),
+      firstName: rawLoan.firstName ?? rawLoan.first_name ?? '',
+      lastName: rawLoan.lastName ?? rawLoan.last_name ?? '',
+      borrowerName: rawLoan.borrowerName ?? rawLoan.borrower_name ?? fallbackName,
+      monthReported: rawLoan.monthReported ?? rawLoan.month_reported ?? '',
+      dueDate: rawLoan.dueDate ?? rawLoan.due_date ?? '',
+      dateRelease: rawLoan.dateRelease ?? rawLoan.date_release ?? null,
+      outstandingBalance: Number(rawLoan.outstandingBalance ?? rawLoan.outstanding_balance ?? 0),
+      amountCollected: Number(rawLoan.amountCollected ?? rawLoan.amount_collected ?? 0),
+      runningBalance: Number(rawLoan.runningBalance ?? rawLoan.running_balance ?? 0),
+      totalLoan: rawLoan.totalLoan ?? rawLoan.total_loan ?? null,
+      fullAddress: rawLoan.fullAddress ?? rawLoan.full_address ?? '',
+      contactNumber: rawLoan.contactNumber ?? rawLoan.contact_number ?? '',
+      aiPriority: rawLoan.aiPriority ?? rawLoan.ai_priority ?? PriorityLevel.LOWEST,
+      promiseToPayDate: rawLoan.promiseToPayDate ?? rawLoan.promise_to_pay_date ?? null,
+      followUpDate: rawLoan.followUpDate ?? rawLoan.follow_up_date ?? null,
+      recurringSchedule: rawLoan.recurringSchedule ?? rawLoan.recurring_schedule ?? null,
+      actionNote: rawLoan.actionNote ?? rawLoan.action_note ?? null,
+      actionStage: rawLoan.actionStage ?? rawLoan.action_stage ?? null,
+      payments: rawLoan.payments || [],
+      remarks: rawLoan.remarks || [],
+      history: rawLoan.history || []
+    } as Loan;
+
+    return {
+      id: row.id,
+      originalLoanData,
+      deletedBy: row.deleted_by || row.deletedBy || 'Unknown',
+      deletedAt: row.deleted_at || row.deletedAt || new Date().toISOString(),
+      reason: row.reason,
+      branch: row.branch || originalLoanData.branch || Branch.ALL
+    };
+  }
+
   private loadFromLocalStorage() {
     const savedLoans = localStorage.getItem('melann_loans');
     const savedUsers = localStorage.getItem('melann_users');
     const savedCollectors = localStorage.getItem('melann_collectors');
     const savedDemandLetters = localStorage.getItem('melann_demand_letters');
-    this.loans = savedLoans ? JSON.parse(savedLoans).map((l: any) => ({ ...l, history: l.history || [] })) : INITIAL_LOANS.map(l => ({ ...l, history: [] }));
+    this.loans = (savedLoans ? JSON.parse(savedLoans).map((l: any) => ({ ...l, history: l.history || [] })) : INITIAL_LOANS.map(l => ({ ...l, history: [] }))).filter(isLoanAllowedInActivePortfolio);
     this.users = savedUsers ? JSON.parse(savedUsers).map((u: any) => ({ ...u, statusHistory: u.statusHistory || [] })) : INITIAL_USERS;
     this.collectors = dedupeCollectors(savedCollectors ? JSON.parse(savedCollectors) : INITIAL_COLLECTORS);
     this.demandLetters = savedDemandLetters ? JSON.parse(savedDemandLetters) : [];
+    this.loans = this.loans.map(loan => ({
+      ...loan,
+      collector: this.getCollectorDisplayName(loan.collector),
+      remarks: (loan.remarks || []).map(remark => ({
+        ...remark,
+        collector: this.getCollectorDisplayName(remark.collector)
+      }))
+    }));
+    this.demandLetters = this.demandLetters.map(dl => ({
+      ...dl,
+      collectorName: this.getCollectorDisplayName(dl.collectorName)
+    }));
   }
 
   subscribe(listener: () => void) {
@@ -305,7 +498,7 @@ class DataStore {
   // Access control is managed exclusively through the 'status' property.
   getUsers() { return this.users; }
 
-  authenticate(username: string): { user: User | null; error?: string } {
+  authenticate(username: string, password?: string): { user: User | null; error?: string } {
     const user = this.users.find(u => u.username.toLowerCase() === username.toLowerCase());
 
     if (!user) {
@@ -320,24 +513,42 @@ class DataStore {
       return { user: null, error: 'Account is deactivated. Please contact the administrator.' };
     }
 
+    if (user.passwordHash && this.hashPassword(password || '') !== user.passwordHash) {
+      return { user: null, error: 'Invalid password.' };
+    }
+
     return { user };
   }
 
-  async registerUser(userData: Omit<User, 'id' | 'status' | 'createdAt' | 'statusHistory'>, creatorName?: string) {
+  async registerUser(userData: Omit<User, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'passwordHash'> & { password?: string }, creatorName?: string) {
+    const existingUser = this.users.find(u => u.username.toLowerCase() === userData.username.toLowerCase());
+    if (existingUser) {
+      throw new Error('Username is already registered.');
+    }
+
+    if (!userData.password || userData.password.length < 6) {
+      throw new Error('Password must be at least 6 characters.');
+    }
+
     const id = Math.random().toString(36).substring(2, 9);
     const now = new Date().toISOString();
+    const { password, ...safeUserData } = userData;
     const newUser: User = {
-      ...userData,
+      ...safeUserData,
       id,
+      passwordHash: this.hashPassword(password),
       status: UserStatus.PENDING,
       createdAt: now,
       createdBy: creatorName,
       statusHistory: [{ status: UserStatus.PENDING, updatedAt: now, updatedBy: creatorName || 'Self-Registration' }]
     };
 
-    // Await server confirmation
-    await this.api('/users', 'POST', newUser);
-    
+    try {
+      await this.api('/users', 'POST', newUser);
+    } catch (err) {
+      console.warn('User registration API unavailable. Saving pending account to local fallback.', err);
+    }
+
     this.users.push(newUser);
     this.save();
     return newUser;
@@ -365,20 +576,77 @@ class DataStore {
     }
   }
 
+  async updateUserProfile(id: string, updates: Pick<User, 'fullName'>) {
+    const index = this.users.findIndex(u => u.id === id);
+    if (index === -1) {
+      throw new Error('User account not found.');
+    }
+
+    const fullName = updates.fullName.trim();
+    if (!fullName) {
+      throw new Error('Full name is required.');
+    }
+
+    const updatedUser = { ...this.users[index], fullName };
+
+    try {
+      await this.api(`/users/${id}/profile`, 'PUT', { fullName });
+    } catch (err) {
+      console.warn('User profile API unavailable. Saving profile update to local fallback.', err);
+    }
+
+    this.users[index] = updatedUser;
+    this.save();
+    return updatedUser;
+  }
+
+  async updateUserPassword(id: string, currentPassword: string, newPassword: string) {
+    const index = this.users.findIndex(u => u.id === id);
+    if (index === -1) {
+      throw new Error('User account not found.');
+    }
+
+    const user = this.users[index];
+    if (user.passwordHash && this.hashPassword(currentPassword || '') !== user.passwordHash) {
+      throw new Error('Current password is incorrect.');
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error('New password must be at least 6 characters.');
+    }
+
+    if (currentPassword && currentPassword === newPassword) {
+      throw new Error('New password must be different from the current password.');
+    }
+
+    const passwordHash = this.hashPassword(newPassword);
+    const updatedUser = { ...user, passwordHash };
+
+    try {
+      await this.api(`/users/${id}/password`, 'PUT', { passwordHash });
+    } catch (err) {
+      console.warn('User password API unavailable. Saving password update to local fallback.', err);
+    }
+
+    this.users[index] = updatedUser;
+    this.save();
+    return updatedUser;
+  }
+
   getCollectors(branch?: Branch) {
     const collectors = dedupeCollectors(this.collectors);
     if (!branch || branch === Branch.ALL) return collectors;
     return collectors.filter(c => c.branch === branch);
   }
 
-  async addCollector(name: string, branch: Branch, address?: string, nickname?: string, photoUrl?: string) {
+  async addCollector(name: string, branch: Branch, address?: string, nickname?: string, photoUrl?: string, assignedSupervisor?: string) {
     if (hasDuplicateCollectorIdentity(this.collectors, { name, nickname })) {
       throw new Error('Collector already exists. Please use the existing collector record.');
     }
 
     const id = Math.random().toString(36).substring(2, 9);
-    const newCollector: Collector = { id, name, nickname, address, photoUrl, branch };
-    
+    const newCollector: Collector = { id, name, nickname, address, assignedSupervisor, photoUrl, branch };
+
     // Await server confirmation
     await this.api('/collectors', 'POST', newCollector);
 
@@ -387,7 +655,7 @@ class DataStore {
     return newCollector;
   }
 
-  async updateCollector(id: string, name: string, branch: Branch, address?: string, nickname?: string, photoUrl?: string) {
+  async updateCollector(id: string, name: string, branch: Branch, address?: string, nickname?: string, photoUrl?: string, assignedSupervisor?: string) {
     const index = this.collectors.findIndex(c => c.id === id);
     if (index !== -1) {
       if (hasDuplicateCollectorIdentity(this.collectors, { name, nickname }, id)) {
@@ -398,14 +666,29 @@ class DataStore {
       const oldNick = this.collectors[index].nickname;
       
       // Await server confirmation
-      await this.api(`/collectors/${id}`, 'PUT', { name, nickname, address, photoUrl, branch });
+      await this.api(`/collectors/${id}`, 'PUT', { name, nickname, address, assignedSupervisor, photoUrl, branch });
 
-      this.collectors[index] = { ...this.collectors[index], name, address, branch, nickname, photoUrl };
-      this.loans.forEach(l => {
-        if (l.collector === oldName || (oldNick && l.collector === oldNick)) {
-          l.collector = nickname || name;
-        }
-      });
+      this.collectors[index] = { ...this.collectors[index], name, address, branch, nickname, photoUrl, assignedSupervisor };
+      const activeName = nickname || name;
+      const { affectedLoans, affectedRemarks, affectedDemandLetters } = this.normalizeCollectorReferences(
+        [oldName, oldNick, name, nickname],
+        activeName
+      );
+
+      const syncResults = await Promise.allSettled([
+        ...affectedLoans.map(loan => this.api(`/loans/${loan.id}`, 'PUT', loan)),
+        ...affectedRemarks.map(remark => this.api(`/remarks/${remark.id}`, 'PUT', {
+          text: remark.text,
+          collector: remark.collector,
+          ptpDate: remark.ptpDate,
+          followUpDate: remark.followUpDate
+        })),
+        ...affectedDemandLetters.map(dl => this.api(`/demand_letters/${dl.id}`, 'PUT', dl))
+      ]);
+      const failedSyncs = syncResults.filter(result => result.status === 'rejected');
+      if (failedSyncs.length > 0) {
+        console.warn(`Collector nickname updated, but ${failedSyncs.length} historical collector references could not be synced to the backend. UI display will still use the active nickname.`, failedSyncs);
+      }
       this.save();
     }
   }
@@ -444,11 +727,13 @@ class DataStore {
       }
     }
 
+    const eligibleLoans = loans.filter(loan => isLoanMaturityInActivePortfolioRange(loan.dueDate));
+    skippedCount += loans.length - eligibleLoans.length;
     const newAdditions: Loan[] = [];
 
     if (importMode === 'replace') {
       // Find matching codes and update existing ones, only push truly new ones
-      for (const newLoan of loans) {
+      for (const newLoan of eligibleLoans) {
         const existingIndex = this.loans.findIndex(l => l.code === newLoan.code);
         if (existingIndex !== -1) {
           const existing = this.loans[existingIndex];
@@ -473,7 +758,7 @@ class DataStore {
         }
       }
     } else if (importMode === 'new-only') {
-      for (const newLoan of loans) {
+      for (const newLoan of eligibleLoans) {
          const existing = this.loans.find(l => l.code === newLoan.code);
          if (!existing) {
              newAdditions.push(newLoan);
@@ -483,7 +768,7 @@ class DataStore {
       }
     }
 
-    const finalAdditions = importMode === 'wipe' ? loans : newAdditions;
+    const finalAdditions = importMode === 'wipe' ? eligibleLoans : newAdditions;
 
     if (finalAdditions.length > 0) {
       this.loans = [...this.loans, ...finalAdditions];
@@ -556,9 +841,54 @@ class DataStore {
   }
 
   getLoans(branch?: Branch) {
-    const cleanLoans = this.loans.filter(l => !(l.code === '1002' && l.borrowerName === 'Dalisay, Ricardo'));
-    if (!branch || branch === Branch.ALL) return cleanLoans;
-    return cleanLoans.filter(l => l.branch === branch);
+    const activeLoans = this.loans.filter(isLoanAllowedInActivePortfolio);
+    const branchLoans = !branch || branch === Branch.ALL
+      ? activeLoans
+      : activeLoans.filter(l => l.branch === branch);
+
+    return branchLoans.map(loan => ({
+      ...loan,
+      collector: this.getCollectorDisplayName(loan.collector),
+      remarks: (loan.remarks || []).map(remark => ({
+        ...remark,
+        collector: this.getCollectorDisplayName(remark.collector)
+      }))
+    }));
+  }
+
+  async getMigrationBatches(): Promise<MigrationBatch[]> {
+    const rows = await this.api('/migration_batches');
+    return rows.map((row: any) => this.mapMigrationBatch(row));
+  }
+
+  async scanMigrationBatches(maturityFrom: string, maturityTo: string): Promise<MigrationBatch[]> {
+    const result = await this.api('/migration_batches/scan', 'POST', { maturityFrom, maturityTo });
+    return (result.batches || []).map((row: any) => this.mapMigrationBatch(row));
+  }
+
+  async migrateBatch(batchId: string, user: string, selectedAccountKeys?: string[]) {
+    const result = await this.api(`/migration_batches/${batchId}/migrate`, 'POST', { user, selectedAccountKeys });
+    await this.refresh();
+    return result;
+  }
+
+  async updateMigrationBatchAccount(batchId: string, code: string, updatedLoanData: any) {
+    const result = await this.api(`/migration_batches/${batchId}/account`, 'PUT', { code, updatedLoanData });
+    return result;
+  }
+
+  async removeMigrationBatchAccount(batchId: string, code: string, deletedBy?: string) {
+    const result = await this.api(`/migration_batches/${batchId}/account/${code}`, 'DELETE', {
+      deletedBy: deletedBy || 'System',
+      reason: 'Excluded from JCASH Migration'
+    });
+    // Refresh deleted loans list so recycle bin updates immediately
+    try {
+      const dbDeletedLoans = await fetch(`${API_URL}/recycle_bin`).then(r => r.json());
+      this.deletedLoans = (dbDeletedLoans || []).map((d: any) => this.mapDeletedLoan(d));
+      this.notify();
+    } catch (e) {}
+    return result;
   }
 
   async addLoan(loanData: Omit<Loan, 'id' | 'payments' | 'remarks' | 'amountCollected' | 'runningBalance' | 'borrowerName' | 'aiPriority' | 'history' | 'promiseToPayDate'>, user: string, role: string) {
@@ -604,12 +934,24 @@ class DataStore {
       updated.borrowerName = `${updated.lastName}, ${updated.firstName}`;
     }
 
-    // Strict Transactional Save: Await server confirmation BEFORE updating local memory
-    await this.api(`/loans/${id}`, 'PUT', updated);
-
-    // Apply updates and Recalculate using authoritative logic ONLY after API success
+    const previousLoan = this.loans[index];
     this.loans[index] = updated;
     const fullyUpdated = this.recalculateLoanFinances(id)!;
+    if (
+      Object.prototype.hasOwnProperty.call(updates, 'recurringSchedule') ||
+      Object.prototype.hasOwnProperty.call(updates, 'promiseToPayDate') ||
+      Object.prototype.hasOwnProperty.call(updates, 'followUpDate')
+    ) {
+      this.syncLoanInteractionDates(id);
+    }
+
+    // Strict Transactional Save: persist the same recalculated state that the UI will show.
+    try {
+      await this.api(`/loans/${id}`, 'PUT', fullyUpdated);
+    } catch (err) {
+      this.loans[index] = previousLoan;
+      throw err;
+    }
 
     // Logic for logging history
     if (updates.status && updates.status !== current.status) {
@@ -682,15 +1024,13 @@ class DataStore {
       } else {
         loan.promiseToPayDate = loan.recurringSchedule.nextDueDate;
       }
-    } else if (latestPTPRemark && latestPTPRemark.ptpDate) {
-      loan.promiseToPayDate = latestPTPRemark.ptpDate;
+    } else {
+      loan.promiseToPayDate = latestPTPRemark?.ptpDate || null;
     }
 
     // 2. Sync Follow-up
     const latestFURemark = [...loan.remarks].reverse().find(r => r.followUpDate);
-    if (latestFURemark && latestFURemark.followUpDate) {
-      loan.followUpDate = latestFURemark.followUpDate;
-    }
+    loan.followUpDate = latestFURemark?.followUpDate || null;
 
     // 3. Update Priority Level
     // Rule: PTP Today (highest) > Missed PTP > Follow-up Today > Missed Follow-up > Future Follow-up
@@ -719,10 +1059,14 @@ class DataStore {
     const remarkIndex = this.loans[loanIndex].remarks.findIndex(r => r.id === remarkId);
     if (remarkIndex === -1) return;
 
-    this.loans[loanIndex].remarks[remarkIndex].text = text;
-    this.loans[loanIndex].remarks[remarkIndex].ptpDate = ptpDate;
-    this.loans[loanIndex].remarks[remarkIndex].followUpDate = followUpDate;
-    
+    const previousLoan = { ...this.loans[loanIndex], remarks: [...this.loans[loanIndex].remarks] };
+    const updatedRemark = {
+      ...this.loans[loanIndex].remarks[remarkIndex],
+      text,
+      ptpDate,
+      followUpDate
+    };
+    this.loans[loanIndex].remarks[remarkIndex] = updatedRemark;
     this.syncLoanInteractionDates(loanId);
     
     // Manual priority override if provided (AI sentiment)
@@ -730,24 +1074,102 @@ class DataStore {
       this.loans[loanIndex].aiPriority = priority;
     }
 
-    await this.recordHistory(loanId, 'Remark Edited', `Remark edited: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`, user, role, 'Field Intelligence');
+    try {
+      await this.api(`/remarks/${remarkId}`, 'PUT', { text, ptpDate, followUpDate });
+      await this.api(`/loans/${loanId}`, 'PUT', this.loans[loanIndex]);
+      await this.recordHistory(loanId, 'Remark Edited', `Remark edited: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`, user, role, 'Field Intelligence');
+    } catch (err) {
+      this.loans[loanIndex] = previousLoan;
+      throw err;
+    }
 
     this.save();
-
-    await this.api(`/remarks/${remarkId}`, 'PUT', { text, ptpDate, followUpDate });
-    await this.api(`/loans/${loanId}`, 'PUT', this.loans[loanIndex]);
   }
 
-  async deleteLoan(id: string) {
+  async deleteLoan(id: string, deletedBy: string, reason?: string) {
+    const loanIndex = this.loans.findIndex(l => l.id === id);
+    if (loanIndex === -1) return;
+    const loanToArchive = this.loans[loanIndex];
+
     // Transactional: Await server confirmation before local removal
-    await this.api(`/loans/${id}`, 'DELETE');
+    await this.api(`/recycle_bin`, 'POST', {
+      id: loanToArchive.id,
+      originalLoanData: loanToArchive,
+      deletedBy,
+      reason,
+      branch: loanToArchive.branch
+    });
+
+    const newDeletedLoan: DeletedLoan = {
+      id: loanToArchive.id,
+      originalLoanData: loanToArchive,
+      deletedBy,
+      deletedAt: new Date().toISOString(),
+      reason,
+      branch: loanToArchive.branch
+    };
+
+    this.deletedLoans.unshift(newDeletedLoan);
     this.loans = this.loans.filter(l => l.id !== id);
+    this.save();
+    this.notify();
+  }
+
+  getDeletedLoans(branch?: Branch): DeletedLoan[] {
+    if (!branch || branch === Branch.ALL) return this.deletedLoans;
+    return this.deletedLoans.filter(l => l.branch === branch);
+  }
+
+  async restoreLoan(id: string, user: string, role: string) {
+    const res = await this.api(`/recycle_bin/${id}/restore`, 'POST');
+    if (res.success && res.loan) {
+        this.deletedLoans = this.deletedLoans.filter(d => d.id !== id);
+
+        // Ensure properties are properly re-mapped for frontend consistency if needed
+        const restoredLoan = res.loan;
+        this.loans = this.loans.filter(l => l.id !== id);
+        this.loans.push(restoredLoan);
+
+        // Recalculate to restore status correctly
+        this.recalculateLoanFinances(id);
+        await this.recordHistory(id, 'Loan Restored', `Account restored from Recycle Bin.`, user, role, 'Administration');
+
+        this.save();
+        this.notify();
+    }
+    return res;
+  }
+
+  async permanentlyDeleteLoan(id: string) {
+    await this.api(`/recycle_bin/${id}`, 'DELETE');
+    this.deletedLoans = this.deletedLoans.filter(d => d.id !== id);
     this.save();
     this.notify();
   }
 
   getLoanByCode(code: string) {
     return this.loans.find(l => l.code === code);
+  }
+
+  private isJcashSourceLoan(loan: Loan) {
+    const hasJcashPayments = loan.payments.some(p => p.remarks === 'Migrated from jcashdb.mdb');
+    const hasNumericSourceId = /^\d+$/.test(String(loan.id || ''));
+    return hasJcashPayments || (hasNumericSourceId && loan.branch === Branch.ORMOC);
+  }
+
+  private isPreservedPaidMonitoringLoan(loan: Loan) {
+    const hasReversedPayment = loan.payments.some(p => p.status === PaymentStatus.REVERSED);
+    return !hasReversedPayment && loan.branch === Branch.ORMOC && loan.history.some(h =>
+      h.description === 'Paid/zero-balance monitoring record restored after Ormoc JCASH source reconciliation.'
+    );
+  }
+
+  private syncPreservedPaidMonitoringLoan(loan: Loan) {
+    const activePayments = loan.payments.filter(p => p.status !== PaymentStatus.REVERSED);
+    const paymentTotal = activePayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    loan.amountCollected = Math.max(Number(loan.amountCollected || 0), paymentTotal);
+    loan.runningBalance = 0;
+    loan.status = MovingStatus.PAID;
   }
 
   private recalculateLoanFinances(loanId: string) {
@@ -764,14 +1186,20 @@ class DataStore {
     });
 
     const activePayments = loan.payments.filter(p => p.status !== PaymentStatus.REVERSED);
+    const allPaymentTotal = loan.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
+      ? Math.max(0, Number(loan.amountCollected || 0) - allPaymentTotal)
+      : 0;
 
-    let currentBalance = loan.outstandingBalance;
-    let totalCollected = 0;
+    let currentBalance = (loan.totalLoan != null ? loan.totalLoan : loan.outstandingBalance) - sourceCollectedAdjustment;
+    let totalCollected = sourceCollectedAdjustment;
 
-    // Sequential calculation of running balance
+    // Rebuild the payment stream from the authoritative opening balance. Some
+    // imported JCASH rows contain stale balance-after values, so every active
+    // row must follow the same rule: previous balance minus payment amount.
     activePayments.forEach(p => {
-      currentBalance -= p.amount;
-      totalCollected += p.amount;
+      totalCollected += Number(p.amount || 0);
+      currentBalance -= Number(p.amount || 0);
       p.balanceAfter = currentBalance;
     });
 
@@ -901,30 +1329,67 @@ class DataStore {
       loan.aiPriority = PriorityLevel.LOWEST;
     }
 
-    // Transactional: Await server confirmation before local update
-    try {
-      await this.api('/payments', 'POST', { loanId, ...newPayment });
-    } catch (apiErr: any) {
-      if (apiErr.message && apiErr.message.includes('payments_loan_id_fkey')) {
-        console.warn('Foreign key missing. Auto-syncing loan to server first...');
-        await this.api('/loans/bulk', 'POST', [loan]);
-        await this.api('/payments', 'POST', { loanId, ...newPayment });
-      } else {
-        throw apiErr;
+    // Auto-Location Rule: If payment is detected for a "Not Located" client, they've clearly been found
+    if (loan.location === LocationStatus.NOT_LOCATED) {
+      loan.location = LocationStatus.LOCATED;
+      // Clear any manual Write-Off override since client is now active
+      if (loan.actionStage === 'For Write-Off') {
+        loan.actionStage = undefined as any;
+        loan.actionNote = undefined as any;
       }
+      await this.recordHistory(loanId, 'Auto-Location Update', 'Location automatically changed to "Located" due to payment activity.', recorder, role, 'Payment');
     }
 
-    // Server upserts by loan + payment date, so mirror that rule locally.
-    // Otherwise the browser can show duplicate same-day payments until refresh.
     const existingSameDateIndex = this.loans[index].payments.findIndex(
       p => p.loanId === loanId && p.date === date
     );
+    const previousSameDatePayment = existingSameDateIndex !== -1
+      ? this.loans[index].payments[existingSameDateIndex]
+      : null;
+    const previousAmountCollected = loan.amountCollected;
+    const previousAllPaymentTotal = loan.payments
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
+      ? Math.max(0, Number(loan.amountCollected || 0) - previousAllPaymentTotal)
+      : 0;
+
+    // Recalculate before persisting so the stored payment row carries the
+    // correct balance_after value, including same-date replacement payments.
     if (existingSameDateIndex !== -1) {
       this.loans[index].payments[existingSameDateIndex] = newPayment;
     } else {
       this.loans[index].payments.push(newPayment);
     }
+    const nextActivePaymentTotal = this.loans[index].payments
+      .filter(p => p.status !== PaymentStatus.REVERSED)
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    this.loans[index].amountCollected = sourceCollectedAdjustment + nextActivePaymentTotal;
     const updatedLoan = this.recalculateLoanFinances(loanId);
+
+    try {
+      await this.api('/payments', 'POST', { loanId, ...newPayment });
+      await this.api(`/loans/${loanId}`, 'PUT', updatedLoan);
+    } catch (apiErr: any) {
+      if (apiErr.message && apiErr.message.includes('payments_loan_id_fkey')) {
+        console.warn('Foreign key missing. Auto-syncing loan to server first...');
+        await this.api('/loans/bulk', 'POST', [loan]);
+        await this.api('/payments', 'POST', { loanId, ...newPayment });
+        await this.api(`/loans/${loanId}`, 'PUT', updatedLoan);
+      } else {
+        if (previousSameDatePayment) {
+          this.loans[index].payments[existingSameDateIndex] = previousSameDatePayment;
+        } else {
+          this.loans[index].payments = this.loans[index].payments.filter(p => p.id !== newPayment.id);
+        }
+        this.loans[index].amountCollected = previousAmountCollected;
+        this.recalculateLoanFinances(loanId);
+        throw apiErr;
+      }
+    }
+
+    if (remarks && remarks.trim() !== '') {
+      await this.addRemark(loanId, remarks, loan.collector, undefined, recorder, role);
+    }
 
     // Recurring Schedule Auto-Advance: If loan has an active recurring schedule,
     // advance the nextDueDate and sync promiseToPayDate for the Client Update pipeline.
@@ -975,6 +1440,12 @@ class DataStore {
       return { success: false, message: 'This payment is already reversed.' };
     }
 
+    const previousLoan = {
+      ...loan,
+      payments: loan.payments.map(p => ({ ...p })),
+      history: [...loan.history]
+    };
+
     // Mark as reversed
     loan.payments[paymentIndex].status = PaymentStatus.REVERSED;
     loan.payments[paymentIndex].remarks = reason ? `${payment.remarks || ''} (REVERSED: ${reason})` : `${payment.remarks || ''} (REVERSED)`;
@@ -982,12 +1453,17 @@ class DataStore {
     // Authoritative Recalculation
     const updatedLoan = this.recalculateLoanFinances(loan.id)!;
 
-    this.loans[loanIndex] = updatedLoan;
+    try {
+      await this.api(`/payments/${orNumber}`, 'PUT', { status: PaymentStatus.REVERSED, remarks: loan.payments[paymentIndex].remarks });
+      await this.api(`/loans/${loan.id}`, 'PUT', updatedLoan);
     await this.recordHistory(loan.id, 'Payment Reversed', `Payment OR: ${orNumber} (₱${payment.amount.toLocaleString()}) reversed. Reason: ${reason || 'Not specified'}. New balance: ₱${updatedLoan.runningBalance.toLocaleString()}`, recorder, role, 'Payment Stream');
-    this.save();
+    } catch (err) {
+      this.loans[loanIndex] = previousLoan;
+      throw err;
+    }
 
-    await this.api(`/payments/${orNumber}`, 'PUT', { status: PaymentStatus.REVERSED, remarks: loan.payments[paymentIndex].remarks });
-    await this.api(`/loans/${loan.id}`, 'PUT', updatedLoan);
+    this.loans[loanIndex] = updatedLoan;
+    this.save();
 
     return { success: true, message: 'Payment successfully reversed.', loan: updatedLoan };
   }
@@ -1029,9 +1505,11 @@ class DataStore {
     }[] = [];
 
     filteredLoans.forEach(loan => {
+      if (this.isExcludedFromCollectionReports(loan)) return;
+
       loan.payments
         .filter(p => {
-          if (p.status !== PaymentStatus.GOOD) return false;
+          if (!isReportableCollectionPayment(p)) return false;
           if (fromDate && p.date < fromDate) return false;
           if (toDate && p.date > toDate) return false;
           return true;
@@ -1069,23 +1547,65 @@ class DataStore {
   }
 
 
+  /**
+   * Checks if a loan is a "Dead" write-off: fully paid only because the borrower
+   * died, meaning no actual money was collected. These should be excluded from
+   * collection performance metrics.
+   */
+  isDeadWriteOff(loan: Loan): boolean {
+    const hasDeadIntel = loan.remarks.some(r => {
+      const text = r.text.toLowerCase().trim();
+      return /\b(dead|deceased)\b/.test(text);
+    });
+
+    const hasDeadPayment = loan.payments.some(p => {
+      if (!p.remarks) return false;
+      const text = p.remarks.toLowerCase().trim();
+      return /\b(dead|deceased)\b/.test(text);
+    });
+
+    return hasDeadIntel || hasDeadPayment;
+  }
+
+  isOfficialWriteOff(loanId: string): boolean {
+    return this.managementDispositions.some(d =>
+      d.loanId === loanId &&
+      (d.type === DispositionType.PROSPECT_WRITE_OFF || d.type === DispositionType.DEAD_ACCOUNT) &&
+      (d.status === DispositionStatus.APPROVED || d.status === DispositionStatus.EXECUTED)
+    );
+  }
+
+  isExcludedFromCollectionReports(loan: Loan): boolean {
+    return this.isDeadWriteOff(loan) || this.isOfficialWriteOff(loan.id);
+  }
+
   getStats(branch?: Branch) {
     const filteredLoans = this.getLoans(branch);
-    const totalAccounts = filteredLoans.length;
-    const totalCollected = filteredLoans.reduce((sum, l) => sum + l.amountCollected, 0);
-    const totalOutstanding = filteredLoans.reduce((sum, l) => sum + l.outstandingBalance, 0);
-    const totalRunning = filteredLoans.reduce((sum, l) => sum + l.runningBalance, 0);
+    // Exclude only non-cash outcomes from performance stats. Fully paid accounts
+    // remain included because they represent actual collected money.
+    const performanceLoans = filteredLoans.filter(l => !this.isExcludedFromCollectionReports(l));
+    const deadWriteOffs = filteredLoans.filter(l => this.isDeadWriteOff(l));
+    const totalAccounts = performanceLoans.length;
+    const totalCollected = performanceLoans.reduce((sum, l) =>
+      sum + (l.payments || []).filter(isReportableCollectionPayment).reduce((paymentSum, payment) => paymentSum + Number(payment.amount || 0), 0),
+      0
+    );
+    const totalOutstanding = performanceLoans.reduce((sum, l) => sum + l.outstandingBalance, 0);
+    const totalRunning = performanceLoans.reduce((sum, l) => sum + l.runningBalance, 0);
     const statusData = {
       [MovingStatus.PAID]: { count: 0, amount: 0 },
       [MovingStatus.MOVING]: { count: 0, amount: 0 },
       [MovingStatus.NM]: { count: 0, amount: 0 },
       [MovingStatus.NMSR]: { count: 0, amount: 0 }
     };
-    filteredLoans.forEach(l => {
+    performanceLoans.forEach(l => {
       const s = l.status;
       if (statusData[s]) {
+        const reportableCollected = (l.payments || [])
+          .filter(isReportableCollectionPayment)
+          .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
         statusData[s].count++;
-        statusData[s].amount += (s === MovingStatus.PAID ? l.amountCollected : l.runningBalance);
+        statusData[s].amount += (s === MovingStatus.PAID ? reportableCollected : Math.max(0, l.outstandingBalance - reportableCollected));
       }
     });
     return {
@@ -1101,6 +1621,10 @@ class DataStore {
         Moving: statusData[MovingStatus.MOVING],
         NM: statusData[MovingStatus.NM],
         NMSR: statusData[MovingStatus.NMSR]
+      },
+      deadWriteOff: {
+        count: deadWriteOffs.length,
+        amount: deadWriteOffs.reduce((sum, l) => sum + l.outstandingBalance, 0)
       }
     };
   }
@@ -1109,6 +1633,9 @@ class DataStore {
     const collectors: Record<string, CollectorPerformance> = {};
     const filteredLoans = this.getLoans(branch);
     filteredLoans.forEach(loan => {
+      // Exclude Dead write-off loans from collection performance
+      if (this.isExcludedFromCollectionReports(loan)) return;
+
       const coll = this.getCollectorDisplayName(loan.collector);
       if (!coll || coll === 'N/A' || coll === 'UNDEFINED' || coll === 'UNASSIGNED') return;
 
@@ -1118,16 +1645,45 @@ class DataStore {
       const p = collectors[coll];
       p.totalAccounts++;
       p.reportedAmount += loan.outstandingBalance;
-      p.collectedAmount += loan.amountCollected;
-      p.runningBalance += loan.runningBalance;
+
+      // Only count payments made on or after the month the loan was reported
+      const reportedStart = loan.monthReported ? new Date(loan.monthReported + '-01').getTime() : 0;
+      const activePayments = (loan.payments || []).filter(isReportableCollectionPayment);
+      const collectedSinceReported = activePayments
+        .filter(pay => new Date(pay.date).getTime() >= reportedStart)
+        .reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
+
+      p.collectedAmount += collectedSinceReported;
+      // Balance = Target - Collected (so Target = Collected + Balance always)
+      p.runningBalance += Math.max(0, loan.outstandingBalance - collectedSinceReported);
       if (loan.status === MovingStatus.PAID) p.paidCount++;
     });
     return Object.values(collectors).map(p => ({ ...p, collectionRate: p.reportedAmount > 0 ? (p.collectedAmount / p.reportedAmount) * 100 : 0 }));
   }
 
+  /**
+   * Returns all loans that are Dead write-offs (fully paid due to death, not actual collection).
+   * Used for the Dead Write-Off report section.
+   */
+  getDeadWriteOffs(branch?: Branch): Loan[] {
+    const filteredLoans = this.getLoans(branch);
+    return filteredLoans.filter(l => this.isDeadWriteOff(l));
+  }
+
   getDemandLetters(branch?: Branch) {
-    if (!branch || branch === Branch.ALL) return this.demandLetters;
-    return this.demandLetters.filter(dl => dl.branch === branch);
+    const demandLetters = !branch || branch === Branch.ALL
+      ? this.demandLetters
+      : this.demandLetters.filter(dl => dl.branch === branch);
+
+    return demandLetters
+      .filter(dl => {
+        const loan = this.loans.find(l => l.id === dl.loanId);
+        return !loan || hasActiveClientBalance(loan);
+      })
+      .map(dl => ({
+        ...dl,
+        collectorName: this.getCollectorDisplayName(dl.collectorName)
+      }));
   }
 
   // Visit Log Methods (Close Monitoring)
@@ -1135,7 +1691,7 @@ class DataStore {
     return this.visitLogs.filter(v => v.loanId === loanId).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
-  async addVisitLog(loanId: string, visitDate: string, collectorNotes: string, clientComment: string, visitedByCollector: boolean, action: VisitLogAction, loggedBy: string, role: string): Promise<VisitLog> {
+  async addVisitLog(loanId: string, visitDate: string, collectorNotes: string, clientComment: string, visitedByCollector: boolean, action: VisitLogAction, loggedBy: string, role: string, personnelAssigned: string = ''): Promise<VisitLog> {
     const id = Math.random().toString(36).substring(2, 9);
     const now = new Date().toISOString();
     const newLog: VisitLog = {
@@ -1146,6 +1702,7 @@ class DataStore {
       clientComment,
       visitedByCollector,
       action,
+      personnelAssigned,
       loggedBy,
       timestamp: now
     };
@@ -1185,12 +1742,46 @@ class DataStore {
     return newLog;
   }
 
+  // Contact Log Methods (Action Tracker)
+  getContactLogs(loanId: string): ContactLog[] {
+    return this.contactLogs.filter(c => c.loanId === loanId).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  async addContactLog(loanId: string, contactDate: string, method: ContactMethod, notes: string, clientResponse: string, hasResponse: boolean, loggedBy: string, role: string, personnelAssigned: string = ''): Promise<ContactLog> {
+    const id = Math.random().toString(36).substring(2, 9);
+    const now = new Date().toISOString();
+    const newLog: ContactLog = {
+      id,
+      loanId,
+      contactDate,
+      method,
+      notes,
+      clientResponse,
+      hasResponse,
+      personnelAssigned,
+      loggedBy,
+      timestamp: now
+    };
+
+    // Persist to DB first
+    await this.api('/contact_logs', 'POST', newLog);
+    this.contactLogs.push(newLog);
+
+    // Record audit trail
+    const responseStatus = hasResponse ? 'with response' : 'no response';
+    const actionDesc = `Contact via ${method} (${responseStatus}): ${notes.substring(0, 50)}${notes.length > 50 ? '...' : ''}`;
+    await this.recordHistory(loanId, 'Contact Log', actionDesc, loggedBy, role, 'Action Tracker');
+
+    this.save();
+    return newLog;
+  }
+
   getCollectorDistribution(branch?: Branch) {
     const distribution: Record<string, number> = {};
     const filteredLoans = this.getLoans(branch);
 
     filteredLoans.forEach(loan => {
-      const coll = loan.collector?.trim();
+      const coll = this.getCollectorDisplayName(loan.collector);
       if (!coll || coll === 'N/A' || coll === 'undefined' || coll === 'UNASSIGNED') return;
       distribution[coll] = (distribution[coll] || 0) + 1;
     });
@@ -1292,7 +1883,7 @@ class DataStore {
   }
 
   exportData(user: User, branch: Branch): string {
-    const isAdmin = user.role === UserRole.SUPER_ADMIN;
+    const isAdmin = isAllBranchRole(user.role);
     
     const exportLoans = isAdmin ? this.loans : this.loans.filter(l => l.branch === branch);
     const exportCollectors = isAdmin ? this.collectors : this.collectors.filter(c => c.branch === branch);
@@ -1320,7 +1911,7 @@ class DataStore {
   importData(jsonData: string, user: User, currentBranch: Branch): { success: boolean, message?: string } {
     try {
       const data = JSON.parse(jsonData);
-      const isAdmin = user.role === UserRole.SUPER_ADMIN;
+      const isAdmin = isAllBranchRole(user.role);
       
       const fileBranch = data.metadata?.branchId;
 
@@ -1359,6 +1950,78 @@ class DataStore {
     } catch (error) {
       console.error('Failed to import data:', error);
       return { success: false, message: 'Critical Error: Invalid backup file format.' };
+    }
+  }
+
+  getDispositions(loanId: string): ManagementDisposition[] {
+    return this.managementDispositions.filter(d => d.loanId === loanId).sort((a, b) => new Date(b.decisionDate).getTime() - new Date(a.decisionDate).getTime());
+  }
+
+  getAllDispositions(): ManagementDisposition[] {
+    return [...this.managementDispositions].sort((a, b) => new Date(b.decisionDate).getTime() - new Date(a.decisionDate).getTime());
+  }
+
+  async addDisposition(loanId: string, type: DispositionType, reason: string, evidence: string[], decidedBy: string, role: string): Promise<ManagementDisposition> {
+    const loan = this.loans.find(l => l.id === loanId);
+    if (!loan) throw new Error('Loan not found');
+
+    const newDisposition: ManagementDisposition = {
+      id: crypto.randomUUID(),
+      loanId,
+      type,
+      reason,
+      evidence,
+      status: DispositionStatus.PENDING_REVIEW,
+      decidedBy,
+      decisionDate: new Date().toISOString()
+    };
+
+    try {
+      const res = await fetch(`${API_URL}/management_dispositions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newDisposition)
+      });
+      
+      if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Server error: ${res.status}`);
+      }
+
+      this.managementDispositions.push(newDisposition);
+
+      await this.recordHistory(loanId, 'Management Disposition', `Decided: ${type} - ${reason}. Status: Pending Review`, decidedBy, role, 'Management Disposition');
+      this.notify();
+      return newDisposition;
+    } catch (e) {
+      console.error('Failed to save disposition to API', e);
+      throw e;
+    }
+  }
+
+  async updateDispositionStatus(id: string, newStatus: DispositionStatus, updatedBy: string, role: string): Promise<void> {
+    const disp = this.managementDispositions.find(d => d.id === id);
+    if (!disp) throw new Error('Disposition not found');
+    if (newStatus === DispositionStatus.APPROVED && !canApproveWriteOff(role)) {
+      throw new Error('Sorry! Only the Executive Vice President can Approve Clients');
+    }
+
+    try {
+      await fetch(`${API_URL}/management_dispositions/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus, updatedBy, role })
+      });
+      
+      const oldStatus = disp.status;
+      disp.status = newStatus;
+      
+      await this.recordHistory(disp.loanId, 'Management Disposition Update', `Status changed from ${oldStatus} to ${newStatus} by ${updatedBy}`, updatedBy, role, 'Management Disposition');
+      this.notify();
+    } catch (e) {
+      console.error('Failed to update disposition status', e);
+      alert('Failed to update status. Are you offline?');
+      throw e;
     }
   }
 }

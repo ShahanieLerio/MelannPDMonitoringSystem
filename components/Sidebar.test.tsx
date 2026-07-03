@@ -3,83 +3,151 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import Sidebar from './Sidebar';
 import { UserRole, Branch } from '../types';
 
+vi.mock('../hooks/useClientUpdates', () => ({
+  useClientUpdates: () => ({
+    loans: [],
+    topPriorityList: [],
+    reminderList: [],
+    closeMonitoringList: [],
+    filteredMainList: []
+  })
+}));
+
 describe('Sidebar', () => {
-    const mockOnNavigate = vi.fn();
-    const defaultProps = {
-        currentView: 'dashboard' as const,
-        onNavigate: mockOnNavigate,
-        userRole: UserRole.SUPER_ADMIN,
-        userBranch: Branch.NAVAL,
-        onLogout: vi.fn()
-    };
+  const setIsOpen = vi.fn();
+  const setActiveTab = vi.fn();
+  const onLogout = vi.fn();
 
-    beforeEach(() => {
-        vi.clearAllMocks();
+  const defaultProps = {
+    isOpen: true,
+    setIsOpen,
+    activeTab: 'dashboard',
+    setActiveTab,
+    role: UserRole.SUPER_ADMIN,
+    onLogout,
+    username: 'SuperAdmin',
+    selectedBranch: Branch.ALL
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('renders available menu items for SUPER_ADMIN', () => {
+    render(<Sidebar {...defaultProps} />);
+
+    expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    expect(screen.getByText('Loan Grid')).toBeInTheDocument();
+    expect(screen.getByText('Collection Sheet')).toBeInTheDocument();
+    expect(screen.getByText('Client Update')).toBeInTheDocument();
+    expect(screen.getByText('Demand Letters')).toBeInTheDocument();
+    expect(screen.getAllByText('Reports').length).toBeGreaterThan(0);
+    expect(screen.getByText('Collectors')).toBeInTheDocument();
+    expect(screen.getByText('Manage Users')).toBeInTheDocument();
+    expect(screen.getByText('Backup & Restore')).toBeInTheDocument();
+  });
+
+  it('does not show Manage Users for branch users', () => {
+    render(<Sidebar {...defaultProps} role={UserRole.NAVAL_USER} />);
+
+    expect(screen.queryByText('Manage Users')).not.toBeInTheDocument();
+  });
+
+  it('shows data maintenance modules for IT/Accounting Clerk without backup access', () => {
+    render(<Sidebar {...defaultProps} role={UserRole.IT_ACCOUNTING_CLERK} />);
+
+    expect(screen.getByText('Collectors')).toBeInTheDocument();
+    expect(screen.getByText('JCASH Migration')).toBeInTheDocument();
+    expect(screen.getByText('Recycle Bin')).toBeInTheDocument();
+    expect(screen.queryByText('Backup & Restore')).not.toBeInTheDocument();
+  });
+
+  it('shows Payments only for Super Admin, IT/Accounting Clerk, and Branch Manager', () => {
+    const allowedRoles = [
+      UserRole.SUPER_ADMIN,
+      UserRole.IT_ACCOUNTING_CLERK,
+      UserRole.BRANCH_MANAGER
+    ];
+
+    const deniedRoles = [
+      UserRole.CASHIER,
+      UserRole.SUPERVISOR,
+      UserRole.COLLECTOR,
+      UserRole.OPERATIONS_MANAGER,
+      UserRole.EXECUTIVE_VICE_PRESIDENT,
+      UserRole.PRESIDENT,
+      UserRole.NAVAL_USER,
+      UserRole.ORMOC_USER
+    ];
+
+    allowedRoles.forEach(role => {
+      const { unmount } = render(<Sidebar {...defaultProps} role={role} />);
+      expect(screen.getByText('Payments')).toBeInTheDocument();
+      unmount();
     });
 
-    it('should render all menu items for SUPER_ADMIN', () => {
-        render(<Sidebar {...defaultProps} />);
-
-        expect(screen.getByText('Dashboard')).toBeInTheDocument();
-        expect(screen.getByText('Loan Grid')).toBeInTheDocument();
-        expect(screen.getByText('Collection Sheet')).toBeInTheDocument();
-        expect(screen.getByText('Client Update')).toBeInTheDocument();
-        expect(screen.getByText('Demand Letters')).toBeInTheDocument();
-        expect(screen.getByText('Reports')).toBeInTheDocument();
-        expect(screen.getByText('Collectors')).toBeInTheDocument();
-        expect(screen.getByText('User Management')).toBeInTheDocument();
-        expect(screen.getByText('Backup & Restore')).toBeInTheDocument();
+    deniedRoles.forEach(role => {
+      const { unmount } = render(<Sidebar {...defaultProps} role={role} />);
+      expect(screen.queryByText('Payments')).not.toBeInTheDocument();
+      unmount();
     });
+  });
 
-    it('should not show User Management for non-SUPER_ADMIN', () => {
-        render(<Sidebar {...defaultProps} userRole={UserRole.NAVAL_USER} />);
+  it('shows pending account count on Manage Users', () => {
+    render(<Sidebar {...defaultProps} pendingUserCount={3} />);
 
-        expect(screen.queryByText('User Management')).not.toBeInTheDocument();
-    });
+    expect(screen.getByText('Manage Users')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+  });
 
-    it('should highlight current view', () => {
-        render(<Sidebar {...defaultProps} currentView="loanGrid" />);
+  it('highlights the active menu item', () => {
+    render(<Sidebar {...defaultProps} activeTab="loans" />);
 
-        const loanGridButton = screen.getByText('Loan Grid').closest('button');
-        expect(loanGridButton?.className).toContain('active');
-    });
+    const loanGridButton = screen.getByText('Loan Grid').closest('button');
+    expect(loanGridButton?.className).toContain('bg-white/18');
+  });
 
-    it('should call onNavigate when menu item is clicked', () => {
-        render(<Sidebar {...defaultProps} />);
+  it('navigates when a menu item is clicked', () => {
+    render(<Sidebar {...defaultProps} />);
 
-        const loanGridButton = screen.getByText('Loan Grid');
-        fireEvent.click(loanGridButton);
+    fireEvent.click(screen.getByText('Collection Sheet'));
 
-        expect(mockOnNavigate).toHaveBeenCalledWith('loanGrid');
-    });
+    expect(setActiveTab).toHaveBeenCalledWith('collection-sheet');
+  });
 
-    it('should call onLogout when logout button is clicked', () => {
-        const mockOnLogout = vi.fn();
-        render(<Sidebar {...defaultProps} onLogout={mockOnLogout} />);
+  it('expands and navigates parent menus with subitems', () => {
+    render(<Sidebar {...defaultProps} />);
 
-        const logoutButton = screen.getByText('Logout');
-        fireEvent.click(logoutButton);
+    fireEvent.click(screen.getByText('Loan Grid'));
 
-        expect(mockOnLogout).toHaveBeenCalledTimes(1);
-    });
+    expect(setActiveTab).toHaveBeenCalledWith('loans');
+    expect(screen.getByText('Import Client')).toBeInTheDocument();
+    expect(screen.getByText('Add Client')).toBeInTheDocument();
+  });
 
-    it('should display user role and branch', () => {
-        render(<Sidebar {...defaultProps} />);
+  it('calls onLogout when logout is clicked and confirmed', () => {
+    render(<Sidebar {...defaultProps} />);
 
-        expect(screen.getByText(/SUPER_ADMIN/i)).toBeInTheDocument();
-        expect(screen.getByText(/Naval Branch/i)).toBeInTheDocument();
-    });
+    fireEvent.click(screen.getByText('Logout'));
+    fireEvent.click(screen.getByText('Yes, Log Out'));
 
-    it('should render for ORMOC_USER', () => {
-        render(
-            <Sidebar
-                {...defaultProps}
-                userRole={UserRole.ORMOC_USER}
-                userBranch={Branch.ORMOC}
-            />
-        );
+    expect(onLogout).toHaveBeenCalledTimes(1);
+  });
 
-        expect(screen.getByText(/ORMOC_USER/i)).toBeInTheDocument();
-        expect(screen.getByText(/Ormoc Branch/i)).toBeInTheDocument();
-    });
+  it('shows the authenticated username', () => {
+    render(<Sidebar {...defaultProps} username="Admin User" />);
+
+    expect(screen.getByText('Authenticated')).toBeInTheDocument();
+    expect(screen.getByText('Admin User')).toBeInTheDocument();
+  });
+
+  it('collapses text labels when closed and opens on menu click', () => {
+    render(<Sidebar {...defaultProps} isOpen={false} />);
+
+    fireEvent.click(screen.getByTitle('Dashboard'));
+
+    expect(setIsOpen).toHaveBeenCalledWith(true);
+    expect(setActiveTab).toHaveBeenCalledWith('dashboard');
+  });
 });
