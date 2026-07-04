@@ -167,7 +167,7 @@ export interface HistoryRecord {
 
 export interface RecurringSchedule {
   enabled: boolean;
-  type?: 'monthly' | 'weekly'; // Optional for backwards compatibility
+  type?: 'monthly' | 'weekly' | 'everyday'; // Optional for backwards compatibility
   days: number[];          // e.g. [15, 30]
   weekDays?: number[];     // e.g. [0, 6] (0 = Sunday, 6 = Saturday)
   nextDueDate: string;     // ISO date string, auto-calculated

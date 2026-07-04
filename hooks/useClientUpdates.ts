@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { store } from '../services/dataStore';
 import { Branch, PriorityLevel, Loan } from '../types';
+import { hasActiveClientBalance } from '../services/loanUtils';
 
 export interface ReminderItem {
   loan: Loan;
@@ -26,7 +27,7 @@ export const useClientUpdates = (selectedBranch: Branch) => {
 
   const updateList = useMemo(() => {
     return loans
-      .filter(l => l.remarks && l.remarks.length > 0)
+      .filter(l => hasActiveClientBalance(l) && l.remarks && l.remarks.length > 0)
       .map(l => ({
         ...l,
         latestRemark: l.remarks[l.remarks.length - 1]
@@ -65,7 +66,9 @@ export const useClientUpdates = (selectedBranch: Branch) => {
     let isRecurringDueToday = false;
     if (l.recurringSchedule?.enabled && isUnpaid) {
       const today = new Date();
-      if (l.recurringSchedule.type === 'weekly' && l.recurringSchedule.weekDays?.length > 0) {
+      if (l.recurringSchedule.type === 'everyday') {
+        isRecurringDueToday = today.getDay() !== 0;
+      } else if (l.recurringSchedule.type === 'weekly' && l.recurringSchedule.weekDays?.length > 0) {
         isRecurringDueToday = l.recurringSchedule.weekDays.includes(today.getDay());
       } else if (l.recurringSchedule.type === 'monthly' && l.recurringSchedule.days?.length > 0) {
         isRecurringDueToday = l.recurringSchedule.days.includes(today.getDate());
@@ -109,6 +112,7 @@ export const useClientUpdates = (selectedBranch: Branch) => {
     return updateList.map(l => {
       if (l.status === 'Paid') return null;
       if (checkIsPriority(l)) return null;
+      if (l.recurringSchedule?.enabled && l.recurringSchedule.type === 'everyday') return null;
 
       const hasPassedPTP = !!l.promiseToPayDate && l.promiseToPayDate < todayStr;
       const hasPassedFollowUp = !!l.followUpDate && l.followUpDate < todayStr;

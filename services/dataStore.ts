@@ -1186,9 +1186,9 @@ class DataStore {
     });
 
     const activePayments = loan.payments.filter(p => p.status !== PaymentStatus.REVERSED);
-    const allPaymentTotal = loan.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const activePaymentTotal = activePayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
-      ? Math.max(0, Number(loan.amountCollected || 0) - allPaymentTotal)
+      ? Math.max(0, Number(loan.amountCollected || 0) - activePaymentTotal)
       : 0;
 
     let currentBalance = (loan.totalLoan != null ? loan.totalLoan : loan.outstandingBalance) - sourceCollectedAdjustment;
@@ -1299,6 +1299,21 @@ class DataStore {
     return `${y}-${m}-${d}`;
   }
 
+  /**
+   * Computes the next daily collection date. Everyday commitments run Monday-Saturday.
+   */
+  private computeNextEverydayDueDate(afterDate: string): string {
+    const ref = new Date(afterDate + 'T00:00:00');
+    do {
+      ref.setDate(ref.getDate() + 1);
+    } while (ref.getDay() === 0);
+
+    const y = ref.getFullYear();
+    const m = String(ref.getMonth() + 1).padStart(2, '0');
+    const d = String(ref.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   async recordPayment(loanId: string, amount: number, date: string, remarks: string, recorder: string, role: string, customOr?: string) {
     const index = this.loans.findIndex(l => l.id === loanId);
     if (index === -1) return null;
@@ -1347,10 +1362,11 @@ class DataStore {
       ? this.loans[index].payments[existingSameDateIndex]
       : null;
     const previousAmountCollected = loan.amountCollected;
-    const previousAllPaymentTotal = loan.payments
+    const previousActivePaymentTotal = loan.payments
+      .filter(p => p.status !== PaymentStatus.REVERSED)
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
-      ? Math.max(0, Number(loan.amountCollected || 0) - previousAllPaymentTotal)
+      ? Math.max(0, Number(loan.amountCollected || 0) - previousActivePaymentTotal)
       : 0;
 
     // Recalculate before persisting so the stored payment row carries the
@@ -1396,10 +1412,13 @@ class DataStore {
     if (updatedLoan && updatedLoan.recurringSchedule?.enabled) {
       const schedule = updatedLoan.recurringSchedule;
       const isWeekly = schedule.type === 'weekly';
+      const isEveryday = schedule.type === 'everyday';
       
-      if ((isWeekly && schedule.weekDays && schedule.weekDays.length > 0) || (!isWeekly && schedule.days && schedule.days.length > 0)) {
+      if (isEveryday || (isWeekly && schedule.weekDays && schedule.weekDays.length > 0) || (!isWeekly && schedule.days && schedule.days.length > 0)) {
         schedule.lastPaidDate = date;
-        if (isWeekly) {
+        if (isEveryday) {
+          schedule.nextDueDate = this.computeNextEverydayDueDate(date);
+        } else if (isWeekly) {
           schedule.nextDueDate = this.computeNextWeeklyDueDate(schedule.weekDays!, date);
         } else {
           schedule.nextDueDate = this.computeNextDueDate(schedule.days, date);

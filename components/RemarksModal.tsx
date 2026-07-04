@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loan, PriorityLevel, User, Remark, RecurringSchedule } from '../types.ts';
 import { store } from '../services/dataStore.ts';
 import { analyzeRemarkPriority } from '../services/geminiService.ts';
@@ -20,9 +20,17 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
   const [successFeedback, setSuccessFeedback] = useState<{ title: string, message: string } | null>(null);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
   const [recurringEnabled, setRecurringEnabled] = useState(loan.recurringSchedule?.enabled || false);
-  const [scheduleType, setScheduleType] = useState<'monthly' | 'weekly'>(loan.recurringSchedule?.type || 'monthly');
+  const [scheduleType, setScheduleType] = useState<'monthly' | 'weekly' | 'everyday'>(loan.recurringSchedule?.type || 'monthly');
   const [selectedDays, setSelectedDays] = useState<number[]>(loan.recurringSchedule?.days || []);
   const [selectedWeekDays, setSelectedWeekDays] = useState<number[]>(loan.recurringSchedule?.weekDays || []);
+  const scheduleSignature = JSON.stringify(loan.recurringSchedule || null);
+
+  useEffect(() => {
+    setRecurringEnabled(loan.recurringSchedule?.enabled || false);
+    setScheduleType(loan.recurringSchedule?.type || 'monthly');
+    setSelectedDays(loan.recurringSchedule?.days || []);
+    setSelectedWeekDays(loan.recurringSchedule?.weekDays || []);
+  }, [loan.id, scheduleSignature]);
 
   const toggleDay = (day: number) => {
     setSelectedDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort((a, b) => a - b));
@@ -73,6 +81,14 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
     return getLocalISODate(today);
   };
 
+  const computeLocalNextEverydayDue = (afterDate = new Date()): string => {
+    const next = new Date(afterDate);
+    while (next.getDay() === 0) {
+      next.setDate(next.getDate() + 1);
+    }
+    return getLocalISODate(next);
+  };
+
   const formatDaySuffix = (d: number) => {
     if (d >= 11 && d <= 13) return d + 'th';
     switch (d % 10) {
@@ -91,32 +107,62 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
 
   const showRemarkWarning = (!newRemark.trim() && (ptpDate || followUpDate));
 
+  const isSameSchedule = (existing: RecurringSchedule | null | undefined) => {
+    if (!existing?.enabled || existing.type !== scheduleType) return false;
+    const nextDaysValue = scheduleType === 'everyday' ? [1, 2, 3, 4, 5, 6] : selectedDays;
+    const nextWeekDaysValue = scheduleType === 'everyday' ? [1, 2, 3, 4, 5, 6] : selectedWeekDays;
+    const existingDays = [...(existing.days || [])].sort((a, b) => a - b).join(',');
+    const nextDays = [...nextDaysValue].sort((a, b) => a - b).join(',');
+    const existingWeekDays = [...(existing.weekDays || [])].sort((a, b) => a - b).join(',');
+    const nextWeekDays = [...nextWeekDaysValue].sort((a, b) => a - b).join(',');
+    return existingDays === nextDays && existingWeekDays === nextWeekDays;
+  };
+
   const handleAddRemark = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newRemark.trim() && !ptpDate && !followUpDate) return;
+    const hasValidRecurringSchedule = recurringEnabled && (
+      scheduleType === 'everyday' ||
+      (scheduleType === 'monthly' && selectedDays.length > 0) ||
+      (scheduleType === 'weekly' && selectedWeekDays.length > 0)
+    );
+    const isDisablingRecurringSchedule = !recurringEnabled && !!loan.recurringSchedule?.enabled;
+    if (!newRemark.trim() && !ptpDate && !followUpDate && !hasValidRecurringSchedule && !isDisablingRecurringSchedule) return;
 
     setIsSubmitting(true);
     setErrorFeedback(null);
     try {
-      const priority = await analyzeRemarkPriority(newRemark);
+      const hasRemarkContent = newRemark.trim() !== '' || ptpDate !== '' || followUpDate !== '';
 
-      if (editingRemark) {
-        await store.updateRemark(loan.id, editingRemark.id, newRemark, priority, currentUser.username, currentUser.role, ptpDate || null, followUpDate || null);
-        setEditingRemark(null);
-      } else {
-        await store.addRemark(loan.id, newRemark, currentUser.username, priority, currentUser.username, currentUser.role, ptpDate || null, followUpDate || null);
+      if (hasRemarkContent) {
+        const priority = await analyzeRemarkPriority(newRemark || 'Schedule updated');
+
+        if (editingRemark) {
+          await store.updateRemark(loan.id, editingRemark.id, newRemark, priority, currentUser.username, currentUser.role, ptpDate || null, followUpDate || null);
+          setEditingRemark(null);
+        } else {
+          await store.addRemark(loan.id, newRemark || 'Schedule updated', currentUser.username, priority, currentUser.username, currentUser.role, ptpDate || null, followUpDate || null);
+        }
       }
 
       // Save recurring schedule BEFORE showing success feedback
       // This ensures the schedule is committed to DB as part of the transactional flow
-      if (recurringEnabled && ((scheduleType === 'monthly' && selectedDays.length > 0) || (scheduleType === 'weekly' && selectedWeekDays.length > 0))) {
-        const nextDue = scheduleType === 'monthly' ? computeLocalNextDue(selectedDays) : computeLocalNextWeeklyDue(selectedWeekDays);
+      if (hasValidRecurringSchedule) {
+        const nextDue = scheduleType === 'everyday'
+          ? computeLocalNextEverydayDue()
+          : scheduleType === 'monthly'
+            ? computeLocalNextDue(selectedDays)
+            : computeLocalNextWeeklyDue(selectedWeekDays);
+        const today = getLocalISODate(new Date());
+        const scheduleStartDate = isSameSchedule(loan.recurringSchedule)
+          ? (loan.recurringSchedule?.startDate || today)
+          : today;
         const schedule: RecurringSchedule = {
           enabled: true,
           type: scheduleType,
-          days: selectedDays,
-          weekDays: selectedWeekDays,
+          days: scheduleType === 'everyday' ? [1, 2, 3, 4, 5, 6] : selectedDays,
+          weekDays: scheduleType === 'everyday' ? [1, 2, 3, 4, 5, 6] : selectedWeekDays,
           nextDueDate: nextDue,
+          startDate: scheduleStartDate,
           lastPaidDate: loan.recurringSchedule?.lastPaidDate
         };
         await store.updateLoan(loan.id, { recurringSchedule: schedule, promiseToPayDate: nextDue }, currentUser.username, currentUser.role);
@@ -323,20 +369,27 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
                   {recurringEnabled && (
                     <div className="space-y-4 animate-fadeIn">
                       {/* Mode Toggle */}
-                      <div className="flex bg-slate-200/50 p-1 rounded-xl">
+                      <div className="grid grid-cols-3 bg-slate-200/50 p-1 rounded-xl">
                         <button
                           type="button"
                           onClick={() => setScheduleType('monthly')}
-                          className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${scheduleType === 'monthly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                          className={`py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${scheduleType === 'monthly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                           Monthly
                         </button>
                         <button
                           type="button"
                           onClick={() => setScheduleType('weekly')}
-                          className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${scheduleType === 'weekly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                          className={`py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${scheduleType === 'weekly' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                           Weekly
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScheduleType('everyday')}
+                          className={`py-1.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${scheduleType === 'everyday' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          Everyday
                         </button>
                       </div>
 
@@ -360,7 +413,7 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
                             ))}
                           </div>
                         </>
-                      ) : (
+                      ) : scheduleType === 'weekly' ? (
                         <>
                           <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest pt-1">Select days of the week</p>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -380,6 +433,15 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
                             ))}
                           </div>
                         </>
+                      ) : (
+                        <div className="bg-white p-3 rounded-xl border border-violet-200 space-y-1">
+                          <p className="text-[11px] font-black text-violet-800">
+                            Everyday, Monday to Saturday
+                          </p>
+                          <p className="text-[10px] font-bold text-violet-500">
+                            No Sunday collection. Escalates after 3 unpaid scheduled days.
+                          </p>
+                        </div>
                       )}
 
                       {/* Display Data Output Block */}
@@ -403,6 +465,16 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
                           </p>
                         </div>
                       )}
+                      {scheduleType === 'everyday' && (
+                        <div className="bg-white p-3 rounded-xl border border-violet-200 space-y-1">
+                          <p className="text-[11px] font-black text-violet-800">
+                            Everyday: Monday to Saturday
+                          </p>
+                          <p className="text-[10px] font-bold text-violet-500">
+                            Next Due: {new Date(computeLocalNextEverydayDue()).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        </div>
+                      )}
 
                       {((scheduleType === 'monthly' && selectedDays.length === 0) || (scheduleType === 'weekly' && selectedWeekDays.length === 0)) && (
                         <p className="text-[10px] font-bold text-violet-400 text-center py-2">Select days above to set recurring target</p>
@@ -412,9 +484,11 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
 
                   {!recurringEnabled && loan.recurringSchedule?.enabled && (
                     <p className="text-[9px] font-bold text-slate-400 mt-1">
-                      Currently active: {loan.recurringSchedule.type === 'weekly' 
-                        ? `Every ${loan.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ')}` 
-                        : `Every ${loan.recurringSchedule.days?.map(d => formatDaySuffix(d)).join(' & ')}`}. Toggle to modify.
+                      Currently active: {loan.recurringSchedule.type === 'everyday'
+                        ? 'Everyday, Monday to Saturday'
+                        : loan.recurringSchedule.type === 'weekly'
+                          ? `Every ${loan.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ')}`
+                          : `Every ${loan.recurringSchedule.days?.map(d => formatDaySuffix(d)).join(' & ')}`}. Toggle to modify.
                     </p>
                   )}
                 </div>
@@ -429,7 +503,13 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
 
               <button
                 type="submit"
-                disabled={isSubmitting || (!newRemark.trim() && !ptpDate && !followUpDate)}
+                disabled={isSubmitting || (
+                  !newRemark.trim() &&
+                  !ptpDate &&
+                  !followUpDate &&
+                  !(recurringEnabled && (scheduleType === 'everyday' || (scheduleType === 'monthly' && selectedDays.length > 0) || (scheduleType === 'weekly' && selectedWeekDays.length > 0))) &&
+                  !(!recurringEnabled && loan.recurringSchedule?.enabled)
+                )}
                 className="w-full py-6 bg-emerald-600 text-white font-black rounded-[2rem] shadow-xl shadow-emerald-900/20 hover:bg-emerald-700 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-4 uppercase tracking-widest text-xs"
               >
                 {isSubmitting ? (

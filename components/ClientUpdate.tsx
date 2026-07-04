@@ -7,11 +7,12 @@ import ClientFormModal from './ClientFormModal.tsx';
 import RemarksModal from './RemarksModal.tsx';
 import VisitLogModal from './VisitLogModal.tsx';
 import { useClientUpdates } from '../hooks/useClientUpdates.ts';
+import { hasActiveClientBalance } from '../services/loanUtils.ts';
 
 interface ClientUpdateProps {
   selectedBranch: Branch;
   currentUser: User;
-  activeView?: 'All' | 'Priority' | 'Monitoring' | 'No Activity' | 'Follow-up' | 'Updates Log';
+  activeView?: 'All' | 'Priority' | 'Monitoring' | 'No Commitments' | 'Follow-up' | 'Updates Log';
 }
 
 interface ReminderItem {
@@ -21,37 +22,19 @@ interface ReminderItem {
   context: string;
 }
 
-type CommitmentOutcome = 'Paid' | 'Missed' | 'Rescheduled' | 'Visited' | 'No Contact';
-
-const COMMITMENT_OUTCOMES: Record<CommitmentOutcome, { label: string; remark: string; className: string }> = {
-  Paid: {
-    label: 'Paid',
-    remark: 'Commitment outcome logged: payment confirmed or balance already settled.',
-    className: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-  },
-  Missed: {
-    label: 'Missed',
-    remark: 'Commitment outcome logged: client missed the promised action.',
-    className: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
-  },
-  Rescheduled: {
-    label: 'Rescheduled',
-    remark: 'Commitment outcome logged: client commitment needs a new schedule.',
-    className: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-  },
-  Visited: {
-    label: 'Visited',
-    remark: 'Commitment outcome logged: collector visit completed.',
-    className: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-  },
-  'No Contact': {
-    label: 'No Contact',
-    remark: 'Commitment outcome logged: no successful contact with client.',
-    className: 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-  }
-};
+type CommitmentOutcome = 'Missed' | 'Rescheduled' | 'Visited' | 'No Contact';
 
 const COLLECTOR_ACCOUNTABILITY_ORDER = ['ALDIE', 'EDDIE', 'NOEL', 'LITO', 'MASOY', 'TATA'];
+
+const formatRecurringScheduleLabel = (loan: Loan, compact = false) => {
+  const schedule = loan.recurringSchedule;
+  if (!schedule?.enabled) return '';
+  if (schedule.type === 'everyday') return compact ? 'Everyday' : 'Everyday, Mon-Sat';
+  if (schedule.type === 'weekly') {
+    return schedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ') || '';
+  }
+  return schedule.days?.join(' & ') || '';
+};
 
 const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser, activeView }) => {
   const { loans, updateList, topPriorityList, reminderList, closeMonitoringList, filteredMainList } = useClientUpdates(selectedBranch);
@@ -68,6 +51,10 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
   const [editLoan, setEditLoan] = useState<Loan | null>(null);
   const [remarksLoan, setRemarksLoan] = useState<Loan | null>(null);
   const [visitLogLoan, setVisitLogLoan] = useState<Loan | null>(null);
+  const currentRemarksLoan = useMemo(() => {
+    if (!remarksLoan) return null;
+    return loans.find(loan => loan.id === remarksLoan.id) || remarksLoan;
+  }, [loans, remarksLoan]);
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -96,7 +83,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
   }, [selectedBranch]);
 
   const noActivityList = useMemo(() => {
-    return loans.filter(l => l.remarks.length === 0);
+    return loans.filter(l => l.remarks.length === 0 && hasActiveClientBalance(l));
   }, [loans]);
 
   const collectorSummary = useMemo(() => {
@@ -117,7 +104,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
       return summary.get(name)!;
     };
 
-    loans.forEach(loan => {
+    loans.filter(hasActiveClientBalance).forEach(loan => {
       ensureCollector(loan.collector).total += 1;
     });
     topPriorityList.forEach((loan: any) => {
@@ -147,21 +134,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
       });
   }, [loans, topPriorityList, reminderList, closeMonitoringList, noActivityList]);
 
-  const handleCommitmentOutcome = async (loan: any, outcome: CommitmentOutcome) => {
-    const outcomeConfig = COMMITMENT_OUTCOMES[outcome];
-    const isFullyPaid = loan.runningBalance <= 0 || loan.outstandingBalance <= 0 || loan.status === 'Paid';
-    const newPriority = outcome === 'Paid' && isFullyPaid
-      ? PriorityLevel.LOWEST
-      : outcome === 'Rescheduled'
-        ? PriorityLevel.FOLLOW_UP
-        : outcome === 'Visited'
-          ? PriorityLevel.MONITOR
-          : PriorityLevel.NEED_ATTENTION;
-    const remarkText = `[COMMITMENT_STATUS:${outcome}] ${outcomeConfig.remark}`;
 
-    await store.addRemark(loan.id, remarkText, currentUser.username, newPriority, currentUser.username, currentUser.role);
-    await store.updateLoan(loan.id, { aiPriority: newPriority }, currentUser.username, currentUser.role);
-  };
 
   const toggleSection = (section: keyof typeof collapsedSections) => {
     setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -203,7 +176,6 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                 onEdit={setEditLoan}
                 onAddRemark={setRemarksLoan}
                 onVisitLog={setVisitLogLoan}
-                onOutcome={handleCommitmentOutcome}
               />
           )}
         </section>
@@ -284,13 +256,6 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                           Remarks
                         </button>
                       </div>
-                      <button
-                        onClick={() => handleCommitmentOutcome(item, 'Paid')}
-                        className="w-full py-2.5 bg-slate-900 border border-slate-800 text-white rounded-xl text-[9px] font-black uppercase tracking-[0.2em] transition-all duration-300 hover:bg-slate-800 hover:shadow-md hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-2"
-                      >
-                        <span className="bg-white/20 w-4 h-4 rounded-full flex items-center justify-center text-[8px]">✓</span> Log Paid Outcome
-                      </button>
-                      <CommitmentOutcomeButtons loan={item} onOutcome={handleCommitmentOutcome} compact />
                     </div>
                   </div>
                 ))}
@@ -394,12 +359,12 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
       )}
 
       {/* 4️⃣ NO ACTIVITY QUEUE */}
-      {activeFilter === 'No Activity' && (
+      {activeFilter === 'No Commitments' && (
         <section className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm space-y-6 relative">
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <div className="flex items-center gap-3">
               <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
-              <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em]">No Activity Queue</h3>
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em]">No Commitment Queue</h3>
               <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black px-2 py-1 rounded-lg border border-indigo-100">{noActivityList.length}</span>
             </div>
             <button onClick={() => toggleSection('noActivity')} className="p-2 hover:bg-slate-100 rounded-xl transition-colors group">
@@ -444,7 +409,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
                 <p className="text-[#6B7280] font-bold text-xs mt-2">No client updates to display.</p>
               </div>
             ) : (
-              <ClientUpdateTable data={activeFilter === 'Updates Log' ? updateList : filteredMainList} onOutcome={handleCommitmentOutcome} />
+              <ClientUpdateTable data={activeFilter === 'Updates Log' ? updateList : filteredMainList} />
             )
           )}
         </section>
@@ -463,9 +428,9 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
           }}
         />
       )}
-      {remarksLoan && (
+      {currentRemarksLoan && (
         <RemarksModal
-          loan={remarksLoan}
+          loan={currentRemarksLoan}
           currentUser={currentUser}
           onClose={() => { setRemarksLoan(null); refreshData(); }}
         />
@@ -530,44 +495,50 @@ function QueueMiniStat({ label, value, color }: { label: string; value: number; 
   );
 }
 
-function CommitmentOutcomeButtons({ loan, onOutcome, compact = false }: { loan: any; onOutcome: (loan: any, outcome: CommitmentOutcome) => void; compact?: boolean }) {
-  const outcomes: CommitmentOutcome[] = compact ? ['Missed', 'Rescheduled', 'Visited', 'No Contact'] : ['Paid', 'Missed', 'Rescheduled', 'Visited', 'No Contact'];
-
-  return (
-    <div className="space-y-2">
-      <p className="text-[8px] font-black text-slate-500 uppercase tracking-[0.2em] px-1">Commitment Outcome Tracking</p>
-      <div className="grid grid-cols-2 gap-1.5">
-        {outcomes.map(outcome => (
-          <button
-            key={outcome}
-            type="button"
-            onClick={() => onOutcome(loan, outcome)}
-            className={`px-2 py-2 rounded-lg border text-[8px] font-black uppercase tracking-widest transition-all active:scale-95 ${COMMITMENT_OUTCOMES[outcome].className}`}
-            title={`Log outcome: ${outcome}`}
-          >
-            {COMMITMENT_OUTCOMES[outcome].label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function NoActivityTable({ data, onViewDetails, onEdit, onAddRemark }: { data: Loan[]; onViewDetails: (l: Loan) => void; onEdit: (l: Loan) => void; onAddRemark: (l: Loan) => void }) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: 'borrowerName' | 'runningBalance', direction: 'asc' | 'desc' } | null>(null);
 
-  const filtered = data.filter(item => {
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    return item.borrowerName.toLowerCase().includes(term) || item.collector.toLowerCase().includes(term) || item.code.toLowerCase().includes(term);
-  });
+  const handleSort = (key: 'borrowerName' | 'runningBalance') => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const filteredAndSorted = useMemo(() => {
+    let result = data.filter(item => {
+      if (!searchTerm) return true;
+      const term = searchTerm.toLowerCase();
+      return item.borrowerName.toLowerCase().includes(term) || item.collector.toLowerCase().includes(term) || item.code.toLowerCase().includes(term);
+    });
+
+    if (sortConfig !== null) {
+      result.sort((a, b) => {
+        if (sortConfig.key === 'borrowerName') {
+          return sortConfig.direction === 'asc'
+            ? a.borrowerName.localeCompare(b.borrowerName)
+            : b.borrowerName.localeCompare(a.borrowerName);
+        } else if (sortConfig.key === 'runningBalance') {
+          return sortConfig.direction === 'asc'
+            ? a.runningBalance - b.runningBalance
+            : b.runningBalance - a.runningBalance;
+        }
+        return 0;
+      });
+    }
+
+    return result;
+  }, [data, searchTerm, sortConfig]);
 
   return (
     <div className="bg-white rounded-[2rem] border border-indigo-100 overflow-hidden shadow-xl shadow-indigo-900/5 animate-slideIn">
       <div className="px-5 py-3 border-b border-indigo-100 flex justify-between items-center bg-indigo-50/30">
         <h3 className="font-black text-indigo-800 uppercase tracking-widest text-xs flex items-center gap-2">
-          <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 shadow-sm text-[10px]">{filtered.length}</span>
-          No Field Activity
+          <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 shadow-sm text-[10px]">{filteredAndSorted.length}</span>
+          No Commitment Queue
         </h3>
         <div className="relative w-64">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -586,14 +557,51 @@ function NoActivityTable({ data, onViewDetails, onEdit, onAddRemark }: { data: L
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-indigo-50 border-b border-indigo-100">
-              <th className="py-2 px-4 text-[9px] font-black text-indigo-500 uppercase tracking-widest">Client Details</th>
+              <th
+                className="py-2 px-4 text-[9px] font-black text-indigo-500 uppercase tracking-widest cursor-pointer hover:bg-indigo-100 transition-colors group"
+                onClick={() => handleSort('borrowerName')}
+              >
+                <div className="flex items-center gap-1.5">
+                  Client Details
+                  <span className="flex flex-col">
+                    {sortConfig?.key === 'borrowerName' ? (
+                      sortConfig.direction === 'asc' ? (
+                        <svg className="w-3 h-3 text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7" /></svg>
+                      ) : (
+                        <svg className="w-3 h-3 text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
+                      )
+                    ) : (
+                      <svg className="w-3 h-3 text-indigo-300 group-hover:text-indigo-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+                    )}
+                  </span>
+                </div>
+              </th>
               <th className="py-2 px-3 text-[9px] font-black text-indigo-400 uppercase tracking-widest">Collector</th>
-              <th className="py-2 px-3 text-[9px] font-black text-indigo-400 uppercase tracking-widest">Balance Risk</th>
+              <th className="py-2 px-3 text-[9px] font-black text-indigo-400 uppercase tracking-widest">Moving Status</th>
+              <th
+                className="py-2 px-3 text-[9px] font-black text-indigo-400 uppercase tracking-widest cursor-pointer hover:bg-indigo-100 transition-colors group"
+                onClick={() => handleSort('runningBalance')}
+              >
+                <div className="flex items-center gap-1.5">
+                  Balance Risk
+                  <span className="flex flex-col">
+                    {sortConfig?.key === 'runningBalance' ? (
+                      sortConfig.direction === 'asc' ? (
+                        <svg className="w-3 h-3 text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 15l7-7 7 7" /></svg>
+                      ) : (
+                        <svg className="w-3 h-3 text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" /></svg>
+                      )
+                    ) : (
+                      <svg className="w-3 h-3 text-indigo-300 group-hover:text-indigo-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+                    )}
+                  </span>
+                </div>
+              </th>
               <th className="py-2 px-4 text-right text-[9px] font-black text-indigo-400 uppercase tracking-widest">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-indigo-50">
-            {filtered.map((row, idx) => (
+            {filteredAndSorted.map((row, idx) => (
               <tr key={row.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-indigo-50/60 transition-colors`}>
                 <td className="py-3 px-4">
                   <div className="flex flex-col">
@@ -604,6 +612,11 @@ function NoActivityTable({ data, onViewDetails, onEdit, onAddRemark }: { data: L
                 <td className="py-3 px-3">
                   <span className="bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-slate-200">
                     {row.collector}
+                  </span>
+                </td>
+                <td className="py-3 px-3">
+                  <span className="bg-slate-50 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-slate-200">
+                    {row.status}
                   </span>
                 </td>
                 <td className="py-3 px-3">
@@ -618,7 +631,7 @@ function NoActivityTable({ data, onViewDetails, onEdit, onAddRemark }: { data: L
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {filteredAndSorted.length === 0 && (
               <tr>
                 <td colSpan={4} className="p-8 text-center text-slate-400 font-bold text-sm">No matches found.</td>
               </tr>
@@ -775,7 +788,7 @@ function ClientUpdateCard({ update }: { update: any; key?: string | number }) {
   );
 }
 
-function ClientUpdateTable({ data, onOutcome }: { data: any[]; onOutcome: (loan: any, outcome: CommitmentOutcome) => void }) {
+function ClientUpdateTable({ data }: { data: any[] }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState<'date' | 'balance' | 'priority' | 'name' | 'interactions'>('date');
   const [sortDesc, setSortDesc] = useState(true);
@@ -928,9 +941,6 @@ function ClientUpdateTable({ data, onOutcome }: { data: any[]; onOutcome: (loan:
               <th className="p-4 px-6 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => handleSort('balance')}>
                 Balance Risk <SortIcon columnKey="balance" />
               </th>
-              <th className="p-4 px-6 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">
-                Outcome
-              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -968,9 +978,7 @@ function ClientUpdateTable({ data, onOutcome }: { data: any[]; onOutcome: (loan:
                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
                         {row.recurringSchedule?.enabled && (
                           <span className="bg-violet-50 text-violet-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-sm border border-violet-200">
-                            🔄 Every {row.recurringSchedule.type === 'weekly' 
-                              ? row.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ') 
-                              : row.recurringSchedule.days?.join(' & ')}
+                            Every {formatRecurringScheduleLabel(row)}
                           </span>
                         )}
                       </div>
@@ -1064,15 +1072,12 @@ function ClientUpdateTable({ data, onOutcome }: { data: any[]; onOutcome: (loan:
                       <div className="w-1.5 h-1.5 bg-red-500 rounded-full inline-block ml-2 animate-ping" title="High Risk Action Needed"></div>
                     )}
                   </td>
-                  <td className="p-4 px-6 align-top text-right min-w-[220px]">
-                    <CommitmentOutcomeButtons loan={row} onOutcome={onOutcome} compact />
-                  </td>
                 </tr>
               );
             })}
             {sortedAndFiltered.length === 0 && (
               <tr>
-                <td colSpan={8} className="p-8 text-center text-slate-400 font-bold text-sm">
+                <td colSpan={7} className="p-8 text-center text-slate-400 font-bold text-sm">
                   No matches found for your search criteria.
                 </td>
               </tr>
@@ -1084,7 +1089,7 @@ function ClientUpdateTable({ data, onOutcome }: { data: any[]; onOutcome: (loan:
   );
 }
 
-function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisitLog, onOutcome }: { data: any[], onViewDetails: (l: any) => void, onEdit: (l: any) => void, onAddRemark: (l: any) => void, onVisitLog: (l: any) => void, onOutcome: (loan: any, outcome: CommitmentOutcome) => void }) {
+function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisitLog }: { data: any[], onViewDetails: (l: any) => void, onEdit: (l: any) => void, onAddRemark: (l: any) => void, onVisitLog: (l: any) => void }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState<'name' | 'days'>('days');
   const [sortDesc, setSortDesc] = useState(true);
@@ -1167,9 +1172,7 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisi
               <th className="py-2 px-3 text-center text-[9px] font-black text-rose-400 uppercase tracking-widest cursor-pointer hover:bg-rose-100/50 transition-colors" onClick={() => handleSort('days')}>
                 Days Since Last Payment <SortIcon columnKey="days" />
               </th>
-              <th className="py-2 px-3 text-[9px] font-black text-rose-400 uppercase tracking-widest">
-                Outcome
-              </th>
+
               <th className="py-2 px-4 text-right text-[9px] font-black text-rose-400 uppercase tracking-widest">
                 Action
               </th>
@@ -1206,9 +1209,7 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisi
                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{row.code}</span>
                         {row.recurringSchedule?.enabled && (
                           <span className="bg-violet-50 text-violet-700 text-[8px] font-black uppercase px-1.5 py-0 rounded-sm border border-violet-200">
-                            🔄 {row.recurringSchedule.type === 'weekly' 
-                              ? row.recurringSchedule.weekDays?.map(n => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][n]).join(' & ') 
-                              : row.recurringSchedule.days?.join(' & ')}
+                            {formatRecurringScheduleLabel(row, true)}
                           </span>
                         )}
                       </div>
@@ -1263,9 +1264,7 @@ function CloseMonitoringTable({ data, onViewDetails, onEdit, onAddRemark, onVisi
                     </div>
                   </td>
 
-                  <td className="py-2 px-3 align-middle min-w-[210px]">
-                    <CommitmentOutcomeButtons loan={row} onOutcome={onOutcome} compact />
-                  </td>
+
 
                   {/* Action */}
                   <td className="py-2 px-4 align-middle text-right">
