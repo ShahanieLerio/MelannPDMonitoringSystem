@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { store } from '../services/dataStore';
-import { ACCOUNT_ROLE_DESCRIPTIONS, ACCOUNT_ROLE_OPTIONS, User, UserStatus, getUserRoleLabel } from '../types';
+import { ACCOUNT_ROLE_DESCRIPTIONS, ACCOUNT_ROLE_OPTIONS, User, UserStatus, getUserRoleLabel, isAllBranchRole } from '../types';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface UserManagementProps {
@@ -9,7 +9,13 @@ interface UserManagementProps {
 }
 
 const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) => {
-  const [users, setUsers] = useState<User[]>(store.getUsers());
+  const getManageableUsers = () => {
+    const allUsers = store.getUsers();
+    return isAllBranchRole(currentUser.role)
+      ? allUsers
+      : allUsers.filter(user => user.branch === currentUser.branch);
+  };
+  const [users, setUsers] = useState<User[]>(getManageableUsers());
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -58,7 +64,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) => {
       message,
       async () => {
         await store.updateUserStatus(id, newStatus, currentUser.username);
-        setUsers([...store.getUsers()]);
+        setUsers(getManageableUsers());
       },
       type
     );

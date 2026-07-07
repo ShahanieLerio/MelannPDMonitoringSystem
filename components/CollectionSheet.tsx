@@ -1,14 +1,18 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
-import { Loan, Collector, User, Branch } from '../types.ts';
+import { Loan, Collector, User, Branch, MovingStatus } from '../types.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 import { formatMMDDYYYY } from '../constants.tsx';
+import * as XLSX from 'xlsx';
 
 interface CollectionSheetProps {
   currentUser: User;
   selectedBranch: Branch;
 }
+
+const isCollectibleLoan = (loan: Loan) =>
+  loan.status !== MovingStatus.PAID && loan.runningBalance > 0;
 
 const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => {
   const [selectedCollector, setSelectedCollector] = useState<Collector | null>(null);
@@ -45,7 +49,10 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
   const collectorLoans = useMemo(() => {
     if (!selectedCollector) return [];
     const selectedCollectorName = getCollectorDisplayName(selectedCollector.nickname || selectedCollector.name, collectors);
-    let list = loans.filter(l => getCollectorDisplayName(l.collector, collectors) === selectedCollectorName);
+    let list = loans.filter(l =>
+      getCollectorDisplayName(l.collector, collectors) === selectedCollectorName &&
+      isCollectibleLoan(l)
+    );
     if (filterFromDate) list = list.filter(l => l.dueDate >= filterFromDate);
     if (filterToDate) list = list.filter(l => l.dueDate <= filterToDate);
     return list;
@@ -86,7 +93,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
         /* ── 1. Long Bond paper setup (8.5 × 13 inches) ───────── */
         @page {
           size: 8.5in 13in;
-          margin: 12mm 10mm 15mm 10mm;
+          margin: 6mm 10mm 10mm 10mm;
 
           /* Suppress browser auto-generated date/time, URL, title headers */
           @top-left   { content: '' !important; }
@@ -145,6 +152,16 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
           margin: 0 !important;
           padding: 0 !important;
         }
+        #root > div > main {
+          margin-left: 0 !important;
+          position: static !important;
+          transform: none !important;
+        }
+        #root > div > main > header,
+        #root > div > main > div > .no-print {
+          display: none !important;
+          visibility: hidden !important;
+        }
 
         /* ── 3. Hide ALL web UI elements ──────────────────────────── */
         header,
@@ -173,7 +190,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
           visibility: visible !important;
           width: 100% !important;
           box-sizing: border-box !important;
-          margin: 0 !important;
+          margin: -6mm 0 0 0 !important;
           padding: 0 !important;
           overflow: visible !important;
         }
@@ -219,8 +236,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
          */
         .cs-barangay-block {
           display: block !important;
-          break-inside: avoid !important;
-          page-break-inside: avoid !important;
+          break-inside: auto !important;
+          page-break-inside: auto !important;
         }
 
         /* City block: keep glued to the first barangay block below it */
@@ -287,44 +304,81 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
 
   if (!selectedCollector) {
     return (
-      <div className="space-y-6 animate-fadeIn no-print px-4">
-        <div className="py-6 border-b border-emerald-100 dark:border-emerald-900/50 transition-colors duration-300">
-          <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight transition-colors duration-300">Collection Sheets</h2>
-          <p className="text-slate-500 dark:text-slate-400 font-medium transition-colors duration-300">Select a collector for branch: <span className="text-emerald-600 dark:text-emerald-400 font-bold">{selectedBranch}</span></p>
+      <div className="animate-fadeIn no-print px-4 pb-8">
+        <div className="mb-6 border-b border-emerald-100/80 dark:border-emerald-900/50 py-6 transition-colors duration-300">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="mb-3 inline-flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-900/20 dark:text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                {selectedBranch} Branch
+              </div>
+              <h2 className="text-3xl font-black tracking-tight text-slate-950 transition-colors duration-300 dark:text-white">Collection Sheets</h2>
+              <p className="mt-1 max-w-2xl text-sm font-medium text-slate-500 transition-colors duration-300 dark:text-slate-400">
+                Select a collector to generate and review the field collection sheet for the active branch.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:flex">
+              <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Collectors</p>
+                <p className="mt-1 text-xl font-black text-slate-900 dark:text-white">{collectors.length}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Accounts</p>
+                <p className="mt-1 text-xl font-black text-emerald-700 dark:text-emerald-300">{loans.length}</p>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 mt-6">
-          {arrangedCollectors.map(c => (
-            <button
-              key={c.id}
-              onClick={() => setSelectedCollector(c)}
-              className="bg-white dark:bg-slate-800 p-5 rounded-3xl border-b-4 border-slate-200 dark:border-slate-700 text-left hover:border-emerald-600 dark:hover:border-emerald-500 hover:-translate-y-1 transition-all group relative overflow-hidden shadow-md hover:shadow-xl hover:shadow-emerald-900/10 dark:hover:shadow-emerald-900/40 active:translate-y-0 active:border-b-0"
-            >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+          {arrangedCollectors.map(c => {
+            const accountCount = loans.filter(l =>
+              getCollectorDisplayName(l.collector, collectors) === getCollectorDisplayName(c.nickname || c.name, collectors) &&
+              isCollectibleLoan(l)
+            ).length;
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelectedCollector(c)}
+                className="group relative overflow-hidden rounded-lg border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/10 active:translate-y-0 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-emerald-700 dark:hover:shadow-emerald-950/30"
+              >
+              <span className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-400 opacity-70 transition-opacity duration-300 group-hover:opacity-100"></span>
+              <div className="flex items-start justify-between gap-4">
               {c.photoUrl ? (
                 <img
                   src={c.photoUrl}
                   alt={c.nickname || c.name}
-                  className="w-20 h-20 rounded-2xl object-cover object-top border-4 border-emerald-50 dark:border-emerald-900/50 shadow-md shadow-slate-900/10 transition-all duration-300 group-hover:scale-[1.03] group-hover:border-emerald-200 dark:group-hover:border-emerald-700 mb-3"
+                  className="h-28 w-28 rounded-lg border border-emerald-100 object-cover object-top shadow-sm shadow-slate-900/10 transition-all duration-300 group-hover:scale-[1.03] group-hover:border-emerald-300 dark:border-emerald-900/60 dark:group-hover:border-emerald-600"
                 />
               ) : (
-                <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-900/40 flex items-center justify-center font-black text-emerald-600 dark:text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white dark:group-hover:bg-emerald-500 transition-all mb-3 rounded-2xl text-2xl border-4 border-emerald-50 dark:border-emerald-900/50">
+                <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 text-3xl font-black text-emerald-700 transition-all duration-300 group-hover:bg-emerald-600 group-hover:text-white dark:border-emerald-900/60 dark:bg-emerald-900/30 dark:text-emerald-300 dark:group-hover:bg-emerald-500">
                   {(c.nickname || c.name).charAt(0)}
                 </div>
               )}
-              <h4 className="text-base font-black text-slate-900 dark:text-white uppercase tracking-tight leading-tight transition-colors duration-300">{c.nickname || c.name}</h4>
-              <p className="text-slate-400 dark:text-slate-500 text-[9px] font-black uppercase tracking-widest mt-0.5 transition-colors duration-300">Field Spreadsheet</p>
-
-              <div className="mt-6 border-t border-slate-50 dark:border-slate-700/50 pt-4 flex justify-between items-center transition-colors duration-300">
-                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 transition-colors duration-300">
-                  {loans.filter(l => getCollectorDisplayName(l.collector, collectors) === getCollectorDisplayName(c.nickname || c.name, collectors)).length} Accounts
-                </span>
-                <span className="bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0">Generate</span>
+                <div className="rounded-lg bg-slate-50 px-3 py-2 text-right dark:bg-slate-900/60">
+                  <p className="text-lg font-black leading-none text-slate-900 dark:text-white">{accountCount}</p>
+                  <p className="mt-1 text-[8px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Accounts</p>
+                </div>
               </div>
-            </button>
-          ))}
+              <div className="mt-5">
+                <h4 className="text-base font-black uppercase leading-tight tracking-tight text-slate-950 transition-colors duration-300 group-hover:text-emerald-700 dark:text-white dark:group-hover:text-emerald-300">{c.nickname || c.name}</h4>
+                <p className="mt-1 text-[9px] font-black uppercase tracking-widest text-slate-400 transition-colors duration-300 dark:text-slate-500">Field Spreadsheet</p>
+              </div>
+
+              <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 transition-colors duration-300 dark:border-slate-700/60">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                  Ready to open
+                </span>
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 transition-all duration-300 group-hover:bg-emerald-600 group-hover:text-white dark:bg-emerald-900/30 dark:text-emerald-300 dark:group-hover:bg-emerald-500" aria-hidden="true">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
+                </span>
+              </div>
+              </button>
+            );
+          })}
           {collectors.length === 0 && (
-            <div className="col-span-full py-12 bg-white dark:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-700 rounded-3xl flex flex-col items-center justify-center transition-colors duration-300">
+            <div className="col-span-full flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white py-14 transition-colors duration-300 dark:border-slate-700 dark:bg-slate-800">
               <div className="w-12 h-12 bg-slate-50 dark:bg-slate-700/50 rounded-full flex items-center justify-center text-2xl mb-3 transition-colors duration-300">👥</div>
-              <p className="font-bold text-slate-400 dark:text-slate-500 italic text-sm transition-colors duration-300">No collectors found in this branch.</p>
+              <p className="text-sm font-bold italic text-slate-400 transition-colors duration-300 dark:text-slate-500">No collectors found in this branch.</p>
             </div>
           )}
         </div>
@@ -332,62 +386,164 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
     );
   }
 
+  const cityCount = Object.keys(groupedLoans).length;
+  const barangayCount = Object.values(groupedLoans as Record<string, Record<string, Loan[]>>).reduce((total, barangays) => total + Object.keys(barangays).length, 0);
+  const totalRunningBalance = collectorLoans.reduce((total, loan) => total + loan.runningBalance, 0);
+
+  const getExportFileBaseName = () => {
+    const collectorName = (selectedCollector.nickname || selectedCollector.name)
+      .replace(/[^a-z0-9]+/gi, '_')
+      .replace(/^_+|_+$/g, '');
+    const branchTag = selectedBranch.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '');
+    const today = new Date().toISOString().split('T')[0];
+    return `Collection_Sheet_${collectorName || 'Collector'}_${branchTag || 'Branch'}_${today}`;
+  };
+
+  const handleExportExcel = () => {
+    const exportData: (string | number)[][] = [
+      ['MELANN LENDING CORPORATION'],
+      ['Past Due & Report Monitoring System'],
+      ['FIELD COLLECTION FORM'],
+      ['Collector', (selectedCollector.nickname || selectedCollector.name).toUpperCase()],
+      ['Branch', selectedBranch],
+      ['Generated', new Date().toLocaleString('en-PH')],
+      ['Due Date Range', `${filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} to ${filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}`],
+      ['Accounts', collectorLoans.length],
+      ['Cities', cityCount],
+      ['Barangays', barangayCount],
+      ['Running Balance', totalRunningBalance],
+      [],
+      ['Code', 'Borrower Name', 'Full Address', 'Due Date', 'Running Balance', 'Payment']
+    ];
+
+    Object.entries(groupedLoans).forEach(([city, barangays]) => {
+      exportData.push([`CITY: ${city}`, '', '', '', '', '']);
+      Object.entries(barangays).forEach(([barangay, items]) => {
+        exportData.push([`BARANGAY: ${barangay}`, '', '', '', '', '']);
+        items.forEach(loan => {
+          exportData.push([
+            loan.code,
+            `${loan.lastName.toUpperCase()}, ${loan.firstName.toUpperCase()}`,
+            loan.fullAddress || '',
+            formatMMDDYYYY(loan.dueDate),
+            loan.runningBalance,
+            ''
+          ]);
+        });
+      });
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(exportData);
+    ws['!cols'] = [
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 46 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 16 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Collection Sheet');
+    XLSX.writeFile(wb, `${getExportFileBaseName()}.xlsx`);
+  };
+
   return (
     <>
-      <div className="animate-fadeIn no-print bg-white dark:bg-slate-900 min-h-screen transition-colors duration-300">
-        <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 shadow-sm sticky top-0 z-30 transition-colors duration-300">
-          <div className="flex justify-between items-center p-6 bg-white dark:bg-slate-900 transition-colors duration-300">
-            <div className="flex items-center gap-6">
+      <div className="animate-fadeIn no-print min-h-screen bg-slate-50/70 transition-colors duration-300 dark:bg-slate-950">
+        <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur transition-colors duration-300 dark:border-slate-800 dark:bg-slate-950/95">
+          <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-4">
               <button
                 onClick={() => setSelectedCollector(null)}
-                className="hover:bg-emerald-50 dark:hover:bg-slate-800 p-3 rounded-2xl transition-all text-slate-400 dark:text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400"
+                className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition-all hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-emerald-800 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-300"
                 title="Back to Selection"
               >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
               </button>
               <div>
-                <h2 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight transition-colors duration-300">ENCODING: {selectedCollector.nickname || selectedCollector.name}</h2>
-                <p className="text-emerald-600 dark:text-emerald-400 text-[10px] font-black uppercase tracking-[0.2em] transition-colors duration-300">{selectedBranch}</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-emerald-600 transition-colors duration-300 dark:text-emerald-300">Collection sheet encoding</p>
+                <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-slate-950 transition-colors duration-300 dark:text-white">{selectedCollector.nickname || selectedCollector.name}</h2>
+                <p className="mt-0.5 text-xs font-bold text-slate-500 transition-colors duration-300 dark:text-slate-400">{selectedBranch} Branch</p>
               </div>
             </div>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="hidden rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-900/20 dark:text-emerald-300 sm:block">
+                {collectorLoans.length} Accounts
+              </div>
+              <button
+                onClick={handleExportExcel}
+                disabled={collectorLoans.length === 0}
+                className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-emerald-700 shadow-sm transition-all hover:border-emerald-600 hover:bg-emerald-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-800/70 dark:bg-emerald-900/20 dark:text-emerald-300 dark:hover:bg-emerald-600 dark:hover:text-white"
+                title="Export to Microsoft Excel"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v8m0 0l-3-3m3 3l3-3m2 5H7a2 2 0 01-2-2V6a2 2 0 012-2h5l5 5v11a2 2 0 01-2 2z"></path></svg>
+                Excel
+              </button>
               <button
                 onClick={handlePrint}
-                className="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-6 py-2 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-black dark:hover:bg-white transition-all flex items-center gap-2"
+                disabled={collectorLoans.length === 0}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-black uppercase tracking-widest text-slate-700 shadow-sm transition-all hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-red-800 dark:hover:bg-red-900/20 dark:hover:text-red-300"
+                title="Export to PDF"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.5L13.5 4H7a2 2 0 00-2 2v13a2 2 0 002 2z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 4v6h6M8 15h8M8 18h5"></path></svg>
+                PDF
+              </button>
+              <button
+                onClick={handlePrint}
+                className="flex items-center gap-2 rounded-lg bg-slate-950 px-5 py-2.5 text-xs font-black uppercase tracking-widest text-white shadow-sm transition-all hover:bg-emerald-700 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                 Print
               </button>
             </div>
           </div>
+        </div>
 
+        <div className="grid gap-3 px-6 pt-6 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Accounts in View</p>
+            <p className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{collectorLoans.length}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Cities</p>
+            <p className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{cityCount}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Barangays</p>
+            <p className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{barangayCount}</p>
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 shadow-sm dark:border-emerald-900/70 dark:bg-emerald-900/20">
+            <p className="text-[9px] font-black uppercase tracking-widest text-emerald-700/70 dark:text-emerald-300/70">Running Balance</p>
+            <p className="mt-2 text-2xl font-black text-emerald-800 dark:text-emerald-200">PHP {totalRunningBalance.toLocaleString()}</p>
+          </div>
         </div>
 
         {/* Filter Section */}
-        <div className="mx-6 mb-4 mt-6 p-4 bg-slate-50 dark:bg-slate-800/20 rounded-[16px] border border-slate-200 dark:border-slate-700 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex flex-col md:flex-row items-center gap-4">
-            <span className="text-xs font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
+        <div className="mx-6 mb-4 mt-4 flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <span className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
               Filter by Due Date:
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input 
                 type="date"
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500 outline-none transition-colors" 
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none transition-colors focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300" 
                 value={filterFromDate} 
                 onChange={(e) => setFilterFromDate(e.target.value)}
               />
               <span className="text-slate-400 font-medium text-sm">to</span>
               <input 
                 type="date"
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-700 dark:text-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500 outline-none transition-colors" 
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none transition-colors focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300" 
                 value={filterToDate} 
                 onChange={(e) => setFilterToDate(e.target.value)}
               />
             </div>
             
             {(filterFromDate || filterToDate) && (
-               <button onClick={() => { setFilterFromDate(''); setFilterToDate(''); }} className="text-[10px] text-red-500 hover:text-white border border-red-200 hover:bg-red-500 hover:border-red-500 bg-red-50 px-3 py-1.5 rounded-lg font-black uppercase tracking-wider transition-all whitespace-nowrap">
+               <button onClick={() => { setFilterFromDate(''); setFilterToDate(''); }} className="whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-red-500 transition-all hover:border-red-500 hover:bg-red-500 hover:text-white">
                  Clear Filter
                </button>
             )}
@@ -400,7 +556,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
           </div>
           
           {(filterFromDate || filterToDate) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
-            <div className="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 px-4 py-2 rounded-xl border border-emerald-100 dark:border-emerald-800/50 text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-900/20 dark:text-emerald-300">
                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
                Showing: Due Date {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
             </div>
@@ -408,32 +564,39 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
         </div>
 
         {/* SpreadSheet Matrix View (Encoding) */}
-        <div className="p-6 overflow-x-auto">
-          <table className="w-full text-xs text-left border-collapse border border-slate-200 dark:border-slate-700 min-w-[820px] rounded-3xl overflow-hidden shadow-sm transition-colors duration-300">
+        <div className="mx-6 mb-8 mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm transition-colors duration-300 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Spreadsheet Matrix</p>
+              <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-300">Grouped by city and barangay</p>
+            </div>
+            <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:bg-slate-800 dark:text-slate-400">{collectorLoans.length} Rows</span>
+          </div>
+          <table className="w-full min-w-[820px] border-collapse text-left text-xs transition-colors duration-300">
             <thead>
-              <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-300 dark:border-slate-700 transition-colors duration-300">
-                <th className="p-4 border-r border-slate-200 dark:border-slate-700 w-24 text-center font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">CODE</th>
-                <th className="p-4 border-r border-slate-200 dark:border-slate-700 font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">BORROWER NAME</th>
-                <th className="p-4 border-r border-slate-200 dark:border-slate-700 font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">FULL ADDRESS</th>
-                <th className="p-4 border-r border-slate-200 dark:border-slate-700 w-32 font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">DUE DATE</th>
-                <th className="p-4 border-r border-slate-200 dark:border-slate-700 text-right w-40 font-black text-slate-400 dark:text-slate-500 text-[10px] tracking-widest transition-colors duration-300">BALANCE</th>
+              <tr className="border-b border-slate-200 bg-slate-50 transition-colors duration-300 dark:border-slate-800 dark:bg-slate-800/60">
+                <th className="w-24 border-r border-slate-200 p-4 text-center text-[10px] font-black tracking-widest text-slate-500 transition-colors duration-300 dark:border-slate-700 dark:text-slate-400">CODE</th>
+                <th className="border-r border-slate-200 p-4 text-[10px] font-black tracking-widest text-slate-500 transition-colors duration-300 dark:border-slate-700 dark:text-slate-400">BORROWER NAME</th>
+                <th className="border-r border-slate-200 p-4 text-[10px] font-black tracking-widest text-slate-500 transition-colors duration-300 dark:border-slate-700 dark:text-slate-400">FULL ADDRESS</th>
+                <th className="w-32 border-r border-slate-200 p-4 text-[10px] font-black tracking-widest text-slate-500 transition-colors duration-300 dark:border-slate-700 dark:text-slate-400">DUE DATE</th>
+                <th className="w-40 border-r border-slate-200 p-4 text-right text-[10px] font-black tracking-widest text-slate-500 transition-colors duration-300 dark:border-slate-700 dark:text-slate-400">BALANCE</th>
               </tr>
             </thead>
             <tbody>
               {Object.entries(groupedLoans).map(([city, barangays]) => (
                 <React.Fragment key={city}>
-                  <tr className="bg-slate-100/50 dark:bg-slate-800 font-black border-b border-slate-200 dark:border-slate-700 transition-colors duration-300">
-                    <td colSpan={5} className="p-3 px-6 uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500 text-[10px] transition-colors duration-300">CITY: {city}</td>
+                  <tr className="border-b border-slate-200 bg-slate-100/80 font-black transition-colors duration-300 dark:border-slate-800 dark:bg-slate-800">
+                    <td colSpan={5} className="px-6 py-3 text-[10px] uppercase tracking-[0.3em] text-slate-500 transition-colors duration-300 dark:text-slate-400">CITY: {city}</td>
                   </tr>
                   {Object.entries(barangays).map(([barangay, items]) => (
                     <React.Fragment key={barangay}>
-                       <tr className="bg-emerald-50/20 dark:bg-emerald-900/10 font-bold border-b border-slate-200 dark:border-slate-700 transition-colors duration-300">
-                        <td colSpan={5} className="p-2 px-10 uppercase tracking-widest text-emerald-600/50 dark:text-emerald-400/50 text-[10px] transition-colors duration-300">BARANGAY: {barangay}</td>
+                       <tr className="border-b border-emerald-100 bg-emerald-50/80 font-bold transition-colors duration-300 dark:border-emerald-900/50 dark:bg-emerald-900/15">
+                        <td colSpan={5} className="px-10 py-2 text-[10px] uppercase tracking-widest text-emerald-700/70 transition-colors duration-300 dark:text-emerald-300/70">BARANGAY: {barangay}</td>
                       </tr>
                       {items.map(l => (
-                        <tr key={l.id} className="group border-b border-slate-100 dark:border-slate-700/50 hover:bg-emerald-50 dark:hover:bg-slate-800/50 transition-all duration-300">
-                          <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-center font-black text-slate-400 dark:text-slate-500 transition-colors duration-300">{l.code}</td>
-                          <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 font-bold text-slate-700 dark:text-slate-300 transition-all duration-300 group-hover:font-black group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:underline decoration-emerald-500/30 underline-offset-4">{l.lastName.toUpperCase()}, {l.firstName.toUpperCase()}</td>
+                        <tr key={l.id} className="group border-b border-slate-100 transition-all duration-300 hover:bg-emerald-50/70 dark:border-slate-800 dark:hover:bg-slate-800/70">
+                          <td className="border-r border-slate-100 p-4 text-center font-black text-slate-400 transition-colors duration-300 dark:border-slate-800 dark:text-slate-500">{l.code}</td>
+                          <td className="border-r border-slate-100 p-4 font-bold text-slate-800 transition-all duration-300 group-hover:text-emerald-800 dark:border-slate-800 dark:text-slate-200 dark:group-hover:text-emerald-300">{l.lastName.toUpperCase()}, {l.firstName.toUpperCase()}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-slate-500 dark:text-slate-400 font-medium italic transition-colors duration-300">{l.fullAddress || "—"}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-slate-600 dark:text-slate-400 font-bold transition-colors duration-300">{formatMMDDYYYY(l.dueDate)}</td>
                           <td className="p-4 border-r border-slate-100 dark:border-slate-700/50 text-right font-black text-slate-800 dark:text-white transition-colors duration-300">₱{l.runningBalance.toLocaleString()}</td>
@@ -521,16 +684,34 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
               </tr>
             </tbody>
           </table>
+
+          {/* Summary Stats for Print */}
+          <table className="cs-no-border" style={{ width: '100%', borderCollapse: 'collapse', marginTop: '12px', border: 'none' }}>
+            <tbody>
+              <tr>
+                <td style={{ border: 'none', padding: '1px 0', fontSize: '9pt' }}>
+                  <strong style={{ color: '#2563eb' }}>Accounts in View:</strong> <span style={{ fontWeight: '800' }}>{collectorLoans.length}</span>
+                </td>
+                <td style={{ border: 'none', padding: '1px 0', fontSize: '9pt' }}>
+                  <strong style={{ color: '#2563eb' }}>Cities:</strong> <span style={{ fontWeight: '800' }}>{cityCount}</span>
+                </td>
+                <td style={{ border: 'none', padding: '1px 0', fontSize: '9pt' }}>
+                  <strong style={{ color: '#2563eb' }}>Barangays:</strong> <span style={{ fontWeight: '800' }}>{barangayCount}</span>
+                </td>
+                <td style={{ border: 'none', padding: '1px 0', fontSize: '9pt', textAlign: 'right' }}>
+                  <strong style={{ color: '#059669' }}>Running Balance:</strong> <span style={{ fontWeight: '800', color: '#047857' }}>₱{totalRunningBalance.toLocaleString()}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         {/* ══════════════════════════════════════════════════════════════
             COLLECTION TABLE — Block-Group Architecture
             ─────────────────────────────────────────────────────────────
-            Each Barangay group is a <div class="cs-barangay-block"> with
-            break-inside:avoid. Block-level divs are the ONLY container
-            type that Chromium's print engine reliably moves to the next
-            page as a whole unit. All nested tables share the same colgroup
-            widths so columns align perfectly across groups.
+            Barangay groups may continue onto the next page so each page can
+            use the available space. Rows avoid splitting, and all nested
+            tables share the same colgroup widths so columns align perfectly.
         ══════════════════════════════════════════════════════════════ */}
 
         {/* Shared column-width reference (invisible, 0-height — just establishes widths) */}
@@ -600,10 +781,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
 
             {Object.entries(barangays).map(([barangay, items]) => (
               /*
-               * cs-barangay-block is a BLOCK DIV with break-inside:avoid.
-               * The browser will not split this div across pages.
-               * If it doesn't fit on the current page, the entire div
-               * (label + all borrower rows) moves to the next page.
+               * Let the group continue across pages; individual table rows
+               * still avoid splitting so the page bottom is used better.
                */
               <div key={barangay} className="cs-barangay-block">
                 <table className="cs-group-table">

@@ -1,0 +1,243 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Missing From System - JCASH Confirmed Zero Balance</title>
+  <style>
+    @page { size: legal landscape; margin: 9mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; background: #f8fafc; }
+    .toolbar { position: sticky; top: 0; padding: 14px 18px; background: #fff; border-bottom: 1px solid #cbd5e1; display: flex; justify-content: space-between; align-items: center; }
+    button { border: 0; border-radius: 8px; padding: 10px 16px; background: #047857; color: white; font-weight: 800; cursor: pointer; }
+    main { padding: 18px; }
+    h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
+    .meta { margin-top: 6px; color: #475569; font-size: 12px; font-weight: 700; line-height: 1.5; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
+    .box { border: 1px solid #cbd5e1; border-radius: 8px; background: white; padding: 10px; }
+    .box span { display:block; color:#64748b; font-size:10px; text-transform:uppercase; font-weight:800; letter-spacing:.08em; }
+    .box strong { display:block; margin-top:4px; font-size:15px; }
+    table { width: 100%; border-collapse: collapse; background: white; font-size: 8.5px; }
+    th { background: #e2e8f0; color: #334155; text-align: left; text-transform: uppercase; letter-spacing: .05em; font-size: 7.4px; }
+    th, td { border: 1px solid #cbd5e1; padding: 4px 5px; vertical-align: top; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    .code { color: #dc2626; font-weight: 800; }
+    .money { text-align: right; font-weight: 800; color: #047857; white-space: nowrap; }
+    .zero { text-align: right; font-weight: 900; color: #047857; background: #ecfdf5; }
+    @media print { body { background: white; } .toolbar { display:none; } main { padding:0; } table { font-size: 7.3px; } th, td { padding: 2.5px 3px; } }
+  </style>
+</head>
+<body>
+  <div class="toolbar"><strong>Missing From System Report</strong><button onclick="window.print()">Print</button></div>
+  <main>
+    <h1>JCASH Confirmed Zero-Balance Clients Missing From Current System</h1>
+    <div class="meta">Compared against PostgreSQL loans table by Code + exact Due Date. Source printable: JCASH confirmed zero-balance recycle-bin fully paid list.<br>Generated: 6/30/2026, 3:33:18 PM</div>
+    <section class="summary">
+      <div class="box"><span>Printable Source Rows</span><strong>193</strong></div>
+      <div class="box"><span>Present In System</span><strong>182</strong></div>
+      <div class="box"><span>Missing From System</span><strong>11</strong></div>
+      <div class="box"><span>Total Final Payments</span><strong>76,516.00</strong></div>
+    </section>
+    <table>
+      <thead><tr><th>Client Name</th><th>Code</th><th>Recycle Due</th><th>Fully Paid Date</th><th>Final OR</th><th>Final Payment</th><th>JCASH LoanID</th><th>JCASH Maturity</th><th>JCASH Balance</th><th>Area</th><th>City</th><th>Barangay</th><th>Deleted By</th><th>Deleted At</th></tr></thead>
+      <tbody>
+    <tr>
+      <td>PARAC, CERINA JANICE</td>
+      <td class="code">3514</td>
+      <td>2026-02-21</td>
+      <td>2026-05-20</td>
+      <td>OR-20260520-6014</td>
+      <td class="money">500.00</td>
+      <td>46969</td>
+      <td>2026-02-21</td>
+      <td class="zero">0.00</td>
+      <td>Kananga</td>
+      <td>Matag-ob</td>
+      <td>Talisay</td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:13 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>MADJUS, VICENTA</td>
+      <td class="code">3768</td>
+      <td>2026-03-07</td>
+      <td>2026-05-25</td>
+      <td>OR-20260525-UL4X</td>
+      <td class="money">100.00</td>
+      <td>47140</td>
+      <td>2026-03-07</td>
+      <td class="zero">0.00</td>
+      <td>Ormoc </td>
+      <td>Ormoc </td>
+      <td>Tambulilid </td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:13 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>Vasquez, Jenette</td>
+      <td class="code">2223</td>
+      <td>2025-10-22</td>
+      <td>2026-05-25</td>
+      <td>OR-20260525-25AL</td>
+      <td class="money">725.00</td>
+      <td>45194</td>
+      <td>2025-10-22</td>
+      <td class="zero">0.00</td>
+      <td>CARIGARA</td>
+      <td>Capoocan</td>
+      <td>Visares</td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:10 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>Garciano, Raul</td>
+      <td class="code">184</td>
+      <td>2021-02-21</td>
+      <td>2026-06-05</td>
+      <td>OR-20260616-9R7A</td>
+      <td class="money">23,500.00</td>
+      <td>17943</td>
+      <td>2021-02-21</td>
+      <td class="zero">0.00</td>
+      <td>CARIGARA</td>
+      <td>Capoocan</td>
+      <td>Lemon</td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:10 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>Arbilon, Ma. Tamara</td>
+      <td class="code">828</td>
+      <td>2025-09-23</td>
+      <td>2026-06-06</td>
+      <td>OR-20260616-6MQU</td>
+      <td class="money">50,100.00</td>
+      <td>42239</td>
+      <td>2025-09-23</td>
+      <td class="zero">0.00</td>
+      <td>ORMOC </td>
+      <td>Ormoc </td>
+      <td>Larrazabal </td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:10 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>CUENCO, JESSICA</td>
+      <td class="code">3968</td>
+      <td>2026-03-18</td>
+      <td>2026-06-06</td>
+      <td>OR-20260615-7XM1</td>
+      <td class="money">180.00</td>
+      <td>47460</td>
+      <td>2026-03-18</td>
+      <td class="zero">0.00</td>
+      <td>San Isidro </td>
+      <td>Tabango</td>
+      <td>Campokpok</td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:13 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>Mabute, Marites</td>
+      <td class="code">2375</td>
+      <td>2022-02-05</td>
+      <td>2026-06-06</td>
+      <td>OR-20260608-Q7UY</td>
+      <td class="money">200.00</td>
+      <td>23367</td>
+      <td>2022-02-05</td>
+      <td class="zero">0.00</td>
+      <td>PALOMPON</td>
+      <td>Ormoc</td>
+      <td>Cagbuhangin </td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:10 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>Limosnero, Nenita</td>
+      <td class="code">194</td>
+      <td>2024-09-02</td>
+      <td>2026-06-09</td>
+      <td>OR-20260609-HNI2</td>
+      <td class="money">61.00</td>
+      <td>37976</td>
+      <td>2024-09-02</td>
+      <td class="zero">0.00</td>
+      <td>PALOMPON</td>
+      <td>Merida </td>
+      <td>Lamanoc</td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:10 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>Refugio, Annabelle</td>
+      <td class="code">591</td>
+      <td>2019-09-01</td>
+      <td>2026-06-12</td>
+      <td>OR-20260612-5SY8</td>
+      <td class="money">150.00</td>
+      <td>11822</td>
+      <td>2019-09-01</td>
+      <td class="zero">0.00</td>
+      <td>BAYBAY</td>
+      <td>Baybay</td>
+      <td>Baybay</td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:10 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>Epid, Elvie</td>
+      <td class="code">3346</td>
+      <td>2025-11-16</td>
+      <td>2026-06-13</td>
+      <td>OR-20260613-058Z</td>
+      <td class="money">900.00</td>
+      <td>45576</td>
+      <td>2025-11-16</td>
+      <td class="zero">0.00</td>
+      <td>ORMOC</td>
+      <td>Ormoc</td>
+      <td>Owak</td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:10 PM</td>
+    </tr>
+  
+
+    <tr>
+      <td>GASPAN, REGIE</td>
+      <td class="code">3773</td>
+      <td>2026-02-23</td>
+      <td>2026-06-13</td>
+      <td>OR-20260613-45PJ</td>
+      <td class="money">100.00</td>
+      <td>46995</td>
+      <td>2026-02-23</td>
+      <td class="zero">0.00</td>
+      <td>Isabel </td>
+      <td>Villaba </td>
+      <td>Tagbubunga </td>
+      <td>Codex JCASH Sync</td>
+      <td>2026-06-16 02:13 PM</td>
+    </tr>
+  </tbody>
+    </table>
+  </main>
+</body>
+</html>

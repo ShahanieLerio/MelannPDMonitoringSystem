@@ -1,0 +1,11 @@
+code,borrowerName,localLoanId,sourceLoanId,localDateRelease,jcashDateRelease,releaseDiffDays,localMaturity,jcashMaturity,maturityDiffDays,localStatusBefore,jcashStatus,localRunningBefore,jcashRunningBalance,localPaymentCountBefore,jcashPaymentCount,missingPaymentCount,sameDatePaymentDiffCount,jcashPaymentTotal,jcashTotalPaymentField
+"2094","Grana, Ruben","wgc5w9l","46852","2025-12-30","2025-12-30","0","2026-02-14","2026-02-14","0","Paid","Full Paid","0","0","53","53","0","0","5760","5760"
+"2822","Desmonte, Jessa","zow4i26","46356","2025-11-20","2025-11-20","0","2026-01-05","2026-01-05","0","Paid","Full Paid","0","0","15","15","0","0","2070","2070"
+"3323","Lumen, Wilson","fvucu8x","39415","2024-09-02","2024-09-02","0","2024-10-27","2024-10-27","0","Paid","Full Paid","0","0","91","91","0","1","6242","6242"
+"3474","Godmaling, Teresita","qtu419c","45561","2025-09-30","2025-09-30","0","2025-12-01","2025-12-01","0","Paid","Full Paid","0","0","23","23","0","0","2415","2415"
+"3613","Regino, Noralyn","lele38u","46298","2025-11-15","2025-11-15","0","2025-12-31","2025-12-31","0","Paid","Full Paid","0","0","39","39","0","0","8050","8050"
+"3668","Giray, Danelyn","6niis1m","46856","2025-12-30","2025-12-30","0","2026-02-14","2026-02-14","0","Paid","Full Paid","0","0","18","18","0","0","5016","5016"
+"3672","Laurio, Raquel","74z8dz9","46809","2025-12-23","2025-12-23","0","2026-02-07","2026-02-07","0","Paid","Full Paid","0","0","34","34","0","0","3450","3450"
+"3925","Inot, Virginia","dy3dpdg","47488","2025-06-10","2025-06-10","0","2025-07-26","2025-07-26","0","Paid","Full Paid","0","0","50","50","0","0","9200","9200"
+"3967","Pacol, Gemma","9g3lme3","47514","2025-10-14","2025-10-14","0","2025-11-29","2025-11-29","0","Paid","Full Paid","0","0","24","24","0","0","8050","8050"
+"859","Perina, Thelma","n7oxpv7","12742","2019-09-12","2019-09-12","0","2019-10-27","2019-10-27","0","Paid","Full Paid","0","0","98","98","0","1","4796","4796"

@@ -2,7 +2,8 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { store } from '../services/dataStore.ts';
-import { Loan, Branch, User, UserRole, MovingStatus, LocationStatus, PriorityLevel } from '../types.ts';
+import { ACTIVE_PORTFOLIO_MATURITY_END, ACTIVE_PORTFOLIO_MATURITY_START, isLoanMaturityInActivePortfolioRange } from '../services/loanUtils.ts';
+import { Loan, Branch, User, UserRole, MovingStatus, LocationStatus, PriorityLevel, isAllBranchRole } from '../types.ts';
 import { formatReportedMonth } from '../constants.tsx';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
@@ -177,7 +178,7 @@ const BulkImportModal: React.FC<BulkImportModalProps> = ({ currentUser, onClose,
                     const rowBranch = (val('Assigned Branch') || (selectedBranch !== Branch.ALL ? selectedBranch : '')) as Branch;
 
                     // 1. Branch Restriction
-                    if (currentUser.role !== UserRole.SUPER_ADMIN && rowBranch !== currentUser.branch) {
+                    if (!isAllBranchRole(currentUser.role) && rowBranch !== currentUser.branch) {
                         errors.push(`Unauthorized branch: ${rowBranch || 'No Branch Specified'}`);
                     }
                     if (selectedBranch !== Branch.ALL && rowBranch && rowBranch !== selectedBranch) {
@@ -259,6 +260,9 @@ const BulkImportModal: React.FC<BulkImportModalProps> = ({ currentUser, onClose,
                     if (!lastName || lastName === 'undefined') errors.push(`Missing: Last Name`);
                     if (!reportedDate) errors.push(`Missing: Reported Month`);
                     if (!dueDate) errors.push(`Missing: Due Date`);
+                    if (dueDate && !isLoanMaturityInActivePortfolioRange(dueDate)) {
+                        errors.push(`Maturity Date must be from ${ACTIVE_PORTFOLIO_MATURITY_START} to ${ACTIVE_PORTFOLIO_MATURITY_END}`);
+                    }
                     if (!outstandingValue && outstanding === 0) errors.push(`Missing: O/S Balance`);
                     if (!val('area')) errors.push(`Missing: Area`);
                     if (!val('city')) errors.push(`Missing: City`);

@@ -2,204 +2,132 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import Collectors from './Collectors';
 import { store } from '../services/dataStore';
-import { UserRole, Branch } from '../types';
+import { Branch } from '../types';
 
 vi.mock('../services/dataStore', () => ({
-    store: {
-        getCollectors: vi.fn(),
-        addCollector: vi.fn(),
-        updateCollector: vi.fn(),
-        deleteCollector: vi.fn(),
-        subscribe: vi.fn()
-    }
+  store: {
+    getCollectors: vi.fn(),
+    addCollector: vi.fn(),
+    updateCollector: vi.fn(),
+    deleteCollector: vi.fn(),
+    subscribe: vi.fn()
+  }
 }));
 
 describe('Collectors', () => {
-    const defaultProps = {
-        userRole: UserRole.SUPER_ADMIN,
-        userBranch: Branch.NAVAL
-    };
+  beforeEach(() => {
+    vi.clearAllMocks();
 
-    beforeEach(() => {
-        vi.clearAllMocks();
+    (store.getCollectors as any).mockReturnValue([
+      {
+        id: 'c1',
+        name: 'John Doe',
+        nickname: 'JOHN',
+        address: '123 Main St',
+        assignedSupervisor: 'Supervisor A',
+        branch: Branch.NAVAL
+      },
+      {
+        id: 'c2',
+        name: 'Jane Smith',
+        nickname: 'JANE',
+        address: '456 Oak Ave',
+        branch: Branch.ORMOC
+      }
+    ]);
 
-        (store.getCollectors as any).mockReturnValue([
-            {
-                id: 'c1',
-                name: 'John Doe',
-                nickname: 'JOHN',
-                address: '123 Main St',
-                branch: Branch.NAVAL
-            },
-            {
-                id: 'c2',
-                name: 'Jane Smith',
-                nickname: 'JANE',
-                address: '456 Oak Ave',
-                branch: Branch.ORMOC
-            }
-        ]);
+    (store.subscribe as any).mockReturnValue(() => {});
+  });
 
-        (store.subscribe as any).mockImplementation((callback: () => void) => {
-            return () => { };
-        });
+  it('renders personnel records for the selected branch view', () => {
+    render(<Collectors selectedBranch={Branch.ALL} />);
+
+    expect(screen.getByText('Personnel Management')).toBeInTheDocument();
+    expect(screen.getByText('John Doe')).toBeInTheDocument();
+    expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    expect(screen.getByText('@JOHN')).toBeInTheDocument();
+    expect(screen.getByText('Supervisor A')).toBeInTheDocument();
+    expect(screen.getByText('123 Main St')).toBeInTheDocument();
+    expect(store.getCollectors).toHaveBeenCalledWith(Branch.ALL);
+  });
+
+  it('subscribes to store updates', () => {
+    render(<Collectors selectedBranch={Branch.NAVAL} />);
+
+    expect(store.subscribe).toHaveBeenCalled();
+  });
+
+  it('adds a new personnel record', async () => {
+    render(<Collectors selectedBranch={Branch.NAVAL} />);
+
+    fireEvent.click(screen.getByText(/add personnel/i));
+    fireEvent.change(screen.getByPlaceholderText(/john doe/i), { target: { value: 'New Collector' } });
+    fireEvent.change(screen.getByPlaceholderText(/aldie/i), { target: { value: 'NEW' } });
+    fireEvent.change(screen.getByPlaceholderText(/branch supervisor/i), { target: { value: 'Supervisor B' } });
+    fireEvent.change(screen.getByPlaceholderText(/specified branch/i), { target: { value: '789 Pine St' } });
+    fireEvent.click(screen.getByText(/verify & save/i));
+
+    await waitFor(() => {
+      expect(store.addCollector).toHaveBeenCalledWith(
+        'New Collector',
+        Branch.NAVAL,
+        '789 Pine St',
+        'NEW',
+        '',
+        'Supervisor B'
+      );
     });
+  });
 
-    it('should render collectors list', () => {
-        render(<Collectors {...defaultProps} />);
+  it('updates an existing personnel record', async () => {
+    render(<Collectors selectedBranch={Branch.NAVAL} />);
 
-        expect(screen.getByText('John Doe')).toBeInTheDocument();
-        expect(screen.getByText('Jane Smith')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button')[1]);
+    fireEvent.change(screen.getByDisplayValue('John Doe'), { target: { value: 'John Updated' } });
+    fireEvent.click(screen.getByText(/verify & save/i));
+
+    await waitFor(() => {
+      expect(store.updateCollector).toHaveBeenCalledWith(
+        'c1',
+        'John Updated',
+        Branch.NAVAL,
+        '123 Main St',
+        'JOHN',
+        '',
+        'Supervisor A'
+      );
     });
+  });
 
-    it('should display collector details', () => {
-        render(<Collectors {...defaultProps} />);
+  it('confirms before deleting a personnel record', async () => {
+    render(<Collectors selectedBranch={Branch.NAVAL} />);
 
-        expect(screen.getByText('JOHN')).toBeInTheDocument();
-        expect(screen.getByText('123 Main St')).toBeInTheDocument();
-        expect(screen.getByText(/Naval Branch/i)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button')[2]);
+    expect(screen.getByText(/are you sure/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^yes$/i));
+
+    await waitFor(() => {
+      expect(store.deleteCollector).toHaveBeenCalledWith('c1');
     });
+  });
 
-    it('should open add collector modal', () => {
-        render(<Collectors {...defaultProps} />);
+  it('uses NAVAL as the fallback branch when adding from all branches', async () => {
+    render(<Collectors selectedBranch={Branch.ALL} />);
 
-        const addButton = screen.getByText(/add collector/i);
-        fireEvent.click(addButton);
+    fireEvent.click(screen.getByText(/add personnel/i));
+    fireEvent.change(screen.getByPlaceholderText(/john doe/i), { target: { value: 'All Branch Entry' } });
+    fireEvent.click(screen.getByText(/verify & save/i));
 
-        expect(screen.getByText(/new collector/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(store.addCollector).toHaveBeenCalledWith('All Branch Entry', Branch.NAVAL, '', '', '', '');
     });
+  });
 
-    it('should add a new collector', async () => {
-        render(<Collectors {...defaultProps} />);
+  it('shows an empty state when there are no personnel records', () => {
+    (store.getCollectors as any).mockReturnValue([]);
 
-        const addButton = screen.getByText(/add collector/i);
-        fireEvent.click(addButton);
+    render(<Collectors selectedBranch={Branch.NAVAL} />);
 
-        const nameInput = screen.getByPlaceholderText(/collector name/i);
-        const nicknameInput = screen.getByPlaceholderText(/nickname/i);
-        const addressInput = screen.getByPlaceholderText(/address/i);
-
-        fireEvent.change(nameInput, { target: { value: 'New Collector' } });
-        fireEvent.change(nicknameInput, { target: { value: 'NEW' } });
-        fireEvent.change(addressInput, { target: { value: '789 Pine St' } });
-
-        const saveButton = screen.getByText(/save/i);
-        fireEvent.click(saveButton);
-
-        await waitFor(() => {
-            expect(store.addCollector).toHaveBeenCalledWith(
-                'New Collector',
-                expect.any(String),
-                '789 Pine St',
-                'NEW'
-            );
-        });
-    });
-
-    it('should open edit collector modal', () => {
-        render(<Collectors {...defaultProps} />);
-
-        const editButtons = screen.getAllByText(/edit/i);
-        fireEvent.click(editButtons[0]);
-
-        expect(screen.getByDisplayValue('John Doe')).toBeInTheDocument();
-    });
-
-    it('should update a collector', async () => {
-        render(<Collectors {...defaultProps} />);
-
-        const editButtons = screen.getAllByText(/edit/i);
-        fireEvent.click(editButtons[0]);
-
-        const nameInput = screen.getByDisplayValue('John Doe');
-        fireEvent.change(nameInput, { target: { value: 'John Updated' } });
-
-        const saveButton = screen.getByText(/save/i);
-        fireEvent.click(saveButton);
-
-        await waitFor(() => {
-            expect(store.updateCollector).toHaveBeenCalledWith(
-                'c1',
-                'John Updated',
-                expect.any(String),
-                expect.any(String),
-                expect.any(String)
-            );
-        });
-    });
-
-    it('should show confirmation before deleting', () => {
-        render(<Collectors {...defaultProps} />);
-
-        const deleteButtons = screen.getAllByText(/delete/i);
-        fireEvent.click(deleteButtons[0]);
-
-        expect(screen.getByText(/are you sure/i)).toBeInTheDocument();
-    });
-
-    it('should delete a collector after confirmation', async () => {
-        render(<Collectors {...defaultProps} />);
-
-        const deleteButtons = screen.getAllByText(/delete/i);
-        fireEvent.click(deleteButtons[0]);
-
-        const confirmButton = screen.getByText(/yes/i);
-        fireEvent.click(confirmButton);
-
-        await waitFor(() => {
-            expect(store.deleteCollector).toHaveBeenCalledWith('c1');
-        });
-    });
-
-    it('should filter collectors by branch for branch users', () => {
-        render(<Collectors {...defaultProps} userRole={UserRole.NAVAL_USER} />);
-
-        expect(store.getCollectors).toHaveBeenCalledWith(Branch.NAVAL);
-    });
-
-    it('should show all collectors for SUPER_ADMIN', () => {
-        render(<Collectors {...defaultProps} />);
-
-        expect(store.getCollectors).toHaveBeenCalledWith(undefined);
-    });
-
-    it('should validate required fields', async () => {
-        render(<Collectors {...defaultProps} />);
-
-        const addButton = screen.getByText(/add collector/i);
-        fireEvent.click(addButton);
-
-        const saveButton = screen.getByText(/save/i);
-        fireEvent.click(saveButton);
-
-        await waitFor(() => {
-            expect(screen.getByText(/name is required/i)).toBeInTheDocument();
-        });
-    });
-
-    it('should close modal on cancel', () => {
-        render(<Collectors {...defaultProps} />);
-
-        const addButton = screen.getByText(/add collector/i);
-        fireEvent.click(addButton);
-
-        const cancelButton = screen.getByText(/cancel/i);
-        fireEvent.click(cancelButton);
-
-        expect(screen.queryByText(/new collector/i)).not.toBeInTheDocument();
-    });
-
-    it('should display empty state when no collectors', () => {
-        (store.getCollectors as any).mockReturnValue([]);
-
-        render(<Collectors {...defaultProps} />);
-
-        expect(screen.getByText(/no collectors found/i)).toBeInTheDocument();
-    });
-
-    it('should subscribe to data updates', () => {
-        render(<Collectors {...defaultProps} />);
-
-        expect(store.subscribe).toHaveBeenCalled();
-    });
+    expect(screen.getByText(/no field personnel records/i)).toBeInTheDocument();
+  });
 });

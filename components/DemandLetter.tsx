@@ -1,8 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { store } from '../services/dataStore.ts';
 import { DemandLetter, DemandLetterType, DemandLetterStatus, PriorityLevel, Branch, User } from '../types.ts';
 import { formatMMDDYYYY } from '../constants.tsx';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
+import { hasActiveClientBalance, isDeadWriteOffLoan } from '../services/loanUtils.ts';
+import { extractActiveClientAccountFromFile } from '../services/geminiService.ts';
+import { buildPenaltyPeriodsFromPayments, computePenaltySchedule, countMonthsFromPeriodLabel, PenaltyPeriodInput, PenaltySchedule } from '../services/penaltyComputation.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
 import SuccessModal from './SuccessModal.tsx';
 
@@ -17,11 +20,13 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
     const [filterCollector, setFilterCollector] = useState('');
     const [filterType, setFilterType] = useState<DemandLetterType | 'For Legal Action'>(DemandLetterType.FIRST);
     const [filterStatus, setFilterStatus] = useState('');
+    const [filterCourrier, setFilterCourrier] = useState('');
 
     const [sortColumn, setSortColumn] = useState<string>('');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isActiveClientModalOpen, setIsActiveClientModalOpen] = useState(false);
     const [editingDL, setEditingDL] = useState<DemandLetter | null>(null);
     const [visitingDL, setVisitingDL] = useState<any | null>(null);
     const [receivingDL, setReceivingDL] = useState<any | null>(null);
@@ -124,7 +129,7 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                 daysSinceLastAction,
                 autoEscalationStatus
             };
-        });
+        }).filter(dl => !dl.loan || hasActiveClientBalance(dl.loan));
     }, [demandLetters, loans]);
 
     const filteredDLs = useMemo(() => {
@@ -141,10 +146,11 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
 
             const activeStatus = dl.autoEscalationStatus || dl.status;
             const matchStatus = filterStatus === '' || activeStatus === filterStatus;
+            const matchCourrier = filterCourrier === '' || dl.courrier === filterCourrier;
             
-            return matchSearch && matchCollector && matchType && matchStatus;
+            return matchSearch && matchCollector && matchType && matchStatus && matchCourrier;
         });
-    }, [augmentedDLs, searchTerm, filterCollector, filterType, filterStatus, collectorDirectory]);
+    }, [augmentedDLs, searchTerm, filterCollector, filterType, filterStatus, filterCourrier, collectorDirectory]);
 
     const sortedDLs = useMemo(() => {
         if (!sortColumn) return filteredDLs;
@@ -268,74 +274,95 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                         Tracking for: <span className="font-semibold text-slate-700 dark:text-slate-200">{selectedBranch}</span>
                     </p>
                 </div>
-                <button
-                    onClick={handleOpenAddModal}
-                    className="bg-[#064e3b] hover:bg-[#043326] text-white px-5 py-2.5 rounded-xl font-medium text-sm flex items-center gap-2 shadow-sm transition-all duration-300 active:scale-95"
-                >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-                    New Legal Action
-                </button>
-            </div>
-
-            <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-3xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300">
-                <div className="flex flex-col md:flex-row gap-4 items-end">
-                    <div className="relative flex-1 w-full">
-                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-1">Search Profile</label>
-                        <svg className="w-4 h-4 text-slate-400 absolute left-4 top-[2.2rem]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                        <input
-                            type="text"
-                            placeholder="Enter account holder name..."
-                            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-[#064e3b] focus:border-[#064e3b] text-sm font-medium text-slate-800 dark:text-white transition-colors duration-300 outline-none"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                    <div className="w-full md:w-56">
-                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-1">Collector</label>
-                        <select className="w-full text-sm bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 py-2.5 px-4 rounded-lg font-medium appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300 outline-none" value={filterCollector} onChange={e => setFilterCollector(e.target.value)}>
-                            <option value="">All Personnel</option>
-                            {collectors.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                    </div>
-                    <div className="w-full md:w-56">
-                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 px-1">Case Status</label>
-                        <select className="w-full text-sm bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-700 py-2.5 px-4 rounded-lg font-medium appearance-none cursor-pointer text-slate-800 dark:text-slate-300 transition-colors duration-300 outline-none" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-                            <option value="">All Statuses</option>
-                            {Object.values(DemandLetterStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                    </div>
-                    <button className="w-full md:w-auto bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-8 py-2.5 rounded-lg text-sm font-semibold transition-colors duration-200">
-                        Apply
+                <div className="flex flex-wrap justify-end gap-3">
+                    <button
+                        onClick={() => setIsActiveClientModalOpen(true)}
+                        className="bg-white dark:bg-slate-800 text-[#064e3b] dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-slate-700 px-5 py-2.5 rounded-xl font-medium text-sm flex items-center gap-2 shadow-sm transition-all duration-300 active:scale-95"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path></svg>
+                        Active Client Demand
+                    </button>
+                    <button
+                        onClick={handleOpenAddModal}
+                        className="bg-[#064e3b] hover:bg-[#043326] text-white px-5 py-2.5 rounded-xl font-medium text-sm flex items-center gap-2 shadow-sm transition-all duration-300 active:scale-95"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                        New Legal Action
                     </button>
                 </div>
             </div>
 
-            <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 overflow-hidden transition-colors duration-300">
-                <div className="flex px-6 pt-6 pb-0 border-b border-slate-100 dark:border-slate-700/50 gap-4 overflow-x-auto scrollbar-hide">
-                    {[...Object.values(DemandLetterType), 'For Legal Action'].map((type) => {
-                        const tabLabel = type === 'For Legal Action' ? 'Litigation' : type === DemandLetterType.THIRD ? 'Final Notice' : type;
-                        return (
-                            <button
-                                key={type}
-                                onClick={() => setFilterType(type as any)}
-                                className={`py-2.5 px-6 rounded-t-xl text-[14px] font-semibold transition-all whitespace-nowrap -mb-[1px] ${
-                                    filterType === type 
-                                    ? 'bg-[#064e3b] text-white shadow-sm' 
-                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50'
-                                }`}
-                            >
-                                {tabLabel}
-                            </button>
-                        );
-                    })}
-                </div>
+            <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-xl shadow-slate-200/40 dark:shadow-none border border-slate-200/60 dark:border-slate-700/60 overflow-hidden transition-colors duration-300">
+                {/* Unified Header: Tabs and Compact Filters */}
+                <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center px-6 pt-5 pb-5 xl:pb-0 border-b border-slate-200/60 dark:border-slate-700/60 gap-5 bg-slate-50/50 dark:bg-slate-900/50">
+                    {/* Tabs */}
+                    <div className="flex gap-2 overflow-x-auto scrollbar-hide w-full xl:w-auto pb-1 xl:pb-0 xl:self-end">
+                        {[...Object.values(DemandLetterType), 'For Legal Action'].map((type) => {
+                            const tabLabel = type === 'For Legal Action' ? 'Litigation' : type === DemandLetterType.THIRD ? 'Final Notice' : type;
+                            return (
+                                <button
+                                    key={type}
+                                    onClick={() => setFilterType(type as any)}
+                                    className={`py-3 px-6 rounded-t-2xl text-[13px] font-bold transition-all whitespace-nowrap -mb-[1px] border-t-2 border-x-2 ${
+                                        filterType === type 
+                                        ? 'bg-white dark:bg-slate-800 text-[#064e3b] dark:text-emerald-400 border-slate-200/60 dark:border-slate-700/60 border-b-white dark:border-b-slate-800' 
+                                        : 'bg-transparent text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                                    }`}
+                                    style={{ zIndex: filterType === type ? 10 : 1, position: 'relative' }}
+                                >
+                                    {tabLabel}
+                                </button>
+                            );
+                        })}
+                    </div>
 
+                    {/* Compact Filters */}
+                    <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto xl:pb-4">
+                        <div className="relative flex-grow sm:flex-grow-0">
+                            <svg className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            <input
+                                type="text"
+                                placeholder="Search client..."
+                                className="w-full sm:w-48 pl-9 pr-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+                        <select className="flex-grow sm:flex-grow-0 w-full sm:w-32 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 py-2 px-3 rounded-xl font-semibold outline-none text-slate-700 dark:text-slate-300 appearance-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm cursor-pointer" value={filterCollector} onChange={e => setFilterCollector(e.target.value)}>
+                            <option value="">All Collectors</option>
+                            {collectors.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <select className="flex-grow sm:flex-grow-0 w-full sm:w-32 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 py-2 px-3 rounded-xl font-semibold outline-none text-slate-700 dark:text-slate-300 appearance-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm cursor-pointer" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                            <option value="">All Status</option>
+                            {Object.values(DemandLetterStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <select className="flex-grow sm:flex-grow-0 w-full sm:w-32 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 py-2 px-3 rounded-xl font-semibold outline-none text-slate-700 dark:text-slate-300 appearance-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm cursor-pointer" value={filterCourrier} onChange={e => setFilterCourrier(e.target.value)}>
+                            <option value="">All Courriers</option>
+                            <option value="Mailed">Mailed</option>
+                            <option value="Personal Service">Personal Service</option>
+                        </select>
+                        <button
+                            type="button"
+                            onClick={() => { setSortColumn(''); setSortDirection('desc'); }}
+                            disabled={!sortColumn && sortDirection === 'desc'}
+                            className={`p-2 rounded-xl transition-all shadow-sm border ${
+                                (sortColumn || sortDirection !== 'desc')
+                                    ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-500/10 dark:text-rose-400 border-rose-200 dark:border-rose-900/50'
+                                    : 'bg-slate-50 text-slate-400 cursor-not-allowed dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'
+                            }`}
+                            title="Clear Sort"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                </div>
                 <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 px-2 pb-2">
                     <table className="w-full text-sm text-left border-collapse table-auto">
                         <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider transition-colors duration-300 border-b-2 border-slate-200 dark:border-slate-600 shadow-[0_2px_4px_-1px_rgba(0,0,0,0.06)]">
                             <tr>
-                                <th className="px-5 py-4">Collector</th>
-                                <th className="px-5 py-4">Borrower Identity</th>
+                                <th className="px-5 py-4 min-w-[150px]">Courrier</th>
+                                <th className="px-5 py-4 min-w-[190px]">Collector</th>
+                                <th className="px-5 py-4 min-w-[240px]">Borrower Identity</th>
                                 <th className="px-5 py-4 cursor-pointer group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors" onClick={() => handleSort('datePrepared')}>
                                     Prepared <SortIcon column="datePrepared" />
                                 </th>
@@ -353,7 +380,7 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                         <tbody className="divide-y divide-slate-50 dark:divide-slate-700/50 transition-colors duration-300">
                             {sortedDLs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={8} className="py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px]">No legal records found in this branch.</td>
+                                    <td colSpan={9} className="py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px]">No legal records found in this branch.</td>
                                 </tr>
                             ) : sortedDLs.map((dl) => {
                                 const todayStr = new Date().toISOString().split('T')[0];
@@ -410,6 +437,13 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
 
                                 return (
                                     <tr key={dl.id} className="group hover:bg-slate-50/70 dark:hover:bg-slate-800/80 transition-all duration-200">
+                                        <td className="px-5 py-4 text-slate-700 dark:text-slate-300 font-bold text-sm transition-colors duration-300 whitespace-nowrap">
+                                            {dl.courrier ? (
+                                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${dl.courrier === 'Mailed' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-800' : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border border-purple-200 dark:border-purple-800'}`}>
+                                                    {dl.courrier}
+                                                </span>
+                                            ) : '-'}
+                                        </td>
                                         <td className="px-5 py-4 text-slate-500 dark:text-slate-400 font-medium text-sm transition-colors duration-300 truncate max-w-[100px]">
                                             <div className="flex items-center gap-2">
                                                 <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-500 dark:text-slate-400">
@@ -565,6 +599,12 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                     selectedBranch={selectedBranch}
                     onClose={() => { setIsModalOpen(false); refreshData(); setInitialData(undefined); }}
                     onSuccess={(msg) => setSuccessMessage(msg)}
+                />
+            )}
+            {isActiveClientModalOpen && (
+                <ActiveClientDemandModal
+                    selectedBranch={selectedBranch}
+                    onClose={() => setIsActiveClientModalOpen(false)}
                 />
             )}
             <SuccessModal
@@ -724,7 +764,11 @@ interface DemandLetterModalProps {
 }
 
 const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, currentUser, selectedBranch, onClose, onSuccess }) => {
-    const loans = store.getLoans(selectedBranch);
+    const loans = useMemo(() => {
+        const allLoans = store.getLoans(selectedBranch);
+        return allLoans.filter(l => hasActiveClientBalance(l) && !isDeadWriteOffLoan(l));
+    }, [selectedBranch]);
+
     const [formData, setFormData] = useState<Partial<DemandLetter>>(dl || initialData || {
         collectorName: '',
         loanId: '',
@@ -736,7 +780,28 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
         branch: selectedBranch !== 'All Branches' ? selectedBranch : undefined as any
     });
 
-    const [penaltyData, setPenaltyData] = useState<{ penalty: number, newBalance: number, history: any[] } | null>(null);
+    const [penaltyData, setPenaltyData] = useState<PenaltySchedule | null>(null);
+
+    const [clientSearchQuery, setClientSearchQuery] = useState('');
+    const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
+    const clientSearchRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (clientSearchRef.current && !clientSearchRef.current.contains(e.target as Node)) {
+                setIsClientDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    useEffect(() => {
+        if (formData.loanId) {
+            const loan = loans.find(l => l.id === formData.loanId);
+            if (loan) setClientSearchQuery(`[${loan.code}] ${loan.borrowerName}`);
+        }
+    }, [formData.loanId, loans]);
 
     // Auto-compute follow-up date based on date received and legal stage
     useEffect(() => {
@@ -771,11 +836,12 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
         if (!loan || !loan.dueDate) return;
 
         const dueDate = new Date(loan.dueDate);
-        const now = new Date();
+        const preparedDate = formData.datePrepared || new Date().toISOString().split('T')[0];
+        const cutoffDate = new Date(`${preparedDate}T00:00:00`);
 
         // If today is before due date, no penalty
-        if (now <= dueDate) {
-            setPenaltyData({ penalty: 0, newBalance: loan.runningBalance });
+        if (cutoffDate <= dueDate) {
+            setPenaltyData(computePenaltySchedule(loan.runningBalance, []));
             return;
         }
 
@@ -790,69 +856,14 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
             currentBal -= p.amount;
         }
         if (currentBal <= 0) {
-            setPenaltyData({ penalty: 0, newBalance: 0 });
+            setPenaltyData(computePenaltySchedule(0, []));
             return;
         }
 
-        // 2. Loop month-by-month
-        let loopDate = new Date(dueDate.getFullYear(), dueDate.getMonth(), 1); 
-        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const periods = buildPenaltyPeriodsFromPayments(loan.dueDate, preparedDate, sortedPayments);
+        setPenaltyData(computePenaltySchedule(currentBal, periods));
 
-        let totalPenaltyCalculated = 0;
-        const history: any[] = [];
-
-        while (loopDate <= currentMonthStart) {
-            const year = loopDate.getFullYear();
-            const month = loopDate.getMonth();
-            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-            const monthStr = `${monthNames[month]} ${year}`;
-
-            let monthPayments = 0;
-            if (year === dueDate.getFullYear() && month === dueDate.getMonth()) {
-                // First month: payments AFTER due date up to end of calendar month
-                monthPayments = sortedPayments.filter(p => {
-                    const d = new Date(p.date);
-                    return d > dueDate && d.getFullYear() === year && d.getMonth() === month;
-                }).reduce((sum, p) => sum + p.amount, 0);
-            } else {
-                // Subsequent months: all payments in the month
-                monthPayments = sortedPayments.filter(p => {
-                    const d = new Date(p.date);
-                    return d.getFullYear() === year && d.getMonth() === month;
-                }).reduce((sum, p) => sum + p.amount, 0);
-            }
-
-            const beginningBalance = currentBal;
-            currentBal -= monthPayments;
-            if (currentBal < 0) currentBal = 0;
-
-            let penalty = 0;
-            if (currentBal > 0) {
-                penalty = currentBal * 0.05;
-                totalPenaltyCalculated += penalty;
-                currentBal += penalty;
-            }
-
-            history.push({
-                month: monthStr,
-                beginningBalance: beginningBalance,
-                paymentsMade: monthPayments,
-                penaltyRate: '5%',
-                penaltyAmount: penalty,
-                endingBalance: currentBal
-            });
-
-            // Advance one month
-            loopDate.setMonth(loopDate.getMonth() + 1);
-        }
-
-        setPenaltyData({
-            penalty: totalPenaltyCalculated,
-            newBalance: currentBal,
-            history
-        });
-
-    }, [formData.loanId, loans]);
+    }, [formData.loanId, formData.datePrepared, loans]);
 
     const handlePrintPenalty = () => {
         if (!penaltyData || !formData.loanId) return;
@@ -863,14 +874,20 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
         iframe.style.display = 'none';
         document.body.appendChild(iframe);
 
-        const tableRows = penaltyData.history.map((step: any) => `
+        const peso = '&#8369;';
+        const formatMoney = (amount: number) => amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const formatPeso = (amount: number) => `${peso}${formatMoney(amount)}`;
+        const formatPayment = (amount: number) => amount > 0 ? `-${peso}${formatMoney(amount)}` : `${peso}0.00`;
+
+        const tableRows = penaltyData.rows.map((step) => `
             <tr>
-                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; border-left: none;">${step.month}</td>
-                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right;">₱${step.beginningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right; color: #166534;">${step.paymentsMade > 0 ? '-₱' + step.paymentsMade.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}</td>
-                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: center;">${step.penaltyRate}</td>
-                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right; color: #9f1239;">₱${step.penaltyAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; border-right: none; text-align: right; font-weight: bold;">₱${step.endingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; border-left: none;">${step.period}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatPeso(step.beginningOverdueBalance)}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right; color: #b91c1c;">${formatPayment(step.paymentsMade)}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatPeso(step.balanceUsedForPenaltyBase)}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: center;">${step.numberOfMonths}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; text-align: right; color: #9f1239;">${formatPeso(step.monthlyPenalty)}</td>
+                <td style="padding: 4px 8px; border: 1px solid #e2e8f0; border-right: none; text-align: right; font-weight: bold; color: #9f1239;">${formatPeso(step.penaltySubtotal)}</td>
             </tr>
         `).join('');
 
@@ -894,14 +911,16 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                     th:first-child { border-left: none; width: 22%; }
                     th:last-child { border-right: none; }
                     th:nth-child(n+2) { text-align: right; }
-                    th:nth-child(4) { text-align: center; width: 10%; }
+                    th:nth-child(5) { text-align: center; width: 9%; }
                     tbody tr:nth-child(even) { background: #f8fafc; }
+                    .method-note { margin: 10px 0; padding: 8px 10px; border: 1px solid #bbf7d0; background: #f0fdf4; color: #14532d; font-size: 11px; line-height: 1.4; }
+                    .method-note p { margin: 2px 0; }
                     .summary { margin-top: 15px; text-align: right; padding: 10px; background: #fffbe8; border: 1px solid #fef08a; border-radius: 4px; }
                     .summary p { margin: 2px 0; font-size: 12px; color: #475569; }
                     .summary h3 { margin: 5px 0 0 0; color: #9f1239; font-size: 16px; }
                     .summary span { font-weight: normal; font-size: 11px; color: #64748b; margin-right: 10px; }
                     
-                    @page { margin: 10mm; size: A4 portrait; }
+                    @page { margin: 0mm 10mm 10mm 10mm; size: A4 portrait; }
                     
                     @media print {
                         body { padding: 0; margin: 0; font-size: 11px; }
@@ -911,12 +930,13 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                         th { background: #f1f5f9 !important; }
                         .info-section { margin-bottom: 5px; }
                         h2 { margin-bottom: 2px; margin-top: 10px; }
-                        .header { margin-bottom: 5px; }
+                        .header { margin-top: 0; margin-bottom: 5px; padding-top: 0; }
                     }
                 </style>
             </head>
             <body>
                 <div class="header">
+                    <img src="/LetterHead.jpg" alt="Melann Letterhead" style="max-height: 120px; width: auto; margin-bottom: 10px; display: block; margin-left: auto; margin-right: auto;" />
                     <h1>Penalty Computation</h1>
                     <p>Demand Letter Attachment Reference</p>
                 </div>
@@ -928,22 +948,28 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                         <p><strong>Account / Code:</strong> <span>${loan.code}</span></p>
                     </div>
                     <div class="info-box">
-                        <p><strong>Current Balance:</strong> <span>₱${loan.runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+                        <p><strong>Current Balance:</strong> <span>${formatPeso(loan.runningBalance)}</span></p>
                         <p><strong>Due Date:</strong> <span>${formatMMDDYYYY(loan.dueDate)}</span></p>
                         <p><strong>Date Prepared:</strong> <span>${formData.datePrepared}</span></p>
                     </div>
+                </div>
+
+                <div class="method-note">
+                    <p><strong>Correct Method:</strong> Penalty is computed only on the unpaid overdue balance. Penalty is not added back to the balance for the next month. No compounding.</p>
+                    <p><strong>Formula used:</strong> Penalty = Unpaid Overdue Balance x 5% per month, simple and non-compounding.</p>
                 </div>
 
                 <h2>Detailed Computation Breakdown</h2>
                 <table>
                     <thead>
                         <tr>
-                            <th>Month</th>
-                            <th>Beginning Balance</th>
+                            <th>Period</th>
+                            <th>Beginning Overdue Balance</th>
                             <th>Payments Made</th>
-                            <th>Penalty Rate</th>
-                            <th>Penalty Amount</th>
-                            <th>Ending Balance</th>
+                            <th>Balance Used for Penalty Base</th>
+                            <th>No. of Months</th>
+                            <th>Monthly Penalty (5%)</th>
+                            <th>Penalty Subtotal</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -952,8 +978,10 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                 </table>
 
                 <div class="summary">
-                    <p>Total Penalty Accumulated: <strong>₱${penaltyData.penalty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
-                    <h3><span>Updated Total Balance:</span> ₱${penaltyData.newBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                    <p>Total Payments Made: <strong>${formatPeso(penaltyData.totalPayments)}</strong></p>
+                    <p>Remaining Overdue Balance: <strong>${formatPeso(penaltyData.remainingOverdueBalance)}</strong></p>
+                    <p>Total Penalty Accumulated: <strong>${formatPeso(penaltyData.totalPenaltyAccumulated)}</strong></p>
+                    <h3><span>Correct Updated Amount Due:</span> ${formatPeso(penaltyData.correctUpdatedAmountDue)}</h3>
                 </div>
             </body>
             </html>
@@ -1017,23 +1045,45 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
 
                 <form onSubmit={handleSubmit} className="p-10 space-y-8 max-h-[70vh] overflow-y-auto">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="md:col-span-2">
+                        <div className="md:col-span-2" ref={clientSearchRef}>
                             <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Select Client Profile</label>
-                            <select
-                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-black text-slate-800 dark:text-white appearance-none transition-all outline-none"
-                                value={formData.loanId}
-                                onChange={e => {
-                                    const loan = loans.find(l => l.id === e.target.value);
-                                    setFormData({ ...formData, loanId: e.target.value, borrowerName: loan ? loan.borrowerName : '', collectorName: loan ? getCollectorDisplayName(loan.collector, store.getCollectors(Branch.ALL)) : '', branch: loan?.branch || formData.branch });
-                                }}
-                                required
-                                disabled={!!dl}
-                            >
-                                <option value="">Lookup client by code or name...</option>
-                                {loans.map(l => (
-                                    <option key={l.id} value={l.id}>[{l.code}] {l.borrowerName}</option>
-                                ))}
-                            </select>
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-black text-slate-800 dark:text-white appearance-none transition-all outline-none"
+                                    placeholder="Lookup client by code or name..."
+                                    value={clientSearchQuery}
+                                    onChange={e => {
+                                        setClientSearchQuery(e.target.value);
+                                        setIsClientDropdownOpen(true);
+                                        if (e.target.value === '') setFormData({ ...formData, loanId: '', borrowerName: '', collectorName: '' });
+                                    }}
+                                    onFocus={() => setIsClientDropdownOpen(true)}
+                                    disabled={!!dl}
+                                    required={!formData.loanId}
+                                />
+                                {isClientDropdownOpen && !dl && (
+                                    <div className="absolute z-50 w-full mt-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl max-h-60 overflow-y-auto">
+                                        {loans.filter(l => `[${l.code}] ${l.borrowerName}`.toLowerCase().includes(clientSearchQuery.toLowerCase())).map(l => (
+                                            <div
+                                                key={l.id}
+                                                className="px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-200 border-b border-slate-100 dark:border-slate-700/50 last:border-0"
+                                                onClick={() => {
+                                                    setFormData({ ...formData, loanId: l.id, borrowerName: l.borrowerName, collectorName: getCollectorDisplayName(l.collector, store.getCollectors(Branch.ALL)), branch: l.branch });
+                                                    setClientSearchQuery(`[${l.code}] ${l.borrowerName}`);
+                                                    setIsClientDropdownOpen(false);
+                                                }}
+                                            >
+                                                <span className="text-emerald-600 dark:text-emerald-400 font-black mr-2">[{l.code}]</span>
+                                                {l.borrowerName}
+                                            </div>
+                                        ))}
+                                        {loans.filter(l => `[${l.code}] ${l.borrowerName}`.toLowerCase().includes(clientSearchQuery.toLowerCase())).length === 0 && (
+                                            <div className="px-5 py-4 text-sm font-semibold text-slate-500 text-center">No matching clients found</div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
                         <div>
@@ -1056,6 +1106,19 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                                 required
                             >
                                 {Object.values(DemandLetterType).map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1 transition-colors duration-300">Courrier</label>
+                            <select
+                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-black text-slate-800 dark:text-white appearance-none outline-none transition-colors duration-300"
+                                value={formData.courrier || ''}
+                                onChange={e => setFormData({ ...formData, courrier: e.target.value as any })}
+                            >
+                                <option value="">Select Courrier...</option>
+                                <option value="Mailed">Mailed</option>
+                                <option value="Personal Service">Personal Service</option>
                             </select>
                         </div>
 
@@ -1114,7 +1177,7 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                             Penalty Calculation
                                         </h4>
-                                        <p className="text-rose-600/80 dark:text-rose-400/80 text-[10px] font-bold uppercase tracking-[0.2em] mt-1 transition-colors duration-300">Auto-computed (5% Monthly Compounding)</p>
+                                        <p className="text-rose-600/80 dark:text-rose-400/80 text-[10px] font-bold uppercase tracking-[0.2em] mt-1 transition-colors duration-300">Auto-computed (5% Monthly Simple, Non-Compounding)</p>
                                     </div>
                                     <button 
                                         type="button"
@@ -1134,12 +1197,12 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
                                     </div>
                                     <div className="w-full md:w-auto justify-end flex gap-6 md:gap-8 border-t md:border-t-0 md:border-l border-rose-200/50 dark:border-slate-700 pt-4 md:pt-0 md:pl-8 transition-colors duration-300">
                                         <div>
-                                            <p className="text-[10px] text-rose-500 dark:text-rose-400 font-black uppercase tracking-widest mb-1 transition-colors duration-300">Calculated Penalty</p>
-                                            <p className="text-xl font-mono font-black text-rose-700 dark:text-rose-400 transition-colors duration-300">₱{penaltyData.penalty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                            <p className="text-[10px] text-rose-500 dark:text-rose-400 font-black uppercase tracking-widest mb-1 transition-colors duration-300">Total Penalty</p>
+                                            <p className="text-xl font-mono font-black text-rose-700 dark:text-rose-400 transition-colors duration-300">₱{penaltyData.totalPenaltyAccumulated.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                                         </div>
                                         <div>
-                                            <p className="text-[10px] text-rose-600 dark:text-rose-400 font-black uppercase tracking-widest mb-1 transition-colors duration-300">Total w/ Penalty</p>
-                                            <p className="text-2xl font-mono font-black text-rose-900 dark:text-rose-300 transition-colors duration-300">₱{penaltyData.newBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                            <p className="text-[10px] text-rose-600 dark:text-rose-400 font-black uppercase tracking-widest mb-1 transition-colors duration-300">Correct Amount Due</p>
+                                            <p className="text-2xl font-mono font-black text-rose-900 dark:text-rose-300 transition-colors duration-300">₱{penaltyData.correctUpdatedAmountDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                                         </div>
                                     </div>
                                 </div>
@@ -1181,6 +1244,289 @@ const DemandLetterModal: React.FC<DemandLetterModalProps> = ({ dl, initialData, 
 // ─────────────────────────────────────────────────────────────────
 //  EditDatePreparedModal – Pen Icon: only Date Prepared editable
 // ─────────────────────────────────────────────────────────────────
+interface ActiveClientDemandModalProps {
+    selectedBranch: Branch;
+    onClose: () => void;
+}
+
+const getTodayISO = () => {
+    const date = new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
+const ActiveClientDemandModal: React.FC<ActiveClientDemandModalProps> = ({ selectedBranch, onClose }) => {
+    const [accountFile, setAccountFile] = useState<File | null>(null);
+    const [filePreviewUrl, setFilePreviewUrl] = useState('');
+    const [isExtracting, setIsExtracting] = useState(false);
+    const [extractMessage, setExtractMessage] = useState('');
+    const [account, setAccount] = useState({
+        borrowerName: '',
+        address: '',
+        accountCode: '',
+        dueDate: '',
+        datePrepared: getTodayISO(),
+        startingOverdueBalance: '',
+    });
+    const [periods, setPeriods] = useState<PenaltyPeriodInput[]>([
+        { label: 'Penalty Period', paymentMade: 0, numberOfMonths: 1 },
+    ]);
+
+    useEffect(() => {
+        return () => {
+            if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+        };
+    }, [filePreviewUrl]);
+
+    const startingBalance = Number(account.startingOverdueBalance || 0);
+    const schedule = useMemo(() => computePenaltySchedule(startingBalance, periods), [startingBalance, periods]);
+    const formatMoney = (amount: number) => amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formatPeso = (amount: number) => `₱${formatMoney(amount)}`;
+
+    const handleFileChange = (file?: File) => {
+        if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+        setAccountFile(file || null);
+        setFilePreviewUrl(file && file.type.startsWith('image/') ? URL.createObjectURL(file) : '');
+        setExtractMessage(file ? 'File attached. Click Extract Details or encode manually.' : '');
+    };
+
+    const handleExtract = async () => {
+        if (!accountFile) {
+            setExtractMessage('Upload a PDF or image first.');
+            return;
+        }
+
+        setIsExtracting(true);
+        setExtractMessage('Reading account document...');
+        try {
+            const extracted = await extractActiveClientAccountFromFile(accountFile);
+            setAccount(prev => ({
+                borrowerName: extracted.borrowerName || prev.borrowerName,
+                address: extracted.address || prev.address,
+                accountCode: extracted.accountCode || prev.accountCode,
+                dueDate: extracted.dueDate || prev.dueDate,
+                datePrepared: extracted.datePrepared || prev.datePrepared,
+                startingOverdueBalance: extracted.startingOverdueBalance !== undefined ? String(extracted.startingOverdueBalance) : prev.startingOverdueBalance,
+            }));
+            if (extracted.periods?.length) {
+                setPeriods(extracted.periods.map(period => ({
+                    label: period.label || 'Penalty Period',
+                    paymentMade: Number(period.paymentMade || 0),
+                    numberOfMonths: Number(period.numberOfMonths || 0),
+                })));
+            }
+            setExtractMessage('Details extracted. Please review before printing.');
+        } catch (error) {
+            setExtractMessage(error instanceof Error ? error.message : 'Could not extract details. Please encode manually.');
+        } finally {
+            setIsExtracting(false);
+        }
+    };
+
+    const updatePeriod = (index: number, updates: Partial<PenaltyPeriodInput>) => {
+        setPeriods(prev => prev.map((period, i) => i === index ? { ...period, ...updates } : period));
+    };
+
+    const updatePeriodLabel = (index: number, label: string) => {
+        const parsedMonths = countMonthsFromPeriodLabel(label);
+        updatePeriod(index, {
+            label,
+            ...(parsedMonths !== null ? { numberOfMonths: parsedMonths } : {}),
+        });
+    };
+
+    const addPeriod = () => setPeriods(prev => [...prev, { label: 'Penalty Period', paymentMade: 0, numberOfMonths: 1 }]);
+    const removePeriod = (index: number) => setPeriods(prev => prev.length === 1 ? prev : prev.filter((_, i) => i !== index));
+
+    const handlePrint = () => {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+
+        const rows = schedule.rows.map(row => `
+            <tr>
+                <td>${row.period}</td>
+                <td class="num">${formatPeso(row.beginningOverdueBalance)}</td>
+                <td class="num payment">${row.paymentsMade > 0 ? `-${formatPeso(row.paymentsMade)}` : formatPeso(0)}</td>
+                <td class="num">${formatPeso(row.balanceUsedForPenaltyBase)}</td>
+                <td class="center">${row.numberOfMonths}</td>
+                <td class="num">${formatPeso(row.monthlyPenalty)}</td>
+                <td class="num strong">${formatPeso(row.penaltySubtotal)}</td>
+            </tr>
+        `).join('');
+
+        const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Active Client Demand Computation - ${account.borrowerName || account.accountCode || 'External Account'}</title>
+                <style>
+                    * { box-sizing: border-box; }
+                    body { font-family: Arial, sans-serif; margin: 0; padding: 4px 18px 12px; color: #111827; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                    .letterhead { width: 82%; max-width: 610px; max-height: 86px; object-fit: contain; object-position: center center; display: block; margin: 0 auto 4px; }
+                    h1 { margin: 4px 0 2px; text-align: center; color: #064e3b; font-size: 27px; letter-spacing: 1px; }
+                    .subtitle { text-align: center; color: #1e3a8a; font-size: 12px; letter-spacing: .4px; text-transform: uppercase; border-bottom: 3px solid #064e3b; padding-bottom: 8px; margin-bottom: 12px; }
+                    .details { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-bottom: 14px; }
+                    .details .right { border-left: 1px solid #334155; padding-left: 28px; }
+                    .line { display: grid; grid-template-columns: max-content 1fr max-content; gap: 10px; align-items: end; margin: 8px 0; font-size: 13px; }
+                    .label { color: #064e3b; font-weight: 700; }
+                    .dots { border-bottom: 1px dotted #64748b; min-height: 12px; }
+                    .value { font-weight: 500; text-align: right; }
+                    .note { border: 1px solid #86efac; background: #f0fdf4; padding: 9px 12px; margin: 10px 0; font-size: 11px; line-height: 1.35; color: #064e3b; }
+                    .note p { margin: 2px 0; }
+                    h2 { margin: 18px 0 8px; color: #064e3b; font-size: 20px; letter-spacing: .5px; }
+                    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; overflow: hidden; border: 1px solid #cbd5e1; border-radius: 6px; }
+                    th { background: #064e3b; color: white; padding: 8px 6px; text-transform: uppercase; font-size: 11px; border-right: 1px solid rgba(255,255,255,.6); }
+                    td { padding: 7px 6px; border-top: 1px solid #cbd5e1; border-right: 1px solid #cbd5e1; }
+                    td:last-child, th:last-child { border-right: none; }
+                    .num { text-align: right; white-space: nowrap; }
+                    .center { text-align: center; }
+                    .payment { color: #dc2626; }
+                    .strong { font-weight: 800; }
+                    .summary { border: 1px solid #064e3b; border-radius: 4px; padding: 12px 18px 14px; margin-top: 14px; background: #fff; }
+                    .summary-row { display: grid; grid-template-columns: max-content 1fr max-content; gap: 10px; align-items: end; font-size: 12px; margin: 4px 0; }
+                    .summary-row span:first-child { color: #0f172a; }
+                    .summary-row strong { font-size: 12px; color: #0f172a; }
+                    .summary .dots { border-bottom: 1px dotted #64748b; min-height: 9px; }
+                    .totals { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 22px; border-top: 1px solid #94a3b8; margin-top: 9px; padding-top: 9px; text-align: center; }
+                    .divider { background: #94a3b8; }
+                    .total-label { font-weight: 900; color: #064e3b; font-size: 15px; line-height: 1.1; }
+                    .amount { font-size: 28px; font-weight: 900; color: #064e3b; margin-top: 5px; line-height: 1; }
+                    .amount.red { color: #b91c1c; }
+                    @page { size: A4 portrait; margin: 4mm 8mm 8mm; }
+                </style>
+            </head>
+            <body>
+                <img class="letterhead" src="/LetterHead.jpg" alt="Melann Letterhead" />
+                <h1>PENALTY COMPUTATION</h1>
+                <div class="subtitle">Corrected Simple Penalty Computation - Demand Letter Attachment Reference</div>
+                <div class="details">
+                    <div>
+                        <div class="line"><span class="label">Client Name:</span><span class="dots"></span><span class="value">${account.borrowerName || '-'}</span></div>
+                        <div class="line"><span class="label">Client Address:</span><span class="dots"></span><span class="value">${account.address || '-'}</span></div>
+                        <div class="line"><span class="label">Account / Code:</span><span class="dots"></span><span class="value">${account.accountCode || '-'}</span></div>
+                        <div class="line"><span class="label">Base Overdue Balance Used:</span><span class="dots"></span><span class="value">${formatPeso(startingBalance)}</span></div>
+                        <div class="line"><span class="label">Penalty Rate:</span><span class="dots"></span><span class="value">5% per month</span></div>
+                    </div>
+                    <div class="right">
+                        <div class="line"><span class="label">Due Date:</span><span class="dots"></span><span class="value">${account.dueDate ? formatMMDDYYYY(account.dueDate) : '-'}</span></div>
+                        <div class="line"><span class="label">Date Prepared:</span><span class="dots"></span><span class="value">${account.datePrepared || '-'}</span></div>
+                        <div class="line"><span class="label">Source:</span><span class="dots"></span><span class="value">${accountFile?.name || 'Manual Entry'}</span></div>
+                    </div>
+                </div>
+                <div class="note">
+                    <p><strong>Correct Method:</strong> Penalty is computed only on the unpaid overdue balance. Penalty is not added back to the balance for the next month. No compounding.</p>
+                    <p><strong>Formula used:</strong> Penalty = Unpaid Overdue Balance x 5% per month, simple and non-compounding.</p>
+                </div>
+                <h2>DETAILED COMPUTATION BREAKDOWN</h2>
+                <table>
+                    <thead><tr><th>Period</th><th>Beginning<br />Overdue Balance</th><th>Payments<br />Made</th><th>Balance Used for<br />Penalty Base</th><th>No. of<br />Months</th><th>Monthly<br />Penalty (5%)</th><th>Penalty<br />Subtotal</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <div class="summary">
+                    <div class="summary-row"><span>Total Payments Made:</span><span class="dots"></span><strong>${formatPeso(schedule.totalPayments)}</strong></div>
+                    <div class="summary-row"><span>Remaining Overdue Balance:</span><span class="dots"></span><strong>${formatPeso(schedule.remainingOverdueBalance)}</strong></div>
+                    <div class="totals"><div><div class="total-label">Total Penalty Accumulated:</div><div class="amount">${formatPeso(schedule.totalPenaltyAccumulated)}</div></div><div class="divider"></div><div><div class="total-label" style="color:#b91c1c;">Correct Updated Amount Due:</div><div class="amount red">${formatPeso(schedule.correctUpdatedAmountDue)}</div></div></div>
+                </div>
+            </body>
+            </html>
+        `;
+
+        if (iframe.contentDocument) {
+            iframe.contentDocument.write(html);
+            iframe.contentDocument.close();
+            iframe.onload = () => {
+                iframe.contentWindow?.focus();
+                iframe.contentWindow?.print();
+                setTimeout(() => document.body.removeChild(iframe), 1000);
+            };
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn transition-colors duration-300">
+            <div className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl w-full max-w-5xl overflow-hidden animate-slideUp border border-white/20 dark:border-slate-700 transition-colors duration-300">
+                <div className="p-8 bg-[#064e3b] dark:bg-slate-800 flex justify-between items-center text-white">
+                    <div>
+                        <h3 className="text-2xl font-black tracking-tight">Active Client Demand</h3>
+                        <p className="text-emerald-100/70 font-bold text-xs uppercase tracking-widest mt-1">External account computation for {selectedBranch}</p>
+                    </div>
+                    <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all"><svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                </div>
+                <div className="p-8 max-h-[78vh] overflow-y-auto space-y-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
+                        <div className="space-y-4">
+                            <label className="block border-2 border-dashed border-emerald-200 dark:border-emerald-800 rounded-2xl p-5 bg-emerald-50/50 dark:bg-emerald-900/10 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
+                                <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => handleFileChange(e.target.files?.[0])} />
+                                <div className="text-center">
+                                    <svg className="w-10 h-10 mx-auto text-emerald-700 dark:text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                                    <p className="mt-3 text-sm font-black text-slate-800 dark:text-white">{accountFile ? accountFile.name : 'Upload PDF or Image'}</p>
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">Active client account source</p>
+                                </div>
+                            </label>
+                            {filePreviewUrl && <img src={filePreviewUrl} alt="Account preview" className="w-full max-h-72 object-contain rounded-2xl border border-slate-200 dark:border-slate-700 bg-white" />}
+                            {accountFile?.type === 'application/pdf' && <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500 dark:text-slate-400">PDF attached. Review extracted fields after processing.</div>}
+                            <button type="button" onClick={handleExtract} disabled={!accountFile || isExtracting} className="w-full px-5 py-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all">{isExtracting ? 'Extracting...' : 'Extract Details'}</button>
+                            {extractMessage && <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-relaxed">{extractMessage}</p>}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {[
+                                ['borrowerName', 'Client Name', 'text'],
+                                ['accountCode', 'Account / Code', 'text'],
+                                ['dueDate', 'Due Date', 'date'],
+                                ['datePrepared', 'Date Prepared', 'date'],
+                                ['startingOverdueBalance', 'Base Overdue Balance', 'number'],
+                            ].map(([key, label, type]) => (
+                                <div key={key}>
+                                    <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1">{label}</label>
+                                    <input type={type} step={type === 'number' ? '0.01' : undefined} className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 dark:text-white outline-none" value={(account as any)[key]} onChange={e => setAccount(prev => ({ ...prev, [key]: e.target.value }))} />
+                                </div>
+                            ))}
+                            <div className="md:col-span-2">
+                                <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1">Client Address</label>
+                                <textarea className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 dark:text-white outline-none min-h-24 resize-none" value={account.address} onChange={e => setAccount(prev => ({ ...prev, address: e.target.value }))} />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-4 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
+                            <h4 className="font-black text-slate-800 dark:text-white">Penalty Periods</h4>
+                            <button type="button" onClick={addPeriod} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest">Add Period</button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead className="bg-white dark:bg-slate-900 text-[10px] uppercase tracking-widest text-slate-400"><tr><th className="text-left px-4 py-3">Period</th><th className="text-right px-4 py-3">Payment</th><th className="text-center px-4 py-3">Months</th><th className="px-4 py-3"></th></tr></thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                                    {periods.map((period, index) => (
+                                        <tr key={index}>
+                                            <td className="px-4 py-3"><input className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 font-semibold text-slate-800 dark:text-white" value={period.label} onChange={e => updatePeriodLabel(index, e.target.value)} placeholder="Example: Oct 2025 - Jan 2026" /></td>
+                                            <td className="px-4 py-3"><input type="number" step="0.01" className="w-32 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 font-semibold text-right text-slate-800 dark:text-white" value={period.paymentMade} onChange={e => updatePeriod(index, { paymentMade: Number(e.target.value || 0) })} /></td>
+                                            <td className="px-4 py-3 text-center"><input type="number" min="0" readOnly className="w-24 bg-slate-100 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 font-semibold text-center text-slate-500 dark:text-slate-400 cursor-not-allowed" value={period.numberOfMonths} title="Auto-counted from Period" /></td>
+                                            <td className="px-4 py-3 text-right"><button type="button" onClick={() => removePeriod(index)} disabled={periods.length === 1} className="px-3 py-2 rounded-xl text-rose-600 hover:bg-rose-50 disabled:text-slate-300 disabled:hover:bg-transparent text-xs font-black">Remove</button></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"><p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Total Payments</p><p className="text-xl font-mono font-black text-slate-800 dark:text-white mt-1">{formatPeso(schedule.totalPayments)}</p></div>
+                        <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"><p className="text-[10px] uppercase tracking-widest font-black text-slate-400">Remaining Balance</p><p className="text-xl font-mono font-black text-slate-800 dark:text-white mt-1">{formatPeso(schedule.remainingOverdueBalance)}</p></div>
+                        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800"><p className="text-[10px] uppercase tracking-widest font-black text-emerald-700 dark:text-emerald-300">Total Penalty</p><p className="text-xl font-mono font-black text-emerald-800 dark:text-emerald-200 mt-1">{formatPeso(schedule.totalPenaltyAccumulated)}</p></div>
+                        <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800"><p className="text-[10px] uppercase tracking-widest font-black text-rose-700 dark:text-rose-300">Amount Due</p><p className="text-xl font-mono font-black text-rose-800 dark:text-rose-200 mt-1">{formatPeso(schedule.correctUpdatedAmountDue)}</p></div>
+                    </div>
+
+                    <div className="flex gap-4 pt-2">
+                        <button type="button" onClick={onClose} className="flex-1 px-8 py-5 text-slate-400 dark:text-slate-500 font-black rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all uppercase tracking-widest text-[10px] border border-transparent hover:border-slate-100 dark:hover:border-slate-700">Cancel</button>
+                        <button type="button" onClick={handlePrint} disabled={!account.borrowerName || !startingBalance || schedule.rows.length === 0} className="flex-[2] px-8 py-5 bg-[#064e3b] text-white font-black rounded-3xl hover:bg-[#043326] shadow-xl shadow-emerald-900/20 transition-all uppercase tracking-widest text-[10px] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">Print Active Client Demand Computation</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 interface EditDatePreparedModalProps {
     dl: DemandLetter;
     currentUser: User;
@@ -1190,13 +1536,14 @@ interface EditDatePreparedModalProps {
 
 const EditDatePreparedModal: React.FC<EditDatePreparedModalProps> = ({ dl, currentUser, onClose, onSuccess }) => {
     const [datePrepared, setDatePrepared] = useState(dl.datePrepared || '');
+    const [courrier, setCourrier] = useState(dl.courrier || '');
     const [isSaving, setIsSaving] = useState(false);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         setIsSaving(true);
-        store.updateDemandLetter(dl.id, { datePrepared }, currentUser.username, currentUser.role);
-        if (onSuccess) onSuccess('Date Prepared updated successfully.');
+        store.updateDemandLetter(dl.id, { datePrepared, courrier: courrier as any }, currentUser.username, currentUser.role);
+        if (onSuccess) onSuccess('Details updated successfully.');
         onClose();
     };
 
@@ -1206,7 +1553,7 @@ const EditDatePreparedModal: React.FC<EditDatePreparedModalProps> = ({ dl, curre
                 {/* Header */}
                 <div className="p-8 bg-[#064e3b] dark:bg-slate-800 flex justify-between items-center">
                     <div>
-                        <h3 className="text-xl font-black text-white tracking-tight">Edit Date Prepared</h3>
+                        <h3 className="text-xl font-black text-white tracking-tight">Edit Details</h3>
                         <p className="text-emerald-300/70 font-bold text-xs uppercase tracking-widest mt-1">{dl.borrowerName}</p>
                     </div>
                     <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all">
@@ -1224,6 +1571,18 @@ const EditDatePreparedModal: React.FC<EditDatePreparedModalProps> = ({ dl, curre
                             value={datePrepared}
                             onChange={e => setDatePrepared(e.target.value)}
                         />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block mb-2 px-1">Courrier</label>
+                        <select
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 dark:text-white appearance-none outline-none transition-colors duration-300"
+                            value={courrier}
+                            onChange={e => setCourrier(e.target.value)}
+                        >
+                            <option value="">Select Courrier...</option>
+                            <option value="Mailed">Mailed</option>
+                            <option value="Personal Service">Personal Service</option>
+                        </select>
                     </div>
                     <div className="flex gap-4 pt-2">
                         <button type="button" onClick={onClose} className="flex-1 py-4 text-slate-400 dark:text-slate-500 font-black rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all uppercase tracking-widest text-[10px] border border-transparent hover:border-slate-100">Cancel</button>
@@ -1361,6 +1720,7 @@ const ReceivedDemandLetterModal: React.FC<ReceivedDemandLetterModalProps> = ({ d
                     days: selectedDays,
                     weekDays: selectedWeekDays,
                     nextDueDate: nextDue,
+                    startDate: getLocalISODate(new Date()),
                     lastPaidDate: undefined
                 };
                 await store.updateLoan(dl.loanId, { recurringSchedule: schedule, promiseToPayDate: nextDue }, currentUser.username, currentUser.role);

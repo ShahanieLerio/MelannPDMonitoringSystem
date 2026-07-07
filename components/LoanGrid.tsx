@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
-import { Loan, MovingStatus, LocationStatus, Branch, User } from '../types.ts';
+import { Loan, MovingStatus, LocationStatus, Branch, User, DispositionStatus, DispositionType } from '../types.ts';
 import { STATUS_COLORS, formatReportedMonth, formatMMDDYYYY } from '../constants.tsx';
 import ClientModal from './ClientModal.tsx';
 import ClientFormModal from './ClientFormModal.tsx';
@@ -10,6 +10,7 @@ import HistoryModal from './HistoryModal.tsx';
 import ConfirmationModal from './ConfirmationModal.tsx';
 import BulkImportModal from './BulkImportModal.tsx';
 import MultiSelectFilter from './MultiSelectFilter.tsx';
+import SecureDeleteModal from './SecureDeleteModal.tsx';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 import * as XLSX from 'xlsx';
 
@@ -47,12 +48,15 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
   const [historyLoan, setHistoryLoan] = useState<Loan | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [secureDeleteClient, setSecureDeleteClient] = useState<Loan | null>(null);
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
     onConfirm: () => void;
-    type?: 'danger' | 'warning';
+    type?: 'danger' | 'warning' | 'success';
+    confirmLabel?: string;
+    cancelLabel?: string;
   }>({
     isOpen: false,
     title: '',
@@ -62,7 +66,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
 
   const closeConfirm = () => setConfirmConfig(prev => ({ ...prev, isOpen: false }));
 
-  const askConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' = 'warning') => {
+  const askConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'success' = 'warning', confirmLabel?: string, cancelLabel?: string) => {
     setConfirmConfig({
       isOpen: true,
       title,
@@ -71,7 +75,9 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
         onConfirm();
         closeConfirm();
       },
-      type
+      type,
+      confirmLabel,
+      cancelLabel
     });
   };
 
@@ -134,6 +140,17 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
 
   const refreshData = () => setLoans(store.getLoans(selectedBranch));
 
+  const resetFiltersForSearch = () => {
+    setFilterStartDate({ month: '01', year: '2016' });
+    setFilterEndDate({ month: '12', year: '2030' });
+    setFilterCollectors(null);
+    setFilterLocations(null);
+    setFilterStatuses(null);
+    setFilterAreas(null);
+    setFilterCities(null);
+    setFilterBarangays(null);
+  };
+
   const handleExportExcel = () => {
     if (filteredLoans.length === 0) return;
 
@@ -146,7 +163,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
       'Borrower\'s Name': `${l.lastName}, ${l.firstName}`,
       'Month Reported': formatReportedMonth(l.monthReported),
       'Due Date': formatMMDDYYYY(l.dueDate),
-      'O/S Balance': l.outstandingBalance,
+      'Reported Amount': l.outstandingBalance,
       'Collected': l.amountCollected,
       'Running Balance': l.runningBalance,
       'Location': l.location,
@@ -165,7 +182,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
       { wch: 26 }, // Borrower's Name
       { wch: 14 }, // Month Reported
       { wch: 12 }, // Due Date
-      { wch: 14 }, // O/S Balance
+      { wch: 14 }, // Reported Amount
       { wch: 14 }, // Collected
       { wch: 14 }, // Running Balance
       { wch: 8 },  // Location
@@ -180,16 +197,36 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
     XLSX.writeFile(wb, `LoanGrid_${branchTag}_${today}.xlsx`);
   };
 
-  const handleDelete = (id: string, name: string) => {
-    askConfirm(
-      "Are you sure you want to delete this record?",
-      `Client "${name}" and all associated data will be removed.`,
-      () => {
-        store.deleteLoan(id);
+  const handleDelete = (loan: Loan) => {
+    setSecureDeleteClient(loan);
+  };
+
+  const executeSecureDelete = async () => {
+    if (secureDeleteClient) {
+      const deletedName = secureDeleteClient.borrowerName;
+      try {
+        await store.deleteLoan(secureDeleteClient.id, currentUser.username, 'Deleted via Loan Grid');
         refreshData();
-      },
-      'danger'
-    );
+        setSecureDeleteClient(null);
+        askConfirm(
+          'Successfully Deleted',
+          `${deletedName} has been deleted and moved to the Recycle Bin. You can restore this client anytime from the Recycle Bin.`,
+          () => {},
+          'success',
+          'OK (Enter)',
+          ''
+        );
+      } catch (error) {
+        askConfirm(
+          'Delete Failed',
+          error instanceof Error ? error.message : 'Unable to delete this client. Please try again.',
+          () => {},
+          'danger',
+          'OK (Enter)',
+          ''
+        );
+      }
+    }
   };
 
   const handleEdit = (l: Loan) => {
@@ -199,11 +236,13 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
   const filteredLoans = useMemo(() => {
     const startStr = `${filterStartDate.year}-${filterStartDate.month}`;
     const endStr = `${filterEndDate.year}-${filterEndDate.month}`;
+    const normalizedSearch = searchTerm.trim().toLowerCase();
 
     return loans.filter(l => {
       // 1. Search Logic
-      const matchSearch = l.borrowerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        l.code.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchSearch = !normalizedSearch ||
+        l.borrowerName.toLowerCase().includes(normalizedSearch) ||
+        l.code.toLowerCase().includes(normalizedSearch);
 
       // 2. Date Range Logic
       const reportedDate = l.monthReported;
@@ -246,6 +285,18 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
     loans, searchTerm, filterStartDate, filterEndDate,
     allCollectors, filterCollectors, filterLocations, filterStatuses, filterAreas, filterCities, filterBarangays
   ]);
+
+  const hiddenSearchMatches = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    if (!normalizedSearch) return [];
+
+    const visibleIds = new Set(filteredLoans.map(loan => loan.id));
+    return loans.filter(loan => {
+      if (visibleIds.has(loan.id)) return false;
+      return loan.borrowerName.toLowerCase().includes(normalizedSearch) ||
+        loan.code.toLowerCase().includes(normalizedSearch);
+    });
+  }, [loans, filteredLoans, searchTerm]);
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -356,6 +407,23 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
         </div>
       </div>
 
+      {searchTerm.trim() && hiddenSearchMatches.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800 shadow-sm dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p>
+              {hiddenSearchMatches.length} matching client{hiddenSearchMatches.length === 1 ? '' : 's'} found in {selectedBranch}, but hidden by active filters.
+            </p>
+            <button
+              type="button"
+              onClick={resetFiltersForSearch}
+              className="inline-flex items-center justify-center rounded-lg bg-amber-600 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white transition-colors hover:bg-amber-700"
+            >
+              Clear Filters
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors duration-300">
         <div className="overflow-x-auto max-h-[60vh] custom-scrollbar">
           <table className="w-full text-sm text-left border-collapse">
@@ -369,7 +437,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
                 <th className="sticky left-[465px] z-30 bg-slate-50 dark:bg-slate-900 px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[160px] transition-colors duration-300">Borrower’s Name</th>
                 <th className="px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[100px] transition-colors duration-300">Reported</th>
                 <th className="px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[90px] whitespace-nowrap transition-colors duration-300">Due Date</th>
-                <th className="px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[110px] text-right transition-colors duration-300">O/S Balance</th>
+                <th className="px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[110px] text-right transition-colors duration-300">Reported Amount</th>
                 <th className="px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[90px] text-right transition-colors duration-300">Collected</th>
                 <th className="px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[110px] text-right transition-colors duration-300">Running</th>
                 <th className="px-3 py-4 font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b dark:border-slate-700 min-w-[80px] text-center transition-colors duration-300">Loc</th>
@@ -391,8 +459,13 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
                     <td className="sticky left-[190px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 min-w-[90px] truncate transition-colors duration-300">{l.city}</td>
                     <td className="sticky left-[280px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 text-slate-600 dark:text-slate-300 min-w-[100px] truncate transition-colors duration-300">{l.barangay}</td>
                     <td className="sticky left-[380px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 font-black text-emerald-600 dark:text-emerald-400 min-w-[85px] transition-colors duration-300">{l.code}</td>
-                    <td className="sticky left-[465px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 font-bold text-slate-700 dark:text-slate-200 cursor-pointer min-w-[160px] max-w-[160px] truncate transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:font-black group-hover:underline decoration-emerald-500/30 underline-offset-4" title={`${l.lastName}, ${l.firstName}`} onClick={() => setSelectedLoan(l)}>
-                      {l.lastName}, {l.firstName}
+                    <td className="sticky left-[465px] bg-white dark:bg-slate-800 group-hover:bg-emerald-50 dark:group-hover:bg-slate-700/50 z-10 px-3 py-4 font-bold text-slate-700 dark:text-slate-200 cursor-pointer min-w-[160px] max-w-[160px] transition-all duration-300 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 group-hover:font-black group-hover:underline decoration-emerald-500/30 underline-offset-4" title={`${l.lastName}, ${l.firstName}`} onClick={() => setSelectedLoan(l)}>
+                      <div className="truncate">{l.lastName}, {l.firstName}</div>
+                      {store.getDispositions(l.id).some(d => d.type === DispositionType.PROSPECT_WRITE_OFF && d.status === DispositionStatus.APPROVED) && (
+                        <span className="mt-1 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                          Officially Approved
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-4 text-slate-600 dark:text-slate-300">{formatReportedMonth(l.monthReported)}</td>
                     <td className="px-3 py-4 text-slate-600 dark:text-slate-300 font-bold whitespace-nowrap">{formatMMDDYYYY(l.dueDate)}</td>
@@ -436,7 +509,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                         </button>
                         <button
-                          onClick={() => handleDelete(l.id, l.borrowerName)}
+                          onClick={() => handleDelete(l)}
                           className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded-lg transition-colors"
                           title="Delete Client"
                         >
@@ -489,6 +562,18 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
           onClose={() => { setIsImportModalOpen(false); refreshData(); }}
         />
       )}
+
+      {secureDeleteClient && (
+        <SecureDeleteModal
+          isOpen={true}
+          clientName={secureDeleteClient.borrowerName}
+          clientCode={secureDeleteClient.code}
+          outstandingBalance={secureDeleteClient.totalLoan != null && secureDeleteClient.totalLoan > 0 ? secureDeleteClient.totalLoan : secureDeleteClient.outstandingBalance}
+          onConfirm={executeSecureDelete}
+          onCancel={() => setSecureDeleteClient(null)}
+        />
+      )}
+
       <ConfirmationModal
         isOpen={confirmConfig.isOpen}
         title={confirmConfig.title}
@@ -496,6 +581,8 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
         onConfirm={confirmConfig.onConfirm}
         onCancel={closeConfirm}
         type={confirmConfig.type}
+        confirmLabel={confirmConfig.confirmLabel}
+        cancelLabel={confirmConfig.cancelLabel}
       />
     </div>
   );

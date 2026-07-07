@@ -8,23 +8,46 @@ import {
     PriorityLevel,
     PaymentStatus,
     DemandLetterType,
-    DemandLetterStatus
+    DemandLetterStatus,
+    canManageUsers
 } from './types';
 
 describe('Types and Enums', () => {
     describe('UserRole', () => {
         it('should have correct role values', () => {
             expect(UserRole.SUPER_ADMIN).toBe('SUPER_ADMIN');
+            expect(UserRole.COLLECTOR).toBe('COLLECTOR');
+            expect(UserRole.CASHIER).toBe('CASHIER');
+            expect(UserRole.SUPERVISOR).toBe('SUPERVISOR');
+            expect(UserRole.IT_ACCOUNTING_CLERK).toBe('IT_ACCOUNTING_CLERK');
+            expect(UserRole.BRANCH_MANAGER).toBe('BRANCH_MANAGER');
+            expect(UserRole.OPERATIONS_MANAGER).toBe('OPERATIONS_MANAGER');
+            expect(UserRole.EXECUTIVE_VICE_PRESIDENT).toBe('EXECUTIVE_VICE_PRESIDENT');
+            expect(UserRole.PRESIDENT).toBe('PRESIDENT');
             expect(UserRole.NAVAL_USER).toBe('NAVAL_USER');
             expect(UserRole.ORMOC_USER).toBe('ORMOC_USER');
         });
 
         it('should have all required roles', () => {
             const roles = Object.values(UserRole);
-            expect(roles).toHaveLength(3);
+            expect(roles).toHaveLength(11);
             expect(roles).toContain('SUPER_ADMIN');
+            expect(roles).toContain('COLLECTOR');
+            expect(roles).toContain('CASHIER');
+            expect(roles).toContain('SUPERVISOR');
+            expect(roles).toContain('IT_ACCOUNTING_CLERK');
+            expect(roles).toContain('BRANCH_MANAGER');
+            expect(roles).toContain('OPERATIONS_MANAGER');
+            expect(roles).toContain('EXECUTIVE_VICE_PRESIDENT');
+            expect(roles).toContain('PRESIDENT');
             expect(roles).toContain('NAVAL_USER');
             expect(roles).toContain('ORMOC_USER');
+        });
+
+        it('allows Branch Manager to manage user approvals', () => {
+            expect(canManageUsers(UserRole.SUPER_ADMIN)).toBe(true);
+            expect(canManageUsers(UserRole.BRANCH_MANAGER)).toBe(true);
+            expect(canManageUsers(UserRole.IT_ACCOUNTING_CLERK)).toBe(false);
         });
     });
 

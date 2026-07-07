@@ -15,6 +15,7 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
   const [visitDate, setVisitDate] = useState(new Date().toISOString().split('T')[0]);
   const [collectorNotes, setCollectorNotes] = useState('');
   const [clientComment, setClientComment] = useState('');
+  const [personnelAssigned, setPersonnelAssigned] = useState('');
   const [visitedByCollector, setVisitedByCollector] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
@@ -30,6 +31,10 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
       setErrorFeedback('Collector notes are required.');
       return;
     }
+    if (!personnelAssigned.trim()) {
+      setErrorFeedback('Personnel Assigned is required. Please enter the name of the person who conducted the visit.');
+      return;
+    }
     setIsSubmitting(true);
     setErrorFeedback(null);
     try {
@@ -41,7 +46,8 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
         visitedByCollector,
         action,
         currentUser.username,
-        currentUser.role
+        currentUser.role,
+        personnelAssigned.trim()
       );
 
       const successTitle = action === VisitLogAction.RETURN_TO_UPDATE
@@ -59,6 +65,7 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
       setSuccessFeedback({ title: successTitle, message: successMsg });
       setCollectorNotes('');
       setClientComment('');
+      setPersonnelAssigned('');
       setVisitedByCollector(false);
       setShowConfirmAction(null);
 
@@ -148,10 +155,19 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
                           "{log.clientComment}"
                         </p>
                       )}
-                      <div className="mt-2 flex items-center gap-2 text-[9px] text-slate-400 font-bold">
+                      <div className="mt-2 flex items-center gap-2 text-[9px] text-slate-400 font-bold flex-wrap">
                         <span>Visit: {new Date(log.visitDate + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
                         <span>•</span>
                         <span>By: {log.loggedBy}</span>
+                        {log.personnelAssigned && (
+                          <>
+                            <span>•</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded border border-indigo-200">
+                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                              {log.personnelAssigned}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -197,6 +213,24 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
                     <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg> Not Visited</>
                   )}
                 </button>
+              </div>
+            </div>
+
+            {/* Personnel Assigned */}
+            <div className="mb-5">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 block">Personnel Assigned <span className="text-rose-500">*</span></label>
+              <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                </div>
+                <input
+                  type="text"
+                  value={personnelAssigned}
+                  onChange={e => setPersonnelAssigned(e.target.value)}
+                  placeholder="Full name of person who visited the client..."
+                  className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all placeholder:text-slate-300"
+                  disabled={isSubmitting}
+                />
               </div>
             </div>
 

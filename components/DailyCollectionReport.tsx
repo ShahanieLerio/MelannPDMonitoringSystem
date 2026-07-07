@@ -108,7 +108,7 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)] gap-5 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
         {/* Collector Summary */}
         <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors duration-300">
           <div className="p-5 border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/50 transition-colors duration-300">
@@ -184,7 +184,7 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
           </div>
           <div className="max-h-[520px] overflow-auto">
             {filteredTransactions.length > 0 ? (
-              <table className="w-full min-w-[760px] text-left">
+              <table className="w-full text-left">
                 <thead className="sticky top-0 z-10 bg-slate-50/95 dark:bg-slate-900/95 text-slate-400 dark:text-slate-500 uppercase text-[9px] font-black tracking-widest transition-colors duration-300">
                   <tr>
                     <th className="px-4 py-3">#</th>

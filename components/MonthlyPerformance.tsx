@@ -3,16 +3,35 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { store } from '../services/dataStore.ts';
 import { getCollectorDisplayName, normalizeCollectorKey } from '../services/collectorUtils.ts';
-import { Loan, Payment, Branch } from '../types.ts';
+import { isDeadWriteOffLoan, isReportableCollectionPayment } from '../services/loanUtils.ts';
+import { Loan, Payment, Branch, DispositionStatus, DispositionType } from '../types.ts';
 
 interface MonthlyPerformanceProps {
     selectedBranch: Branch;
+}
+
+interface CollectionPaymentDetail {
+    collector: string;
+    area: string;
+    loan: Loan;
+    payment: Payment;
+    paymentDate: string;
+}
+
+interface DailyCollectionSummary {
+    date: string;
+    amount: number;
+    count: number;
+    details: CollectionPaymentDetail[];
 }
 
 const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch }) => {
     const [loans, setLoans] = useState(() => [...store.getLoans(selectedBranch)]);
     const [collectors, setCollectors] = useState(() => [...store.getCollectors()]);
     const [activeTab, setActiveTab] = useState<'reported' | 'efficiency'>('reported');
+    const [selectedReportedCollector, setSelectedReportedCollector] = useState<string | null>(null);
+    const [selectedCollectionCollector, setSelectedCollectionCollector] = useState<string | null>(null);
+    const [selectedCollectionDay, setSelectedCollectionDay] = useState<string | null>(null);
 
     useEffect(() => {
         const updateState = () => {
@@ -44,6 +63,18 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
 
     const [dueStartDate, setDueStartDate] = useState('');
     const [dueEndDate, setDueEndDate] = useState('');
+
+    const formatDateLabel = (date: string, options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' }) =>
+        new Date(`${date}T00:00:00`).toLocaleDateString([], options);
+
+    const isOfficialWriteOff = (loanId: string) =>
+        store.getDispositions(loanId).some(disposition =>
+            (disposition.type === DispositionType.PROSPECT_WRITE_OFF || disposition.type === DispositionType.DEAD_ACCOUNT) &&
+            (disposition.status === DispositionStatus.APPROVED || disposition.status === DispositionStatus.EXECUTED)
+        );
+
+    const isExcludedFromCollectionReports = (loan: Loan) =>
+        isDeadWriteOffLoan(loan) || isOfficialWriteOff(loan.id);
 
     // Month mapping
     const months = [
@@ -77,6 +108,8 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
         const toStr = `${toYear}-${toMonth}`;
 
         loans.forEach(loan => {
+            if (isExcludedFromCollectionReports(loan)) return;
+
             if (loan.monthReported >= fromStr && loan.monthReported <= toStr) {
                 const key = getCollectorDisplayName(loan.collector, collectors);
                 if (!data[key]) {
@@ -96,26 +129,35 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
         return Object.values(data).sort((a, b) => b.amount - a.amount);
     }, [loans, collectors, fromYear, fromMonth, toYear, toMonth, validationError]);
 
-    // Section 2 Calculation: Past Due Collection
-    const pastDueCollectionData = useMemo(() => {
-        const data: Record<string, { area: string, collector: string, amount: number, startDate: string, endDate: string, dueDateRangeDisplay: string }> = {};
-
-        // Force dates into YYYY-MM-DD format strictly for comparison
-        const filterStart = startDate.substring(0, 10);
-        const filterEnd = endDate.substring(0, 10);
+    const collectionFilterMeta = useMemo(() => {
         const dueStart = dueStartDate ? dueStartDate.substring(0, 10) : null;
         const dueEnd = dueEndDate ? dueEndDate.substring(0, 10) : null;
-        
+
         let dueDateRangeDisplay = 'All Due Dates';
         if (dueStart && dueEnd) {
-            dueDateRangeDisplay = `${new Date(dueStart).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} - ${new Date(dueEnd).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}`;
+            dueDateRangeDisplay = `${formatDateLabel(dueStart)} - ${formatDateLabel(dueEnd)}`;
         } else if (dueStart) {
-            dueDateRangeDisplay = `From ${new Date(dueStart).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}`;
+            dueDateRangeDisplay = `From ${formatDateLabel(dueStart)}`;
         } else if (dueEnd) {
-            dueDateRangeDisplay = `Until ${new Date(dueEnd).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}`;
+            dueDateRangeDisplay = `Until ${formatDateLabel(dueEnd)}`;
         }
 
+        return {
+            filterStart: startDate.substring(0, 10),
+            filterEnd: endDate.substring(0, 10),
+            dueStart,
+            dueEnd,
+            dueDateRangeDisplay
+        };
+    }, [startDate, endDate, dueStartDate, dueEndDate]);
+
+    const collectionPaymentDetails = useMemo<CollectionPaymentDetail[]>(() => {
+        const { filterStart, filterEnd, dueStart, dueEnd } = collectionFilterMeta;
+        const details: CollectionPaymentDetail[] = [];
+
         loans.forEach(loan => {
+            if (isExcludedFromCollectionReports(loan)) return;
+
             const collectorKey = getCollectorDisplayName(loan.collector, collectors);
 
             // Apply due date filter logic BEFORE checking payments
@@ -126,7 +168,7 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
             }
 
             loan.payments.forEach(payment => {
-                if (payment.status && payment.status === 'REVERSED') return;
+                if (!isReportableCollectionPayment(payment)) return;
 
                 // Safely extract YYYY-MM-DD from the payment date, even if it's an ISO string Date/Time
                 const paymentDateStr = (payment.date || '').substring(0, 10);
@@ -135,32 +177,94 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                 const isWithinFilterRange = paymentDateStr >= filterStart && paymentDateStr <= filterEnd;
 
                 if (isWithinFilterRange) {
-                    if (!data[collectorKey]) {
-                        const searchName = normalizeCollectorKey(loan.collector);
-                        const collectorInfo = collectors.find(c => 
-                            normalizeCollectorKey(c.name) === searchName ||
-                            normalizeCollectorKey(c.nickname) === searchName
-                        );
-                        
-                        // Use the collector's address if it exists and isn't just whitespace, otherwise fall back to loan.area
-                        const deploymentArea = (collectorInfo?.address?.trim() || loan.area?.trim() || 'N/A');
-                        
-                        data[collectorKey] = {
-                            area: deploymentArea,
-                            collector: collectorKey,
-                            amount: 0, 
-                            startDate: filterStart, 
-                            endDate: filterEnd,
-                            dueDateRangeDisplay
-                        };
-                    }
-                    data[collectorKey].amount += payment.amount;
+                    const searchName = normalizeCollectorKey(loan.collector);
+                    const collectorInfo = collectors.find(c =>
+                        normalizeCollectorKey(c.name) === searchName ||
+                        normalizeCollectorKey(c.nickname) === searchName
+                    );
+                    const deploymentArea = (collectorInfo?.address?.trim() || loan.area?.trim() || 'N/A');
+
+                    details.push({
+                        collector: collectorKey,
+                        area: deploymentArea,
+                        loan,
+                        payment,
+                        paymentDate: paymentDateStr
+                    });
                 }
             });
         });
 
+        return details.sort((a, b) => {
+            const dateDiff = b.paymentDate.localeCompare(a.paymentDate);
+            if (dateDiff !== 0) return dateDiff;
+            return new Date(b.payment.createdAt || b.payment.date).getTime() - new Date(a.payment.createdAt || a.payment.date).getTime();
+        });
+    }, [loans, collectors, collectionFilterMeta]);
+
+    // Section 2 Calculation: Past Due Collection
+    const pastDueCollectionData = useMemo(() => {
+        const data: Record<string, { area: string, collector: string, amount: number, startDate: string, endDate: string, dueDateRangeDisplay: string }> = {};
+        const { filterStart, filterEnd, dueDateRangeDisplay } = collectionFilterMeta;
+
+        collectionPaymentDetails.forEach(({ collector, area, payment }) => {
+            if (!data[collector]) {
+                data[collector] = {
+                    area,
+                    collector,
+                    amount: 0,
+                    startDate: filterStart,
+                    endDate: filterEnd,
+                    dueDateRangeDisplay
+                };
+            }
+            data[collector].amount += payment.amount;
+        });
+
         return Object.values(data).sort((a, b) => b.amount - a.amount);
-    }, [loans, collectors, startDate, endDate, dueStartDate, dueEndDate]);
+    }, [collectionPaymentDetails, collectionFilterMeta]);
+
+    const selectedCollectorDailyCollections = useMemo<DailyCollectionSummary[]>(() => {
+        if (!selectedCollectionCollector) return [];
+
+        const daily: Record<string, DailyCollectionSummary> = {};
+        collectionPaymentDetails
+            .filter(detail => detail.collector === selectedCollectionCollector)
+            .forEach(detail => {
+                if (!daily[detail.paymentDate]) {
+                    daily[detail.paymentDate] = { date: detail.paymentDate, amount: 0, count: 0, details: [] };
+                }
+                daily[detail.paymentDate].amount += detail.payment.amount;
+                daily[detail.paymentDate].count += 1;
+                daily[detail.paymentDate].details.push(detail);
+            });
+
+        return Object.values(daily).sort((a, b) => b.date.localeCompare(a.date));
+    }, [collectionPaymentDetails, selectedCollectionCollector]);
+
+    const selectedDayDetails = selectedCollectionDay
+        ? [...(selectedCollectorDailyCollections.find(day => day.date === selectedCollectionDay)?.details || [])].sort((a, b) => a.loan.borrowerName.localeCompare(b.loan.borrowerName))
+        : [];
+
+    const selectedReportedLoans = useMemo(() => {
+        if (!selectedReportedCollector) return [];
+        const fromStr = `${fromYear}-${fromMonth}`;
+        const toStr = `${toYear}-${toMonth}`;
+
+        return loans
+            .filter(loan =>
+                !isExcludedFromCollectionReports(loan) &&
+                loan.monthReported >= fromStr &&
+                loan.monthReported <= toStr &&
+                getCollectorDisplayName(loan.collector, collectors) === selectedReportedCollector
+            )
+            .sort((a, b) => b.monthReported.localeCompare(a.monthReported) || b.outstandingBalance - a.outstandingBalance);
+    }, [loans, collectors, selectedReportedCollector, fromYear, fromMonth, toYear, toMonth]);
+
+    const closeCollectionModal = () => {
+        setSelectedCollectionCollector(null);
+        setSelectedCollectionDay(null);
+    };
 
     const years = Array.from({ length: 15 }, (_, i) => (2016 + i).toString());
 
@@ -264,7 +368,12 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50 transition-colors duration-300 bg-white dark:bg-transparent">
                                         {reportedPastDueData.map((d, i) => (
-                                            <tr key={i} className="group hover:bg-[#F5F7F6] dark:hover:bg-slate-800/50 transition-all duration-300 cursor-pointer">
+                                            <tr
+                                                key={i}
+                                                onClick={() => setSelectedReportedCollector(d.collector)}
+                                                className="group hover:bg-[#F5F7F6] dark:hover:bg-slate-800/50 transition-all duration-300 cursor-pointer"
+                                                title={`Open reported past due details for ${d.collector}`}
+                                            >
                                                 <td className="px-6 py-4">
                                                     <div className="font-medium text-[13px] text-slate-400 dark:text-slate-500 uppercase tracking-tight transition-colors duration-300">{d.area}</div>
                                                 </td>
@@ -279,6 +388,12 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                                                 <td className="px-6 py-4 text-right font-black text-emerald-600 dark:text-emerald-400 text-[15px] transition-colors duration-300">₱{d.amount.toLocaleString()}</td>
                                             </tr>
                                         ))}
+                                        {reportedPastDueData.length > 0 && (
+                                            <tr className="bg-emerald-50/50 dark:bg-emerald-900/20 border-t-2 border-emerald-100 dark:border-emerald-800/50">
+                                                <td colSpan={3} className="px-6 py-4 text-right font-black text-slate-700 dark:text-slate-300 uppercase tracking-widest text-[11px]">Grand Total</td>
+                                                <td className="px-6 py-4 text-right font-black text-emerald-700 dark:text-emerald-400 text-[16px]">₱{reportedPastDueData.reduce((sum, d) => sum + d.amount, 0).toLocaleString()}</td>
+                                            </tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
@@ -416,7 +531,7 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                 <div className="mt-6 flex flex-col lg:flex-row gap-6 items-start">
                     {/* Table Side (Takes roughly 60%) */}
                     <div className="w-full lg:w-[60%] flex-shrink-0">
-                        <div className="overflow-x-auto overflow-y-auto max-h-[450px] border border-slate-200 dark:border-slate-700/80 rounded-[16px] shadow-sm bg-white dark:bg-slate-900/50">
+                        <div className="overflow-x-auto border border-slate-200 dark:border-slate-700/80 rounded-[16px] shadow-sm bg-white dark:bg-slate-900/50">
                             <table className="w-full text-left relative min-w-[600px]">
                                 <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 uppercase text-[10px] font-black tracking-widest transition-colors duration-300 sticky top-0 z-10 backdrop-blur-md border-b border-slate-200 dark:border-slate-700/80 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
                                     <tr>
@@ -433,7 +548,15 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                                             <td colSpan={5} className="px-6 py-20 text-center text-slate-400 dark:text-slate-500 italic font-medium uppercase tracking-[0.2em] text-[10px] transition-colors duration-300">No collection data found for the selected period in this branch.</td>
                                         </tr>
                                     ) : pastDueCollectionData.map((d, i) => (
-                                        <tr key={i} className="group hover:bg-[#F5F7F6] dark:hover:bg-slate-800/50 transition-all duration-300 cursor-pointer">
+                                        <tr
+                                            key={i}
+                                            onClick={() => {
+                                                setSelectedCollectionCollector(d.collector);
+                                                setSelectedCollectionDay(null);
+                                            }}
+                                            className="group hover:bg-[#F5F7F6] dark:hover:bg-slate-800/50 transition-all duration-300 cursor-pointer"
+                                            title={`Open daily collection for ${d.collector}`}
+                                        >
                                             <td className="px-6 py-4">
                                                 <div className="font-medium text-[13px] text-slate-400 dark:text-slate-500 uppercase tracking-tight transition-colors duration-300">{d.area}</div>
                                             </td>
@@ -447,12 +570,18 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                                             </td>
                                             <td className="px-6 py-4 text-center text-slate-600 dark:text-slate-400 transition-colors duration-300">
                                                 <span className="bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider whitespace-nowrap border border-emerald-100 dark:border-emerald-800/50 transition-colors duration-300">
-                                                    {new Date(d.startDate).toLocaleDateString([], { month: 'short', day: 'numeric' })} - {new Date(d.endDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                                                    {formatDateLabel(d.startDate, { month: 'short', day: 'numeric' })} - {formatDateLabel(d.endDate, { month: 'short', day: 'numeric', year: 'numeric' })}
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 text-right font-black text-emerald-600 dark:text-emerald-400 text-[15px] transition-colors duration-300">₱{d.amount.toLocaleString()}</td>
                                         </tr>
                                     ))}
+                                    {pastDueCollectionData.length > 0 && (
+                                        <tr className="bg-emerald-50/50 dark:bg-emerald-900/20 border-t-2 border-emerald-100 dark:border-emerald-800/50">
+                                            <td colSpan={4} className="px-6 py-4 text-right font-black text-slate-700 dark:text-slate-300 uppercase tracking-widest text-[11px]">Grand Total</td>
+                                            <td className="px-6 py-4 text-right font-black text-emerald-700 dark:text-emerald-400 text-[16px]">₱{pastDueCollectionData.reduce((sum, d) => sum + d.amount, 0).toLocaleString()}</td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>
@@ -510,6 +639,187 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                     </div>
                 )}
             </div>
+            {selectedReportedCollector && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+                    <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+                        <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-emerald-600 dark:text-emerald-400">Reported Past Due Details</p>
+                                <h3 className="mt-1 text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-white">{selectedReportedCollector}</h3>
+                                <p className="mt-2 text-xs font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                                    {months.find(m => m.value === fromMonth)?.label} {fromYear} - {months.find(m => m.value === toMonth)?.label} {toYear}
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setSelectedReportedCollector(null)}
+                                className="rounded-full p-2 text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                                title="Close reported past due details"
+                            >
+                                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+
+                        <div className="min-h-0 overflow-y-auto p-5">
+                            <div className="mb-4 flex items-center justify-between rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-4 dark:border-emerald-900/70 dark:bg-emerald-900/20">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700/70 dark:text-emerald-300/70">Total Reported</p>
+                                    <p className="mt-1 text-sm font-bold text-emerald-900 dark:text-emerald-100">{selectedReportedLoans.length} account{selectedReportedLoans.length === 1 ? '' : 's'}</p>
+                                </div>
+                                <p className="text-xl font-black text-emerald-800 dark:text-emerald-200">
+                                    ₱{selectedReportedLoans.reduce((sum, loan) => sum + loan.outstandingBalance, 0).toLocaleString()}
+                                </p>
+                            </div>
+
+                            <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+                                <table className="w-full min-w-[780px] text-left text-sm">
+                                    <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                        <tr>
+                                            <th className="px-4 py-3">Client</th>
+                                            <th className="px-4 py-3">Code</th>
+                                            <th className="px-4 py-3">Reported Month</th>
+                                            <th className="px-4 py-3">Due Date</th>
+                                            <th className="px-4 py-3 text-right">Reported Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
+                                        {selectedReportedLoans.map(loan => (
+                                            <tr key={loan.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                                                <td className="px-4 py-3">
+                                                    <p className="font-black uppercase text-slate-900 dark:text-white">{loan.borrowerName}</p>
+                                                    <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500">{loan.barangay}, {loan.city}</p>
+                                                </td>
+                                                <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{loan.code}</td>
+                                                <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{formatDateLabel(`${loan.monthReported}-01`, { month: 'long', year: 'numeric' })}</td>
+                                                <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{formatDateLabel((loan.dueDate || '').substring(0, 10))}</td>
+                                                <td className="px-4 py-3 text-right font-black text-emerald-700 dark:text-emerald-300">₱{loan.outstandingBalance.toLocaleString()}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {selectedCollectionCollector && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+                    <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+                        <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-emerald-600 dark:text-emerald-400">Daily Collection Report</p>
+                                <h3 className="mt-1 text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-white">{selectedCollectionCollector}</h3>
+                                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-black uppercase tracking-widest">
+                                    <span className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+                                        Collection: {formatDateLabel(collectionFilterMeta.filterStart, { month: 'short', day: 'numeric' })} - {formatDateLabel(collectionFilterMeta.filterEnd)}
+                                    </span>
+                                    <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                                        Due: {collectionFilterMeta.dueDateRangeDisplay}
+                                    </span>
+                                </div>
+                            </div>
+                            <button
+                                onClick={closeCollectionModal}
+                                className="rounded-full p-2 text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                                title="Close daily collection report"
+                            >
+                                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+
+                        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[0.9fr_1.4fr]">
+                            <div className="min-h-0 overflow-y-auto border-b border-slate-200 bg-slate-50/80 p-5 dark:border-slate-700 dark:bg-slate-950/40 lg:border-b-0 lg:border-r">
+                                <div className="mb-4 flex items-center justify-between gap-3">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Daily Totals</p>
+                                        <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-300">Click a day to view client payments</p>
+                                    </div>
+                                    <span className="rounded-lg bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-sm dark:bg-slate-800 dark:text-emerald-300">
+                                        ₱{selectedCollectorDailyCollections.reduce((sum, day) => sum + day.amount, 0).toLocaleString()}
+                                    </span>
+                                </div>
+
+                                <div className="space-y-2">
+                                    {selectedCollectorDailyCollections.map(day => (
+                                        <button
+                                            key={day.date}
+                                            onClick={() => setSelectedCollectionDay(day.date)}
+                                            className={`w-full rounded-xl border p-4 text-left transition-all ${
+                                                selectedCollectionDay === day.date
+                                                    ? 'border-emerald-300 bg-emerald-50 shadow-sm dark:border-emerald-800 dark:bg-emerald-900/20'
+                                                    : 'border-slate-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-emerald-800 dark:hover:bg-emerald-900/10'
+                                            }`}
+                                        >
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-sm font-black uppercase text-slate-900 dark:text-white">{formatDateLabel(day.date)}</p>
+                                                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">{day.count} payment{day.count === 1 ? '' : 's'}</p>
+                                                </div>
+                                                <p className="text-base font-black text-emerald-700 dark:text-emerald-300">₱{day.amount.toLocaleString()}</p>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="min-h-0 overflow-y-auto p-5">
+                                {!selectedCollectionDay ? (
+                                    <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center dark:border-slate-700 dark:bg-slate-950/30">
+                                        <div>
+                                            <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-400 dark:text-slate-500">Select Collection Day</p>
+                                            <p className="mt-2 text-sm font-semibold text-slate-500 dark:text-slate-400">Daily client/payment details will appear here.</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Collection Details</p>
+                                                <h4 className="mt-1 text-xl font-black text-slate-900 dark:text-white">{formatDateLabel(selectedCollectionDay)}</h4>
+                                                <p className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+                                                    {selectedDayDetails.length} client payment{selectedDayDetails.length === 1 ? '' : 's'} matching selected collection interval and due date range
+                                                </p>
+                                            </div>
+                                            <span className="rounded-xl bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                                                ₱{selectedDayDetails.reduce((sum, detail) => sum + detail.payment.amount, 0).toLocaleString()}
+                                            </span>
+                                        </div>
+
+                                        <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+                                            <table className="w-full min-w-[760px] text-left text-sm">
+                                                <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                                    <tr>
+                                                        <th className="px-4 py-3">Client</th>
+                                                        <th className="px-4 py-3">Code</th>
+                                                        <th className="px-4 py-3">Due Date</th>
+                                                        <th className="px-4 py-3">OR / Ref</th>
+                                                        <th className="px-4 py-3 text-right">Amount</th>
+                                                        <th className="px-4 py-3">Recorder</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
+                                                    {selectedDayDetails.map(({ loan, payment }) => (
+                                                        <tr key={`${loan.id}-${payment.id}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                                                            <td className="px-4 py-3">
+                                                                <p className="font-black uppercase text-slate-900 dark:text-white">{loan.borrowerName}</p>
+                                                                <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500">{loan.barangay}, {loan.city}</p>
+                                                            </td>
+                                                            <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{loan.code}</td>
+                                                            <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{formatDateLabel((loan.dueDate || '').substring(0, 10))}</td>
+                                                            <td className="px-4 py-3 font-black text-emerald-700 dark:text-emerald-300">{payment.orNumber}</td>
+                                                            <td className="px-4 py-3 text-right font-black text-emerald-700 dark:text-emerald-300">₱{payment.amount.toLocaleString()}</td>
+                                                            <td className="px-4 py-3 text-xs font-bold text-slate-500 dark:text-slate-400">{payment.recorder}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

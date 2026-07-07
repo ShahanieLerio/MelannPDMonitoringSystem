@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-06-19T01:26:43.143Z",
+  "activePortfolioRange": {
+    "start": "2016-01-01",
+    "end": "2026-03-31"
+  },
+  "mode": "dry-run",
+  "counts": {
+    "before_start": 0,
+    "after_end": 0,
+    "apr_2026_onward": 0,
+    "missing_due_date": 0
+  },
+  "affectedCount": 0,
+  "affectedLoans": []
+}

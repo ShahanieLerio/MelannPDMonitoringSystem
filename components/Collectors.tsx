@@ -15,6 +15,7 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
   const [name, setName] = useState('');
   const [nickname, setNickname] = useState('');
   const [address, setAddress] = useState('');
+  const [assignedSupervisor, setAssignedSupervisor] = useState('');
   const [photoUrl, setPhotoUrl] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
@@ -77,13 +78,14 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
 
     const finalName = name.trim();
     const finalNick = nickname.trim().toUpperCase();
+    const finalSupervisor = assignedSupervisor.trim();
 
     try {
       if (editingCollector) {
-        await store.updateCollector(editingCollector.id, finalName, branchToUse, address.trim(), finalNick, photoUrl);
+        await store.updateCollector(editingCollector.id, finalName, branchToUse, address.trim(), finalNick, photoUrl, finalSupervisor);
         showSuccess("Collector successfully updated!");
       } else {
-        await store.addCollector(finalName, branchToUse, address.trim(), finalNick, photoUrl);
+        await store.addCollector(finalName, branchToUse, address.trim(), finalNick, photoUrl, finalSupervisor);
         showSuccess("Collector successfully added!");
       }
       closeModal();
@@ -111,12 +113,14 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
       setName(c.name);
       setNickname(c.nickname || '');
       setAddress(c.address || '');
+      setAssignedSupervisor(c.assignedSupervisor || '');
       setPhotoUrl(c.photoUrl || '');
     } else {
       setEditingCollector(null);
       setName('');
       setNickname('');
       setAddress('');
+      setAssignedSupervisor('');
       setPhotoUrl('');
     }
     setIsModalOpen(true);
@@ -183,6 +187,11 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
                   {c.nickname && <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded transition-colors duration-300">@{c.nickname}</span>}
                   <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest border border-slate-100 dark:border-slate-700 px-1.5 py-0.5 rounded transition-colors duration-300">{c.branch}</span>
                 </div>
+                {c.assignedSupervisor && (
+                  <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                    Supervisor: <span className="text-slate-800 dark:text-slate-100">{c.assignedSupervisor}</span>
+                  </p>
+                )}
               </div>
             </div>
             {c.address && (
@@ -203,12 +212,12 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn transition-colors duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[3rem] shadow-2xl relative overflow-hidden animate-slideUp border border-white/20 dark:border-slate-700 transition-colors duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md max-h-[92vh] rounded-[3rem] shadow-2xl relative overflow-hidden animate-slideUp border border-white/20 dark:border-slate-700 transition-colors duration-300 flex flex-col">
             <div className="bg-[#064e3b] dark:bg-slate-800 p-10 text-white transition-colors duration-300">
               <h2 className="text-2xl font-black tracking-tight">{editingCollector ? 'Update Record' : 'Enroll Personnel'}</h2>
               <p className="text-emerald-100/60 dark:text-emerald-400/60 text-xs font-bold uppercase tracking-widest mt-1 transition-colors duration-300">Assigning to: {selectedBranch === Branch.ALL ? Branch.NAVAL : selectedBranch}</p>
             </div>
-            <div className="p-10 space-y-6">
+            <div className="p-10 space-y-6 overflow-y-auto">
               <div className="flex items-center gap-4">
                 {photoUrl ? (
                   <img
@@ -257,6 +266,15 @@ const Collectors: React.FC<CollectorsProps> = ({ selectedBranch }) => {
                   value={nickname}
                   onChange={e => setNickname(e.target.value.toUpperCase())}
                   placeholder="e.g. ALDIE"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1 transition-colors duration-300">Assigned Supervisor</label>
+                <input
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-2xl focus:ring-2 focus:ring-emerald-500 font-black text-slate-800 dark:text-white outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                  value={assignedSupervisor}
+                  onChange={e => setAssignedSupervisor(e.target.value)}
+                  placeholder="e.g. Branch Supervisor"
                 />
               </div>
               <div className="space-y-2">

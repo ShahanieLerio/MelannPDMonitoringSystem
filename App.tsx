@@ -314,7 +314,10 @@ const App: React.FC = () => {
   const notifications = useMemo(() => {
     if (!currentUser) return [];
     const pendingUserCount = canManageUsers(currentUser.role)
-      ? store.getUsers().filter(user => user.status === UserStatus.PENDING).length
+      ? store.getUsers().filter(user =>
+        user.status === UserStatus.PENDING &&
+        (isAllBranchRole(currentUser.role) || user.branch === currentUser.branch)
+      ).length
       : 0;
     const loans = store.getLoans(selectedBranch);
     const demandLetters = store.getDemandLetters(selectedBranch);
@@ -361,7 +364,10 @@ const App: React.FC = () => {
 
   const pendingUserCount = useMemo(() => {
     if (!currentUser || !canManageUsers(currentUser.role)) return 0;
-    return store.getUsers().filter(user => user.status === UserStatus.PENDING).length;
+    return store.getUsers().filter(user =>
+      user.status === UserStatus.PENDING &&
+      (isAllBranchRole(currentUser.role) || user.branch === currentUser.branch)
+    ).length;
   }, [currentUser, storeVersion]);
 
   useEffect(() => {

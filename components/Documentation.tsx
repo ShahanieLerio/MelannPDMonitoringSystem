@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Branch, UserRole } from '../types.ts';
+import { Branch, UserRole, getUserRoleLabel } from '../types.ts';
 
 interface DocumentationProps {
   selectedBranch: Branch;
@@ -33,9 +33,9 @@ const docSections: DocSection[] = [
     eyebrow: 'Security',
     summary: 'Access is controlled by user role, account status, and assigned branch.',
     items: [
-      'SUPER_ADMIN can view All Branches, Naval Branch, and Ormoc Branch, and can manage users.',
-      'NAVAL_USER is scoped to Naval Branch data.',
-      'ORMOC_USER is scoped to Ormoc Branch data.',
+      'Account registration includes Collector, Cashier, Supervisor, IT/Accounting Clerk, Branch Manager, Operations Manager, Executive Vice President, President, and Super Admin roles.',
+      'Collector and Supervisor accounts are intended for assigned collector/client scopes; Cashier can view all data with selected edit access.',
+      'IT/Accounting Clerk, Operations Manager, Executive Vice President, President, and Super Admin can work across all branches; only Super Admin manages user registrations.',
       'PENDING and DEACTIVATED users cannot log in; ACTIVE users can access the app.',
       'User records are permanent. Administrators change status instead of deleting accounts.'
     ]
@@ -137,7 +137,7 @@ const quickFacts = [
   { label: 'Frontend', value: 'React 19 + Vite' },
   { label: 'Backend', value: 'Express bridge API' },
   { label: 'Database', value: 'PostgreSQL' },
-  { label: 'API Base', value: 'http://localhost:5000/api' },
+  { label: 'API Base', value: 'http://<your-ip>:5000/api (dynamic)' },
   { label: 'App Port', value: 'http://localhost:3000' },
   { label: 'Default User', value: 'admin' }
 ];
@@ -181,7 +181,7 @@ const Documentation: React.FC<DocumentationProps> = ({ selectedBranch, role }) =
                 Melann Lending Operating Manual
               </h2>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-300 font-medium">
-                A built-in reference for daily users, branch managers, and administrators. Current context: {selectedBranch} / {role.replace('_', ' ')}.
+                A built-in reference for daily users, branch managers, and administrators. Current context: {selectedBranch} / {getUserRoleLabel(role)}.
               </p>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 lg:w-[480px]">

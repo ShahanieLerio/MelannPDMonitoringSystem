@@ -1,0 +1,2 @@
+localLoanId,sourceLoanId,code,borrowerName,localDateRelease,jcashDateRelease,releaseDiffDays,localMaturity,jcashMaturity,maturityDiffDays,localPaymentCount,jcashPaymentCount,missingPaymentCount,sameDatePaymentDiffCount,localRunningBalance,jcashRunningBalance,localStatus,jcashStatus,skipped,notes
+"wm4sjwa","3079","686","Divinagracia, Nimfa","2018-03-06","2018-03-06","0","2018-04-19","2018-04-20","-1","0","5021","5021","0","340","0","NM","Full Paid","true","Skipped automatic payment migration: 5021 source payments exceeds 365."

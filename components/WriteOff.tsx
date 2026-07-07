@@ -17,6 +17,7 @@ type SortKey = 'client' | 'maturityDate' | 'decisionDate' | 'runningBalance';
 type SortDirection = 'asc' | 'desc';
 
 const currency = (value: number) => `PHP ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const compactCurrency = (value: number) => `PHP ${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 const formatDate = (value: string) => {
   const date = new Date(value);
@@ -129,6 +130,15 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
   const totalPendingAmount = pendingRows.reduce((sum, row) => sum + row.loan.runningBalance, 0);
   const totalOfficialAmount = officialRows.reduce((sum, row) => sum + row.loan.runningBalance, 0);
   const canApprove = canApproveWriteOff(currentUser.role);
+  const getTotalLoanAmount = (loan: Loan) => Number(loan.totalLoan || loan.outstandingBalance || loan.runningBalance || 0);
+  const getTotalCollected = (loan: Loan) => {
+    const paymentTotal = (loan.payments || [])
+      .filter(payment => payment.status !== 'REVERSED')
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    return paymentTotal || Number(loan.amountCollected || 0);
+  };
+  const activeTotalLoanAmount = activeRows.reduce((sum, row) => sum + getTotalLoanAmount(row.loan), 0);
+  const activeTotalCollected = activeRows.reduce((sum, row) => sum + getTotalCollected(row.loan), 0);
 
   const approveWriteOff = async (row: WriteOffRow) => {
     if (!canApprove) {
@@ -177,33 +187,35 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
 
   const RowTable = ({ rows }: { rows: WriteOffRow[] }) => (
     <div className="overflow-hidden rounded-3xl border border-slate-200/60 bg-white shadow-xl shadow-slate-200/20 dark:border-slate-700/60 dark:bg-slate-900 dark:shadow-none">
-      <div className="overflow-x-auto">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50/80 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 backdrop-blur-md dark:bg-slate-950/50 dark:text-slate-400 border-b border-slate-200/60 dark:border-slate-700/60">
+      <div className="overflow-hidden">
+        <table className="w-full table-fixed text-left">
+          <thead className="bg-slate-50/80 text-[8px] font-black uppercase tracking-[0.08em] text-slate-500 backdrop-blur-md dark:bg-slate-950/50 dark:text-slate-400 border-b border-slate-200/60 dark:border-slate-700/60">
             <tr>
-              <th className="px-3 py-4"><SortButton columnKey="client" label="Client Details" /></th>
-              <th className="px-3 py-4">Collector</th>
-              <th className="px-3 py-4"><SortButton columnKey="maturityDate" label="Maturity Date" /></th>
-              <th className="px-3 py-4"><SortButton columnKey="decisionDate" label="Decision Date" /></th>
-              <th className="px-3 py-4">Reason & Evidence</th>
-              <th className="px-3 py-4">Deciding Management Officer</th>
-              <th className="px-3 py-4 text-right"><SortButton columnKey="runningBalance" label="Running Balance" align="right" /></th>
-              <th className="px-3 py-4 text-center">Status</th>
-              {activeTab === 'pending' && <th className="px-3 py-4 text-right">Action</th>}
+              <th className="w-[17%] px-2 py-3"><SortButton columnKey="client" label="Client" /></th>
+              <th className="w-[8%] px-2 py-3">Collector</th>
+              <th className="w-[8%] px-2 py-3"><SortButton columnKey="maturityDate" label="Maturity" /></th>
+              <th className="w-[8%] px-2 py-3"><SortButton columnKey="decisionDate" label="Decision" /></th>
+              <th className="w-[15%] px-2 py-3">Reason</th>
+              <th className="w-[10%] px-2 py-3">Officer</th>
+              <th className="w-[9%] px-2 py-3 text-right">Total Loan</th>
+              <th className="w-[9%] px-2 py-3 text-right">Collected</th>
+              <th className="w-[9%] px-2 py-3 text-right"><SortButton columnKey="runningBalance" label="Balance" align="right" /></th>
+              <th className="w-[7%] px-2 py-3 text-center">Status</th>
+              {activeTab === 'pending' && <th className="w-[8%] px-2 py-3 text-right">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {rows.map(row => (
               <tr key={row.disposition.id} className="group transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/50">
-                <td className="px-3 py-3">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-50 dark:from-emerald-900/40 dark:to-teal-900/20 ring-1 ring-emerald-500/20 text-emerald-700 dark:text-emerald-400 font-black text-sm">
+                <td className="px-2 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-50 dark:from-emerald-900/40 dark:to-teal-900/20 ring-1 ring-emerald-500/20 text-emerald-700 dark:text-emerald-400 font-black text-xs">
                       {row.loan.borrowerName.charAt(0)}
                     </div>
-                    <div>
-                      <div className="font-black text-slate-900 dark:text-white transition-colors group-hover:text-emerald-700 dark:group-hover:text-emerald-400">{row.loan.borrowerName}</div>
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-black text-slate-900 dark:text-white transition-colors group-hover:text-emerald-700 dark:group-hover:text-emerald-400" title={row.loan.borrowerName}>{row.loan.borrowerName}</div>
                       <div className="mt-0.5 flex items-center gap-2">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">ID: {row.loan.code}</span>
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">ID: {row.loan.code}</span>
                         {row.disposition.status === DispositionStatus.APPROVED && (
                           <span className="inline-flex items-center rounded-full bg-emerald-100/80 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
                             <span className="mr-1 h-1 w-1 rounded-full bg-emerald-500"></span> Approved
@@ -213,28 +225,28 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
                     </div>
                   </div>
                 </td>
-                <td className="px-3 py-3">
-                  <div className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                    <svg className="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <td className="px-2 py-3">
+                  <div className="inline-flex max-w-full items-center gap-1 rounded-lg bg-slate-100 px-1.5 py-1 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    <svg className="h-3 w-3 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
-                    {row.loan.collector}
+                    <span className="truncate">{row.loan.collector}</span>
                   </div>
                 </td>
-                <td className="px-3 py-3">
+                <td className="px-2 py-3">
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{formatDate(row.loan.dueDate)}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Maturity</span>
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">{formatDate(row.loan.dueDate)}</span>
+                    <span className="text-[8px] font-bold uppercase tracking-widest text-slate-400">Maturity</span>
                   </div>
                 </td>
-                <td className="px-3 py-3">
+                <td className="px-2 py-3">
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{formatDate(row.disposition.decisionDate)}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Decision</span>
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">{formatDate(row.disposition.decisionDate)}</span>
+                    <span className="text-[8px] font-bold uppercase tracking-widest text-slate-400">Decision</span>
                   </div>
                 </td>
-                <td className="max-w-[200px] px-3 py-3 whitespace-normal">
-                  <div className="text-sm font-semibold text-slate-700 dark:text-slate-200 line-clamp-2" title={row.disposition.reason}>
+                <td className="px-2 py-3 whitespace-normal">
+                  <div className="line-clamp-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200" title={row.disposition.reason}>
                     {row.disposition.reason}
                   </div>
                   {row.disposition.evidence.length > 0 && (
@@ -246,18 +258,24 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
                     </div>
                   )}
                 </td>
-                <td className="px-3 py-3">
+                <td className="px-2 py-3">
                   <div className="inline-flex items-center gap-2">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                       {row.disposition.decidedBy.charAt(0).toUpperCase()}
                     </div>
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">{row.disposition.decidedBy}</span>
+                    <span className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-200" title={row.disposition.decidedBy}>{row.disposition.decidedBy}</span>
                   </div>
                 </td>
-                <td className="px-3 py-3 text-right">
-                  <div className="font-black text-slate-900 dark:text-white tabular-nums tracking-tight">{currency(row.loan.runningBalance)}</div>
+                <td className="px-2 py-3 text-right">
+                  <div className="text-[11px] font-black tabular-nums tracking-tight text-slate-700 dark:text-slate-200">{compactCurrency(getTotalLoanAmount(row.loan))}</div>
                 </td>
-                <td className="px-3 py-3 text-center">
+                <td className="px-2 py-3 text-right">
+                  <div className="text-[11px] font-black tabular-nums tracking-tight text-emerald-700 dark:text-emerald-300">{compactCurrency(getTotalCollected(row.loan))}</div>
+                </td>
+                <td className="px-2 py-3 text-right">
+                  <div className="text-[11px] font-black text-slate-900 dark:text-white tabular-nums tracking-tight">{compactCurrency(row.loan.runningBalance)}</div>
+                </td>
+                <td className="px-2 py-3 text-center">
                   <span className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-widest shadow-sm ring-1 ring-inset ${
                     row.disposition.status === DispositionStatus.PENDING_REVIEW
                       ? 'bg-amber-50 text-amber-700 ring-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20'
@@ -268,12 +286,12 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
                   </span>
                 </td>
                 {activeTab === 'pending' && (
-                  <td className="px-3 py-3 text-right">
+                  <td className="px-2 py-3 text-right">
                     <button
                       type="button"
                       disabled={approvingId === row.disposition.id}
                       onClick={() => approveWriteOff(row)}
-                      className="group relative inline-flex items-center justify-center overflow-hidden rounded-xl bg-slate-900 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-xl hover:shadow-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                      className="group relative inline-flex items-center justify-center overflow-hidden rounded-xl bg-slate-900 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-xl hover:shadow-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none dark:bg-emerald-600 dark:hover:bg-emerald-500"
                     >
                       <div className="absolute inset-0 flex h-full w-full justify-center [transform:skew(-12deg)_translateX(-100%)] group-hover:duration-1000 group-hover:[transform:skew(-12deg)_translateX(100%)]">
                         <div className="relative h-full w-8 bg-white/20" />
@@ -303,7 +321,7 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={activeTab === 'pending' ? 9 : 8} className="px-4 py-24 text-center">
+                <td colSpan={activeTab === 'pending' ? 11 : 10} className="px-4 py-24 text-center">
                   <div className="mx-auto flex max-w-sm flex-col items-center justify-center gap-3">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800">
                       <svg className="h-8 w-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -342,7 +360,7 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
               Review and finalize prospects for write-off. Clients escalated from the Action Tracker are securely queued here for your executive decision.
             </p>
           </div>
-          <div className="flex flex-col sm:flex-row gap-4 lg:shrink-0">
+          <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:w-auto xl:grid-cols-4 xl:shrink-0">
             <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl transition-all hover:bg-white/10 hover:shadow-lg hover:shadow-amber-500/10">
               <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100"></div>
               <div className="relative z-10 flex items-center justify-between gap-8">
@@ -367,6 +385,22 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
                   <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Total Value</div>
                   <div className="mt-1 text-sm font-black text-emerald-200">{currency(totalOfficialAmount)}</div>
                 </div>
+              </div>
+            </div>
+            <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl transition-all hover:bg-white/10 hover:shadow-lg hover:shadow-blue-500/10">
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100"></div>
+              <div className="relative z-10">
+                <div className="text-[10px] font-black uppercase tracking-widest text-blue-300/80">Total Loan Amount</div>
+                <div className="mt-2 text-base font-black text-blue-100 tabular-nums">{currency(activeTotalLoanAmount)}</div>
+                <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-500">{activeTab === 'pending' ? 'Pending Review' : 'Official'} Set</div>
+              </div>
+            </div>
+            <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl transition-all hover:bg-white/10 hover:shadow-lg hover:shadow-teal-500/10">
+              <div className="absolute inset-0 bg-gradient-to-br from-teal-500/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100"></div>
+              <div className="relative z-10">
+                <div className="text-[10px] font-black uppercase tracking-widest text-teal-300/80">Total Collected</div>
+                <div className="mt-2 text-base font-black text-teal-100 tabular-nums">{currency(activeTotalCollected)}</div>
+                <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-500">{activeTab === 'pending' ? 'Pending Review' : 'Official'} Set</div>
               </div>
             </div>
           </div>

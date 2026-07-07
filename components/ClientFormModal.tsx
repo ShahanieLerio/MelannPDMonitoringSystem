@@ -11,9 +11,10 @@ interface ClientFormModalProps {
   selectedBranch: Branch;
   onClose: () => void;
   onViewProfile?: (loan: Loan) => void;
+  onSave?: (data: any) => Promise<void>;
 }
 
-const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, selectedBranch, onClose, onViewProfile }) => {
+const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, selectedBranch, onClose, onViewProfile, onSave }) => {
   const isEdit = !!loan;
   const [formData, setFormData] = useState({
     code: '',
@@ -21,6 +22,9 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     lastName: '',
     monthReported: '',
     dueDate: '',
+    dateRelease: '',
+    principal: '' as string | number,
+    totalLoan: '' as string | number,
     outstandingBalance: '' as string | number,
     area: '',
     city: '',
@@ -68,6 +72,9 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
         lastName: loan.lastName || '',
         monthReported: loan.monthReported || '',
         dueDate: loan.dueDate || '',
+        dateRelease: loan.dateRelease || '',
+        principal: loan.principal ? loan.principal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : '',
+        totalLoan: loan.totalLoan ? loan.totalLoan.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : '',
         outstandingBalance: loan.outstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }),
         area: loan.area || '',
         city: loan.city || '',
@@ -116,14 +123,14 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     }
   };
 
-  const handleBalanceChange = (val: string) => {
+  const handleBalanceChange = (val: string, field: 'outstandingBalance' | 'principal' | 'totalLoan') => {
     const clean = val.replace(/[^0-9.]/g, '');
     const parts = clean.split('.');
     if (parts.length > 2) return;
     if (parts[1] && parts[1].length > 2) return;
     
-    setFieldErrors(prev => ({ ...prev, outstandingBalance: '' }));
-    setFormData({ ...formData, outstandingBalance: clean });
+    setFieldErrors(prev => ({ ...prev, [field]: '' }));
+    setFormData({ ...formData, [field]: clean });
   };
 
   const formatWithCommas = (val: string | number) => {
@@ -190,6 +197,9 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
       lastName: '',
       monthReported: '',
       dueDate: '',
+      dateRelease: '',
+      principal: '',
+      totalLoan: '',
       outstandingBalance: '',
       area: '',
       city: '',
@@ -256,14 +266,24 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     // Always prioritize storing the Nickname if it exists
     const finalData = {
       ...formData,
+      principal: parseFloat(formData.principal.toString().replace(/,/g, '')) || null,
+      totalLoan: parseFloat(formData.totalLoan.toString().replace(/,/g, '')) || null,
       outstandingBalance: parseFloat(formData.outstandingBalance.toString().replace(/,/g, '')) || 0,
       collector: collectorMatch.nickname || collectorMatch.name
     };
 
-    const performSave = async () => {
+      const performSave = async () => {
       setIsSaving(true);
       try {
-        if (isEdit && loan) {
+        if (onSave) {
+          await onSave(finalData);
+          setSuccessConfig({
+            isOpen: true,
+            title: 'Client Record Updated',
+            message: 'The client record has been successfully updated.',
+            type: 'success'
+          });
+        } else if (isEdit && loan) {
           await store.updateLoan(loan.id, finalData, currentUser.username, currentUser.role);
           setSuccessConfig({
             isOpen: true,
@@ -433,7 +453,22 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
                 <h3 className="font-bold text-gray-800 text-sm tracking-wide">LOAN DETAILS</h3>
               </div>
               
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4">
+               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="relative">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                  <label className={activeFixedIconLabelStyle}>Date Release</label>
+                  <input
+                    name="dateRelease"
+                    type="date"
+                    className={`peer w-full bg-white border ${fieldErrors.dateRelease ? 'border-red-500 bg-red-50 focus:border-red-500' : 'border-gray-200'} pl-10 pr-3 pt-5 pb-2 rounded-xl text-gray-800 text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all ${nativeDatePickerClass}`}
+                    value={formData.dateRelease}
+                    onChange={e => {
+                      setFormData({ ...formData, dateRelease: e.target.value });
+                      if (fieldErrors.dateRelease) setFieldErrors(p => ({ ...p, dateRelease: '' }));
+                    }}
+                  />
+                </div>
+
                 <div className="relative">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
                   <label className={activeFixedIconLabelStyle}>Monthly Reported <span className="text-red-500">*</span></label>
@@ -465,10 +500,54 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
                   />
                   {fieldErrors.dueDate && <p className="text-[11px] text-red-500 font-medium px-1 mt-1">{fieldErrors.dueDate}</p>}
                 </div>
+
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black z-10">₱</span>
+                  <label className="absolute left-10 top-1 text-[10px] font-medium text-gray-400 pointer-events-none z-10">Principal</label>
+                  <input
+                    name="principal"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Enter amount"
+                    className="w-full bg-white border border-gray-200 px-3 pl-10 pt-5 pb-2 rounded-xl font-bold text-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all placeholder-gray-400 text-right"
+                    value={formatWithCommas(formData.principal)}
+                    onFocus={(e) => {
+                      const raw = e.target.value.replace(/,/g, '');
+                      setFormData({ ...formData, principal: raw });
+                    }}
+                    onBlur={(e) => {
+                      const raw = e.target.value.replace(/,/g, '');
+                      setFormData({ ...formData, principal: raw });
+                    }}
+                    onChange={e => handleBalanceChange(e.target.value, 'principal')}
+                  />
+                </div>
+
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black z-10">₱</span>
+                  <label className="absolute left-10 top-1 text-[10px] font-medium text-gray-400 pointer-events-none z-10">Total Loan</label>
+                  <input
+                    name="totalLoan"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Enter amount"
+                    className="w-full bg-white border border-gray-200 px-3 pl-10 pt-5 pb-2 rounded-xl font-bold text-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all placeholder-gray-400 text-right"
+                    value={formatWithCommas(formData.totalLoan)}
+                    onFocus={(e) => {
+                      const raw = e.target.value.replace(/,/g, '');
+                      setFormData({ ...formData, totalLoan: raw });
+                    }}
+                    onBlur={(e) => {
+                      const raw = e.target.value.replace(/,/g, '');
+                      setFormData({ ...formData, totalLoan: raw });
+                    }}
+                    onChange={e => handleBalanceChange(e.target.value, 'totalLoan')}
+                  />
+                </div>
                 
                 <div className="relative">
                   <span className={`absolute left-4 top-1/2 -translate-y-1/2 ${fieldErrors.outstandingBalance ? 'text-red-600' : 'text-emerald-700'} font-black z-10`}>₱</span>
-                  <label className={`absolute left-10 top-1 text-[10px] font-medium ${fieldErrors.outstandingBalance ? 'text-red-600' : 'text-emerald-600'} pointer-events-none z-10`}>Outstanding Balance <span className="text-red-500">*</span></label>
+                  <label className={`absolute left-10 top-1 text-[10px] font-medium ${fieldErrors.outstandingBalance ? 'text-red-600' : 'text-emerald-600'} pointer-events-none z-10`}>Reported Amount <span className="text-red-500">*</span></label>
                   <input
                     name="outstandingBalance"
                     type="text"
@@ -485,7 +564,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
                       setFormData({ ...formData, outstandingBalance: raw });
                       if (!raw) setFieldErrors(p => ({ ...p, outstandingBalance: 'Initial balance is required' }));
                     }}
-                    onChange={e => handleBalanceChange(e.target.value)}
+                    onChange={e => handleBalanceChange(e.target.value, 'outstandingBalance')}
                   />
                   {fieldErrors.outstandingBalance && (
                     <p className="text-[11px] text-red-500 font-medium px-1 mt-1 flex items-center gap-1.5 justify-end">

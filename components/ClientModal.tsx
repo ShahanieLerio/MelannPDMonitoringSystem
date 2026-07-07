@@ -17,6 +17,17 @@ const ClientModal: React.FC<ClientModalProps> = ({ loan, onClose }) => {
       .sort((a, b) => b.monthReported.localeCompare(a.monthReported));
   }, [loan.code]);
 
+  const sortedPayments = useMemo(() => {
+    return [...loan.payments].sort((a, b) => {
+      const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+
+      const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      return bCreated - aCreated;
+    });
+  }, [loan.payments]);
+
   const activeRecord = enrollmentHistory.find(l => l.status !== MovingStatus.PAID) || enrollmentHistory[0];
 
   const getStatusBadge = (status: MovingStatus) => {
@@ -97,27 +108,32 @@ const ClientModal: React.FC<ClientModalProps> = ({ loan, onClose }) => {
                     <div className="grid grid-cols-2 gap-2">
                       <DetailItem 
                         icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>}
-                        label="Assigned Collector" 
-                        value={activeRecord.collector} 
+                        label="Assigned Collector"
+                        value={activeRecord.collector}
                       />
-                      <DetailItem 
+                      <DetailItem
                         icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
-                        label="Latest Reporting" 
-                        value={formatReportedMonth(activeRecord.monthReported)} 
+                        label="Month Reported"
+                        value={formatReportedMonth(activeRecord.monthReported)}
                       />
                       {activeRecord.dateRelease && (
-                        <DetailItem 
+                        <DetailItem
                           icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
-                          label="Date Release" 
-                          value={formatMMDDYYYY(activeRecord.dateRelease)} 
+                          label="Date Release"
+                          value={formatMMDDYYYY(activeRecord.dateRelease)}
                         />
                       )}
-                      <DetailItem 
+                      <DetailItem
                         icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
-                        label="Maturity Date" 
-                        value={formatMMDDYYYY(activeRecord.dueDate)} 
+                        label="Maturity Date"
+                        value={formatMMDDYYYY(activeRecord.dueDate)}
                       />
-                      <DetailItem 
+                      <DetailItem
+                        icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
+                        label="Reported Amount"
+                        value={`₱${activeRecord.outstandingBalance.toLocaleString()}`}
+                      />
+                      <DetailItem
                         icon={<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
                         label="Location Status" 
                         value={activeRecord.location === 'LOCATED' ? 'Located' : activeRecord.location} 
@@ -288,9 +304,9 @@ const ClientModal: React.FC<ClientModalProps> = ({ loan, onClose }) => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {loan.payments.map((p, idx) => (
+                      {sortedPayments.map((p, idx) => (
                         <tr key={p.id} className={`hover:bg-slate-50/80 transition-colors ${p.status === 'REVERSED' ? 'bg-red-50/30' : ''}`}>
-                          <td className="px-6 py-4 text-slate-800 font-semibold">{p.date}</td>
+                          <td className="px-6 py-4 text-slate-800 font-semibold">{formatMMDDYYYY(p.date)}</td>
                           <td className="px-6 py-4 font-bold text-emerald-700">{p.orNumber}</td>
                           <td className={`px-6 py-4 text-right font-bold ${p.status === 'REVERSED' ? 'text-slate-400 line-through' : 'text-emerald-600'}`}>
                             ₱{p.amount.toLocaleString()}
@@ -303,7 +319,7 @@ const ClientModal: React.FC<ClientModalProps> = ({ loan, onClose }) => {
                             <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${p.status === 'REVERSED' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200'}`}>
                               {p.status}
                             </span>
-                            {idx === loan.payments.length - 1 && p.status !== 'REVERSED' && (
+                            {idx === 0 && p.status !== 'REVERSED' && (
                               <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-tighter animate-pulse shadow-sm">
                                 LATEST
                               </span>

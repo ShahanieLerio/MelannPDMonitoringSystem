@@ -91,14 +91,32 @@ const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({ label, options, s
         (opt.label || "").toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    const getPluralLabel = (str: string) => {
+        const parts = str.split(' ');
+        const lastWord = parts[parts.length - 1];
+        let pluralized = lastWord;
+        
+        if (lastWord.toLowerCase().endsWith('y') && !['a', 'e', 'i', 'o', 'u'].includes(lastWord.charAt(lastWord.length - 2).toLowerCase())) {
+            pluralized = lastWord.slice(0, -1) + 'ies';
+        } else if (lastWord.toLowerCase().endsWith('s')) {
+            pluralized = lastWord;
+        } else {
+            pluralized = lastWord + 's';
+        }
+        
+        parts[parts.length - 1] = pluralized;
+        return parts.join(' ');
+    };
+
     const getDisplayLabel = () => {
-        if (selectedValues === null) return `All ${label}s`;
+        const pluralLabel = getPluralLabel(label);
+        if (selectedValues === null) return `All ${pluralLabel}`;
         if (selectedValues.length === 0) return `No ${label} Selected`;
         if (selectedValues.length === 1) {
             const option = options.find(o => o.value === selectedValues[0]);
             return option ? option.label : selectedValues[0];
         }
-        return `${selectedValues.length} ${label}s Selected`;
+        return `${selectedValues.length} ${pluralLabel} Selected`;
     };
 
     // Helper to check if a value is selected

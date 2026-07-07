@@ -1,5 +1,5 @@
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 
 interface Props {
     children: ReactNode;
@@ -10,7 +10,10 @@ interface State {
     error: Error | null;
 }
 
-class ErrorBoundary extends Component<Props, State> {
+class ErrorBoundary extends React.Component<Props, State> {
+    public declare readonly props: Readonly<Props>;
+    public declare setState: (state: State) => void;
+
     // Explicitly initialize state
     public state: State = {
         hasError: false,
@@ -38,9 +41,9 @@ class ErrorBoundary extends Component<Props, State> {
             return (
                 <div className="min-h-[400px] flex items-center justify-center p-8 bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200">
                     <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl border border-red-100 max-w-md w-full text-center space-y-6 animate-slideUp">
-                        <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto text-4xl">⚠️</div>
+                        <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto text-4xl font-black text-red-500">!</div>
                         <div>
-                            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight leading-tight">Module Encountered<br />An Error</h2>
+                            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight leading-tight">Something Went Wrong</h2>
                             <p className="text-slate-500 mt-2 font-medium text-sm">The requested feature failed to initialize properly. This may be due to missing data or a connection timeout.</p>
                         </div>
 
@@ -56,7 +59,7 @@ class ErrorBoundary extends Component<Props, State> {
                                 onClick={this.handleReload}
                                 className="w-full py-4 bg-[#064e3b] text-white font-black rounded-2xl hover:bg-black transition-all shadow-lg shadow-emerald-900/10 active:scale-95 uppercase tracking-widest text-[10px]"
                             >
-                                Refresh System View
+                                Reload Page
                             </button>
                             <button
                                 onClick={this.handleReset}

@@ -4,6 +4,7 @@ import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { store } from '../services/dataStore.ts';
 import { getLoanInsights } from '../services/geminiService.ts';
 import { MovingStatus, Branch, Loan, PaymentStatus } from '../types.ts';
+import { isDeadWriteOffLoan, isReconstructedPaymentRemark, isReportableCollectionPayment } from '../services/loanUtils.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 import * as XLSX from 'xlsx';
 
@@ -11,7 +12,7 @@ interface DashboardProps {
   selectedBranch: Branch;
 }
 
-const KpiCard: React.FC<{ title: string; value: string | number; subValue?: string; icon: string; statusIndicator?: {text: string, type: 'positive' | 'neutral' | 'critical' | 'info'} }> = ({ title, value, subValue, icon, statusIndicator }) => {
+const KpiCard: React.FC<{ title: string; value: string | number; subValue?: string; subValueEmphasis?: boolean; icon: string; statusIndicator?: {text: string, type: 'positive' | 'neutral' | 'critical' | 'info'} }> = ({ title, value, subValue, subValueEmphasis = false, icon, statusIndicator }) => {
   const statusStyles = {
     positive: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
     critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
@@ -37,7 +38,11 @@ const KpiCard: React.FC<{ title: string; value: string | number; subValue?: stri
         <div className="flex justify-between items-end relative z-10">
             <div className="flex flex-col">
                 <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{value}</span>
-                {subValue && <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 mt-1">{subValue}</span>}
+                {subValue && (
+                  <span className={`${subValueEmphasis ? 'text-xl font-black text-emerald-700 dark:text-emerald-300' : 'text-xs font-semibold text-slate-400 dark:text-slate-500'} mt-1`}>
+                    {subValue}
+                  </span>
+                )}
             </div>
         </div>
         <div className="absolute -bottom-6 -right-4 text-8xl opacity-[0.03] grayscale pointer-events-none group-hover:scale-110 transition-transform duration-500">{icon}</div>
@@ -57,7 +62,50 @@ const SecondaryMetricCard: React.FC<{ title: string; value: string | number; sub
     </div>
 );
 
+const getRecordedLoanAmount = (loan: Loan) =>
+  loan.totalLoan != null && loan.totalLoan > 0 ? loan.totalLoan : loan.outstandingBalance;
 
+const getLedgerLoanAmount = (loan: Loan) =>
+  Math.max(getRecordedLoanAmount(loan), loan.amountCollected + loan.runningBalance);
+
+const formatDateForExport = (date?: string | null) => {
+  if (!date) return '';
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+};
+
+const getLoanAddress = (loan: Loan) =>
+  loan.fullAddress || [loan.area, loan.barangay, loan.city].filter(Boolean).join(', ');
+
+const sanitizeFilePart = (value: string) =>
+  value.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, '_') || 'All';
+
+const getReportableCollectedAmount = (loan: Loan) =>
+  Math.max(Number(loan.amountCollected || 0), (loan.payments || [])
+    .filter(isReportableCollectionPayment)
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+
+const hasReconstructedOutcome = (loan: Loan) =>
+  (loan.payments || []).some(payment =>
+    payment.status !== PaymentStatus.REVERSED && isReconstructedPaymentRemark(payment.remarks)
+  ) ||
+  (loan.remarks || []).some(remark => isReconstructedPaymentRemark(remark.text));
+
+const hasWriteOffOutcome = (loan: Loan) => {
+  const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
+  return hasWriteOffText(loan.actionStage) ||
+    hasWriteOffText(loan.actionNote) ||
+    (loan.remarks || []).some(remark => hasWriteOffText(remark.text)) ||
+    (loan.payments || []).some(payment => hasWriteOffText(payment.remarks));
+};
+
+const hasDashboardActiveBalance = (loan: Loan) =>
+  Number(loan.runningBalance || 0) > 0 &&
+  loan.status !== MovingStatus.PAID &&
+  !isDeadWriteOffLoan(loan) &&
+  !hasReconstructedOutcome(loan) &&
+  !hasWriteOffOutcome(loan);
 
 const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   const [allLoans, setAllLoans] = useState(store.getLoans(selectedBranch));
@@ -91,7 +139,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     const cutoffStr = cutoff.toISOString().split('T')[0];
     return allLoans.filter(l => {
       // Include loan if it has any active payment within the last 30 days
-      const hasRecentPayment = l.payments.some(p => p.status !== 'REVERSED' && p.date >= cutoffStr);
+      const hasRecentPayment = l.payments.some(p => isReportableCollectionPayment(p) && p.date >= cutoffStr);
       // Or if the monthReported is within the last 30 days window
       const reportedMonth = l.monthReported; // YYYY-MM
       const cutoffMonth = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
@@ -101,11 +149,30 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   }, [allLoans, dateFilter]);
 
   // --- Compute stats from filtered loans ---
+  // Total account counts keep every account; performance money excludes non-cash terminal outcomes.
+  const { performanceLoans, deadWriteOffLoans } = useMemo(() => {
+    const dead: Loan[] = [];
+    const perf: Loan[] = [];
+    loans.forEach(l => {
+      if (isDeadWriteOffLoan(l)) {
+        dead.push(l);
+        return;
+      }
+      if (hasReconstructedOutcome(l) || hasWriteOffOutcome(l)) return;
+      perf.push(l);
+    });
+    return { performanceLoans: perf, deadWriteOffLoans: dead };
+  }, [loans]);
+
   const stats = useMemo(() => {
     const totalAccounts = loans.length;
-    const totalCollected = loans.reduce((sum, l) => sum + l.amountCollected, 0);
-    const totalOutstanding = loans.reduce((sum, l) => sum + l.outstandingBalance, 0);
-    const totalRunning = loans.reduce((sum, l) => sum + l.runningBalance, 0);
+    const activeAccounts = loans.filter(hasDashboardActiveBalance);
+    const activeAccountCount = activeAccounts.length;
+    
+    const totalCollected = performanceLoans.reduce((sum, l) => sum + getReportableCollectedAmount(l), 0);
+    const totalLoanAmount = performanceLoans.reduce((sum, l) => sum + getLedgerLoanAmount(l), 0);
+    const totalReportedAmount = performanceLoans.reduce((sum, l) => sum + l.outstandingBalance, 0);
+    const totalRunning = performanceLoans.reduce((sum, l) => sum + l.runningBalance, 0);
     const statusData: Record<string, { count: number; amount: number }> = {
       Paid: { count: 0, amount: 0 },
       Moving: { count: 0, amount: 0 },
@@ -118,15 +185,31 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       [MovingStatus.NM]: 'NM',
       [MovingStatus.NMSR]: 'NMSR',
     };
-    loans.forEach(l => {
+    performanceLoans.forEach(l => {
       const key = statusKeyMap[l.status];
       if (key && statusData[key]) {
         statusData[key].count++;
-        statusData[key].amount += (l.status === MovingStatus.PAID ? l.amountCollected : l.runningBalance);
+        statusData[key].amount += (l.status === MovingStatus.PAID ? getReportableCollectedAmount(l) : l.runningBalance);
       }
     });
-    return { totalAccounts, totalCollected, totalOutstanding, totalRunning, statusData };
-  }, [loans]);
+    const deadWriteOff = {
+      count: deadWriteOffLoans.length,
+      amount: deadWriteOffLoans.reduce((sum, l) => sum + getLedgerLoanAmount(l), 0)
+    };
+    let reconAmount = 0;
+    const uniqueReconLoans = new Set<string>();
+    allLoans.forEach(loan => {
+      (loan.payments || []).forEach(payment => {
+        if (payment.status !== PaymentStatus.REVERSED && isReconstructedPaymentRemark(payment.remarks)) {
+          uniqueReconLoans.add(loan.id);
+          reconAmount += Number(payment.amount || 0);
+        }
+      });
+    });
+    const reconstructedStats = { count: uniqueReconLoans.size, amount: reconAmount };
+
+    return { totalAccounts, activeAccountCount, totalCollected, totalLoanAmount, totalReportedAmount, totalRunning, statusData, deadWriteOff, reconstructedStats };
+  }, [loans, performanceLoans, deadWriteOffLoans, allLoans]);
 
   // --- Compute collector performance from filtered loans ---
   const collectorData = useMemo(() => {
@@ -137,28 +220,39 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       if (!collectors[coll]) {
         collectors[coll] = { collector: coll, totalAccounts: 0, reportedAmount: 0, collectedAmount: 0, runningBalance: 0, collectionRate: 0, paidCount: 0 };
       }
+      collectors[coll].totalAccounts++;
+    });
+
+    performanceLoans.forEach(loan => {
+      const coll = getCollectorDisplayName(loan.collector, allCollectors);
+      if (!coll || coll === 'N/A' || coll === 'UNDEFINED' || coll === 'UNASSIGNED') return;
+      if (!collectors[coll]) {
+        collectors[coll] = { collector: coll, totalAccounts: 0, reportedAmount: 0, collectedAmount: 0, runningBalance: 0, collectionRate: 0, paidCount: 0 };
+      }
       const p = collectors[coll];
-      p.totalAccounts++;
+      const reportableCollected = getReportableCollectedAmount(loan);
       p.reportedAmount += loan.outstandingBalance;
-      p.collectedAmount += loan.amountCollected;
-      p.runningBalance += loan.runningBalance;
+      p.collectedAmount += reportableCollected;
+      p.runningBalance += Math.max(0, loan.outstandingBalance - reportableCollected);
       if (loan.status === MovingStatus.PAID) p.paidCount++;
     });
     return Object.values(collectors).map(p => ({ ...p, collectionRate: p.reportedAmount > 0 ? (p.collectedAmount / p.reportedAmount) * 100 : 0 }));
-  }, [loans, allCollectors]);
+  }, [performanceLoans, allCollectors]);
 
   // --- Compute collector distribution from filtered loans ---
   const collectorDistribution = useMemo(() => {
-    const distribution: Record<string, number> = {};
-    loans.forEach(loan => {
+    const distribution: Record<string, { total: number, active: number }> = {};
+    performanceLoans.forEach(loan => {
       const coll = loan.collector?.trim();
       if (!coll || coll === 'N/A' || coll === 'undefined' || coll === 'UNASSIGNED') return;
-      distribution[coll] = (distribution[coll] || 0) + 1;
+      if (!distribution[coll]) distribution[coll] = { total: 0, active: 0 };
+      distribution[coll].total += 1;
+      if (loan.status !== MovingStatus.PAID) distribution[coll].active += 1;
     });
     return Object.entries(distribution)
-      .map(([name, value]) => ({ name, value }))
+      .map(([name, counts]) => ({ name, value: counts.active, total: counts.total }))
       .sort((a, b) => b.value - a.value);
-  }, [loans]);
+  }, [performanceLoans]);
 
   // --- Compute Today's Action Summary ---
   const todayActions = useMemo(() => {
@@ -181,6 +275,17 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
 
     return { ptpDue, followUpDue, missed };
   }, [allLoans]);
+
+  const nearFullPaymentClients = useMemo(() => {
+    return loans
+      .filter(l => l.runningBalance > 0 && l.runningBalance <= 1000 && l.status !== MovingStatus.PAID)
+      .filter(l => nearFullCollectorFilter === '' || getCollectorDisplayName(l.collector, allCollectors) === nearFullCollectorFilter)
+      .sort((a, b) => a.runningBalance - b.runningBalance);
+  }, [loans, nearFullCollectorFilter, allCollectors]);
+
+  const nearFullTotalAmount = useMemo(() => {
+    return nearFullPaymentClients.reduce((sum, l) => sum + l.runningBalance, 0);
+  }, [nearFullPaymentClients]);
 
   const sortedCollectorData = [...collectorData].sort((a, b) => {
     if (collectorViewMode === 'Performance View') {
@@ -209,9 +314,13 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       [],
       ['Metric', 'Value'],
       ['Total Accounts', stats.totalAccounts],
+      ['Active Accounts', stats.activeAccountCount],
       ['Total Collected', stats.totalCollected],
-      ['Total Outstanding', stats.totalOutstanding],
+      ['Total Loan', stats.totalLoanAmount],
+      ['Total Reported', stats.totalReportedAmount],
       ['Running Balance', stats.totalRunning],
+      ['Reconstructed Amount', stats.reconstructedStats.amount],
+      ['Reconstructed Clients', stats.reconstructedStats.count],
       [],
       ['Status Breakdown', 'Amount', 'Count'],
       ['Not Moving', stats.statusData.NM.amount, stats.statusData.NM.count],
@@ -283,6 +392,82 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     XLSX.writeFile(wb, `Dashboard_${branchTag}_${today}.xlsx`);
   };
 
+  const handleExportNearFullPayment = () => {
+    const collectorGroups = nearFullPaymentClients.reduce<Record<string, Loan[]>>((groups, loan) => {
+      const collectorName = getCollectorDisplayName(loan.collector, allCollectors);
+      if (!groups[collectorName]) groups[collectorName] = [];
+      groups[collectorName].push(loan);
+      return groups;
+    }, {});
+
+    const collectorNames = Object.keys(collectorGroups).sort();
+    const filterLabel = nearFullCollectorFilter || 'All Collectors';
+    const exportData: (string | number)[][] = [
+      ['Melann Lending - Near Full Payment Export'],
+      ['Branch', selectedBranch],
+      ['Collector Filter', filterLabel],
+      ['Date', new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })],
+      ['Total Clients', nearFullPaymentClients.length],
+      ['Total Running Balance', nearFullTotalAmount],
+      []
+    ];
+
+    if (collectorNames.length === 0) {
+      exportData.push(['No near full payment clients found']);
+    } else {
+      collectorNames.forEach((collectorName, collectorIndex) => {
+        const collectorLoans = collectorGroups[collectorName].sort((a, b) =>
+          a.borrowerName.localeCompare(b.borrowerName) || a.runningBalance - b.runningBalance
+        );
+        const collectorTotal = collectorLoans.reduce((sum, loan) => sum + loan.runningBalance, 0);
+
+        if (collectorIndex > 0) exportData.push([]);
+        exportData.push([`Collector: ${collectorName}`]);
+        exportData.push(['Clients', collectorLoans.length, 'Total Running Balance', collectorTotal]);
+        exportData.push([
+          'Code',
+          'Client Name',
+          'Address',
+          'Moving Status',
+          'Running Balance',
+          'Date Release',
+          'Maturity Date'
+        ]);
+
+        collectorLoans.forEach(loan => {
+          exportData.push([
+            loan.code,
+            loan.borrowerName,
+            getLoanAddress(loan),
+            loan.status,
+            loan.runningBalance,
+            formatDateForExport(loan.dateRelease),
+            formatDateForExport(loan.dueDate)
+          ]);
+        });
+      });
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(exportData);
+    ws['!cols'] = [
+      { wch: 16 },
+      { wch: 28 },
+      { wch: 44 },
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 16 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Near Full Payment');
+
+    const branchTag = sanitizeFilePart(selectedBranch);
+    const collectorTag = sanitizeFilePart(filterLabel);
+    const today = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `Near_Full_Payment_${branchTag}_${collectorTag}_${today}.xlsx`);
+  };
+
   return (
     <div className="space-y-6 animate-fadeIn max-w-[1600px] mx-auto pb-10">
       
@@ -315,19 +500,51 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       </div>
 
       {/* KPI Cards (Top Summary) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Total Accounts" value={stats.totalAccounts} icon="👥" statusIndicator={{text: 'Stable', type: 'positive'}} />
-        <KpiCard title="Total Collected" value={`₱${stats.totalCollected.toLocaleString()}`} icon="💳" statusIndicator={{text: 'Today', type: 'info'}} />
-        <KpiCard title="Total Outstanding" value={`₱${stats.totalOutstanding.toLocaleString()}`} icon="📈" statusIndicator={{text: 'Pending', type: 'neutral'}} />
-        <KpiCard title="Running Balance" value={`₱${stats.totalRunning.toLocaleString()}`} icon="📉" statusIndicator={{text: 'Critical', type: 'critical'}} />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+        <KpiCard
+          title="Total Accounts"
+          value={stats.totalAccounts}
+          subValue={`${stats.activeAccountCount.toLocaleString()} Active as of now`}
+          subValueEmphasis
+          icon="👥"
+          statusIndicator={{text: 'Stable', type: 'positive'}}
+        />
+        <KpiCard title="Total Loan" value={`₱${stats.totalLoanAmount.toLocaleString()}`} icon="🏦" statusIndicator={{text: 'Principal + Interest', type: 'neutral'}} />
+        <KpiCard title="Total Reported" value={`₱${stats.totalReportedAmount.toLocaleString()}`} icon="📋" statusIndicator={{text: 'When Reported', type: 'info'}} />
+        <KpiCard title="Total Collected" value={`₱${stats.totalCollected.toLocaleString()}`} icon="💳" statusIndicator={{text: 'Remitted', type: 'positive'}} />
+        <KpiCard title="Running Balance" value={`₱${stats.totalRunning.toLocaleString()}`} icon="📉" statusIndicator={{text: 'Exposure', type: 'critical'}} />
       </div>
 
       {/* Secondary Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-6">
-        <SecondaryMetricCard title="Not Moving" value={`₱${stats.statusData.NM.amount.toLocaleString()}`} subline={`${stats.statusData.NM.count} Clients`} color="text-slate-800 dark:text-white" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mt-6">
         <SecondaryMetricCard title="Moving" value={`₱${stats.statusData.Moving.amount.toLocaleString()}`} subline={`${stats.statusData.Moving.count} Clients`} color="text-slate-800 dark:text-white" />
-        <SecondaryMetricCard title="Paid" value={`₱${stats.statusData.Paid.amount.toLocaleString()}`} subline={`${stats.statusData.Paid.count} Clients`} color="text-emerald-600 dark:text-emerald-400" />
+        <SecondaryMetricCard title="Not Moving" value={`₱${stats.statusData.NM.amount.toLocaleString()}`} subline={`${stats.statusData.NM.count} Clients`} color="text-slate-800 dark:text-white" />
         <SecondaryMetricCard title="NM Since Release" value={`₱${stats.statusData.NMSR.amount.toLocaleString()}`} subline={`${stats.statusData.NMSR.count} Clients`} color="text-red-500 dark:text-red-400" />
+        
+        <div className="bg-white dark:bg-slate-800 py-4 px-6 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between shadow-sm relative overflow-hidden">
+          <div className="flex flex-col z-10">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1">Reconstructed</span>
+            <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">₱{stats.reconstructedStats.amount.toLocaleString()}</span>
+          </div>
+          <div className="text-right flex flex-col items-end z-10">
+            <span className="text-xs font-bold text-slate-500 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-md">{stats.reconstructedStats.count} Client{stats.reconstructedStats.count !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="absolute top-0 right-0 w-1 h-full bg-emerald-400 dark:bg-emerald-600"></div>
+        </div>
+
+        <SecondaryMetricCard title="Paid" value={`₱${stats.statusData.Paid.amount.toLocaleString()}`} subline={`${stats.statusData.Paid.count} Clients`} color="text-emerald-600 dark:text-emerald-400" />
+        
+        <div className="bg-white dark:bg-slate-800 py-4 px-6 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between shadow-sm relative overflow-hidden">
+          <div className="flex flex-col z-10">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1">Deceased Clients</span>
+            <span className="text-xl font-black text-slate-400 dark:text-slate-500">₱{stats.deadWriteOff.amount.toLocaleString()}</span>
+          </div>
+          <div className="text-right flex flex-col items-end z-10">
+            <span className="text-xs font-bold text-slate-500 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-md">{stats.deadWriteOff.count} Client{stats.deadWriteOff.count !== 1 ? 's' : ''}</span>
+            <span className="text-[9px] font-semibold text-slate-400 mt-1 italic">Excluded from stats</span>
+          </div>
+          <div className="absolute top-0 right-0 w-1 h-full bg-slate-300 dark:bg-slate-600"></div>
+        </div>
       </div>
 
       {/* Main 3-Column Content Grid */}
@@ -543,7 +760,9 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
                     <div className="w-3 h-3 rounded-md shadow-sm" style={{ backgroundColor: color }}></div>
                     <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{item.name}</span>
                  </div>
-                 <span className="font-bold text-slate-800 dark:text-white">{item.value.toLocaleString()} <span className="text-slate-400 font-medium text-xs ml-1">accts</span></span>
+                 <div className="text-right whitespace-nowrap">
+                   <span className="font-bold text-slate-800 dark:text-white">{item.total.toLocaleString()}</span> <span className="text-[9px] text-slate-400 uppercase tracking-wider">Total</span> / <span className="font-bold text-emerald-600 dark:text-emerald-400">{item.value.toLocaleString()}</span> <span className="text-[9px] text-emerald-600/70 dark:text-emerald-400/70 uppercase tracking-wider">Active</span>
+                 </div>
               </div>
             )})}
             {collectorDistribution.length === 0 && (
@@ -594,30 +813,50 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
         <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[400px]">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
             <div>
-              <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
-                <svg className="w-5 h-5 text-[#064e3b] dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                Near Full Payment
-              </h3>
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Clients with ₱1,000 or less remaining balance</p>
+              <div className="flex items-center gap-3 mb-1">
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                  <svg className="w-5 h-5 text-[#064e3b] dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  Near Full Payment
+                </h3>
+                {nearFullPaymentClients.length > 0 && (
+                  <span className="bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-xs font-black px-2 py-0.5 rounded-full">
+                    {nearFullPaymentClients.length} Clients
+                  </span>
+                )}
+              </div>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Clients with ₱1,000 or less remaining balance
+                {nearFullPaymentClients.length > 0 && (
+                  <span className="ml-2 text-emerald-600 dark:text-emerald-400 font-bold">
+                    (Total: ₱{nearFullTotalAmount.toLocaleString()})
+                  </span>
+                )}
+              </p>
             </div>
-            <select
-              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-300 py-2 px-4 rounded-xl outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-colors"
-              value={nearFullCollectorFilter}
-              onChange={(e) => setNearFullCollectorFilter(e.target.value)}
-            >
-              <option value="">All Collectors</option>
-              {Array.from(new Set(loans.map(l => getCollectorDisplayName(l.collector, allCollectors)))).sort().map(name => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
+            <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2">
+              <select
+                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-300 py-2 px-4 rounded-xl outline-none shadow-sm cursor-pointer hover:border-slate-300 transition-colors"
+                value={nearFullCollectorFilter}
+                onChange={(e) => setNearFullCollectorFilter(e.target.value)}
+              >
+                <option value="">All Collectors</option>
+                {Array.from(new Set(loans.map(l => getCollectorDisplayName(l.collector, allCollectors)))).sort().map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleExportNearFullPayment}
+                disabled={nearFullPaymentClients.length === 0}
+                className="bg-[#064e3b] hover:bg-[#043326] disabled:bg-slate-300 disabled:dark:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-500 px-4 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95"
+                title="Export Near Full Payment clients"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                Export
+              </button>
+            </div>
           </div>
           <div className="space-y-3 overflow-y-auto pr-2 flex-1 custom-scrollbar">
             {(() => {
-              const nearFullPaymentClients = loans
-                .filter(l => l.runningBalance > 0 && l.runningBalance <= 1000 && l.status !== MovingStatus.PAID)
-                .filter(l => nearFullCollectorFilter === '' || getCollectorDisplayName(l.collector, allCollectors) === nearFullCollectorFilter)
-                .sort((a, b) => a.runningBalance - b.runningBalance);
-
               if (nearFullPaymentClients.length === 0) {
                 return <p className="text-center py-8 text-slate-400 italic text-sm">No clients with ₱1,000 or less balance in this branch.</p>;
               }

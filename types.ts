@@ -30,7 +30,7 @@ export const ACCOUNT_ROLE_DESCRIPTIONS: Record<UserRole, string> = {
   [UserRole.CASHIER]: 'Can view all records. Can edit remarks and action tracker follow-ups when collection support is needed.',
   [UserRole.SUPERVISOR]: 'Can view records for assigned collectors only, with read-only access to client update and field modules.',
   [UserRole.IT_ACCOUNTING_CLERK]: 'Can access most modules with add, edit, and delete rights, except write-off approval and user management.',
-  [UserRole.BRANCH_MANAGER]: 'Can manage branch operations and client records, with access aligned to management-level branch oversight.',
+  [UserRole.BRANCH_MANAGER]: 'Can manage branch operations, client records, and branch user approvals with management-level branch oversight.',
   [UserRole.OPERATIONS_MANAGER]: 'Can access most modules with add, edit, and delete rights, except write-off approval and user management.',
   [UserRole.EXECUTIVE_VICE_PRESIDENT]: 'Can access operational modules and is the only role authorized to approve for-write-off clients, except user management.',
   [UserRole.PRESIDENT]: 'Can access operational modules and view write-off records, except user management and write-off approval.',
@@ -55,7 +55,9 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
 
 export const getUserRoleLabel = (role: UserRole) => USER_ROLE_LABELS[role] || String(role).replace(/_/g, ' ');
 
-export const canManageUsers = (role: UserRole) => role === UserRole.SUPER_ADMIN;
+export const canManageUsers = (role: UserRole) =>
+  role === UserRole.SUPER_ADMIN ||
+  role === UserRole.BRANCH_MANAGER;
 
 export const canAccessPayments = (role: UserRole | string) =>
   role === UserRole.SUPER_ADMIN ||
@@ -212,6 +214,7 @@ export interface Loan {
 export interface CollectorPerformance {
   collector: string;
   totalAccounts: number;
+  activeAccountCount?: number;
   reportedAmount: number;
   collectedAmount: number;
   runningBalance: number;

@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
-import { PriorityLevel, Branch, User, Loan } from '../types.ts';
+import { PriorityLevel, Branch, User, Loan, Remark } from '../types.ts';
 import ClientModal from './ClientModal.tsx';
 import ClientFormModal from './ClientFormModal.tsx';
 import RemarksModal from './RemarksModal.tsx';
@@ -23,8 +23,36 @@ interface ReminderItem {
 }
 
 type CommitmentOutcome = 'Missed' | 'Rescheduled' | 'Visited' | 'No Contact';
+type CriticalActionLoan = Loan & { latestRemark: Remark };
+type ClientUpdatePrintMode = 'critical' | 'monitoring';
 
 const COLLECTOR_ACCOUNTABILITY_ORDER = ['ALDIE', 'EDDIE', 'NOEL', 'LITO', 'MASOY', 'TATA'];
+
+const getCollectorOrderRank = (collector?: string) => {
+  const rank = COLLECTOR_ACCOUNTABILITY_ORDER.indexOf((collector || '').trim().toUpperCase());
+  return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
+};
+
+const sortCollectors = (a: string, b: string) => {
+  const aOrder = getCollectorOrderRank(a);
+  const bOrder = getCollectorOrderRank(b);
+  if (aOrder !== bOrder) return aOrder - bOrder;
+  return a.localeCompare(b);
+};
+
+const getLoanAddress = (loan: Loan) => {
+  const fullAddress = loan.fullAddress?.trim();
+  if (fullAddress) return fullAddress;
+  return [loan.barangay, loan.city, loan.area].filter(Boolean).join(', ');
+};
+
+const formatPrintDate = (date: Date) => {
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric'
+  });
+};
 
 const formatRecurringScheduleLabel = (loan: Loan, compact = false) => {
   const schedule = loan.recurringSchedule;
@@ -51,6 +79,7 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
   const [editLoan, setEditLoan] = useState<Loan | null>(null);
   const [remarksLoan, setRemarksLoan] = useState<Loan | null>(null);
   const [visitLogLoan, setVisitLogLoan] = useState<Loan | null>(null);
+  const [printMode, setPrintMode] = useState<ClientUpdatePrintMode | null>(null);
   const currentRemarksLoan = useMemo(() => {
     if (!remarksLoan) return null;
     return loans.find(loan => loan.id === remarksLoan.id) || remarksLoan;
@@ -123,16 +152,73 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
     return Array.from(summary.values())
       .filter(item => item.total > 0)
       .sort((a, b) => {
-        const aOrder = COLLECTOR_ACCOUNTABILITY_ORDER.indexOf(a.collector.trim().toUpperCase());
-        const bOrder = COLLECTOR_ACCOUNTABILITY_ORDER.indexOf(b.collector.trim().toUpperCase());
-        if (aOrder !== -1 || bOrder !== -1) {
-          return (aOrder === -1 ? Number.MAX_SAFE_INTEGER : aOrder) - (bOrder === -1 ? Number.MAX_SAFE_INTEGER : bOrder);
-        }
+        const aOrder = getCollectorOrderRank(a.collector);
+        const bOrder = getCollectorOrderRank(b.collector);
+        if (aOrder !== bOrder) return aOrder - bOrder;
         const aWork = a.critical + a.monitoring + a.followUps + a.noActivity;
         const bWork = b.critical + b.monitoring + b.followUps + b.noActivity;
         return bWork - aWork || a.collector.localeCompare(b.collector);
       });
   }, [loans, topPriorityList, reminderList, closeMonitoringList, noActivityList]);
+
+  const criticalActionPrintGroups = useMemo(() => {
+    const groups = new Map<string, CriticalActionLoan[]>();
+
+    (topPriorityList as CriticalActionLoan[]).forEach(loan => {
+      const collector = loan.collector?.trim() || 'UNASSIGNED';
+      if (!groups.has(collector)) groups.set(collector, []);
+      groups.get(collector)!.push(loan);
+    });
+
+    return Array.from(groups.entries())
+      .map(([collector, items]) => ({
+        collector,
+        items: items
+          .slice()
+          .sort((a, b) => a.borrowerName.localeCompare(b.borrowerName) || a.code.localeCompare(b.code))
+      }))
+      .sort((a, b) => sortCollectors(a.collector, b.collector));
+  }, [topPriorityList]);
+
+  const closeMonitoringPrintGroups = useMemo(() => {
+    const groups = new Map<string, Loan[]>();
+
+    (closeMonitoringList as Loan[]).forEach(loan => {
+      const collector = loan.collector?.trim() || 'UNASSIGNED';
+      if (!groups.has(collector)) groups.set(collector, []);
+      groups.get(collector)!.push(loan);
+    });
+
+    return Array.from(groups.entries())
+      .map(([collector, items]) => ({
+        collector,
+        items: items
+          .slice()
+          .sort((a, b) => a.borrowerName.localeCompare(b.borrowerName) || a.code.localeCompare(b.code))
+      }))
+      .sort((a, b) => sortCollectors(a.collector, b.collector));
+  }, [closeMonitoringList]);
+
+  const printDateLabel = useMemo(() => formatPrintDate(new Date()), []);
+
+  const handlePrintClientUpdate = (mode: ClientUpdatePrintMode) => {
+    setPrintMode(mode);
+    document.body.classList.add('client-update-printing');
+    window.setTimeout(() => window.print(), 0);
+  };
+
+  useEffect(() => {
+    const clearPrintMode = () => {
+      document.body.classList.remove('client-update-printing');
+      setPrintMode(null);
+    };
+
+    window.addEventListener('afterprint', clearPrintMode);
+    return () => {
+      window.removeEventListener('afterprint', clearPrintMode);
+      clearPrintMode();
+    };
+  }, []);
 
 
 
@@ -141,7 +227,8 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
   };
 
   return (
-    <div className="space-y-8 animate-fadeIn pb-20">
+    <>
+    <div className="space-y-8 animate-fadeIn pb-20 no-print">
       {/* HEADER SECTION */}
       <div className="flex justify-between items-center transition-colors duration-300 bg-white p-6 rounded-[1.5rem] shadow-sm border border-slate-200">
         <div>
@@ -164,9 +251,22 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
               <div className="w-2 h-2 bg-rose-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.6)]"></div>
               <h3 className="text-sm font-black text-rose-900 uppercase tracking-[0.2em]">Close Monitoring Queue</h3>
             </div>
-            <button onClick={() => toggleSection('monitoring')} className="p-2 hover:bg-rose-100 rounded-xl transition-colors group">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handlePrintClientUpdate('monitoring')}
+                disabled={closeMonitoringList.length === 0}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-rose-100 hover:border-rose-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Print Close Monitoring summary by collector"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z" />
+                </svg>
+                Print by Collector
+              </button>
+              <button onClick={() => toggleSection('monitoring')} className="p-2 hover:bg-rose-100 rounded-xl transition-colors group">
               <span className={`block text-md transition-transform duration-300 text-rose-500 group-hover:text-rose-700 ${collapsedSections.monitoring ? 'rotate-180' : ''}`}>▼</span>
-            </button>
+              </button>
+            </div>
           </div>
           
           {!collapsedSections.monitoring && (
@@ -189,9 +289,22 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
               <div className="w-2 h-2 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.6)]"></div>
               <h3 className="text-sm font-black text-slate-800 uppercase tracking-[0.2em]">Critical Action: Priority Cases</h3>
             </div>
-            <button onClick={() => toggleSection('priority')} className="p-2 hover:bg-red-50 rounded-xl transition-colors group">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handlePrintClientUpdate('critical')}
+                disabled={topPriorityList.length === 0}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 text-red-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:bg-red-100 hover:border-red-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Print Critical Action summary by collector"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z" />
+                </svg>
+                Print by Collector
+              </button>
+              <button onClick={() => toggleSection('priority')} className="p-2 hover:bg-red-50 rounded-xl transition-colors group">
               <span className={`block text-lg transition-transform duration-300 text-red-500 group-hover:text-red-700 ${collapsedSections.priority ? 'rotate-180' : ''}`}>▼</span>
-            </button>
+              </button>
+            </div>
           </div>
           
           {!collapsedSections.priority && (
@@ -443,8 +556,141 @@ const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser
         />
       )}
     </div>
+    {printMode && (
+      <ClientUpdatePrintSheet
+        branch={selectedBranch}
+        title={printMode === 'critical' ? 'Critical Action Field Sheet' : 'Close Monitoring Field Sheet'}
+        printDateLabel={printDateLabel}
+        groups={printMode === 'critical' ? criticalActionPrintGroups : closeMonitoringPrintGroups}
+        totalCount={printMode === 'critical' ? topPriorityList.length : closeMonitoringList.length}
+      />
+    )}
+    </>
   );
 };
+
+function ClientUpdatePrintSheet({
+  branch,
+  title,
+  printDateLabel,
+  groups,
+  totalCount
+}: {
+  branch: Branch;
+  title: string;
+  printDateLabel: string;
+  groups: Array<{ collector: string; items: Loan[] }>;
+  totalCount: number;
+}) {
+  return (
+    <>
+    <style>{`
+      @media print {
+        body.client-update-printing #root > div {
+          display: block !important;
+          height: auto !important;
+          min-height: auto !important;
+          overflow: visible !important;
+        }
+
+        body.client-update-printing #root > div > main {
+          display: block !important;
+          height: auto !important;
+          overflow: visible !important;
+        }
+
+        body.client-update-printing #printable-sheet {
+          box-sizing: border-box !important;
+          padding-top: 8mm !important;
+          page-break-before: auto !important;
+        }
+
+        body.client-update-printing #printable-sheet > div {
+          break-before: avoid !important;
+          page-break-before: avoid !important;
+        }
+      }
+    `}</style>
+    <div id="printable-sheet">
+      <div style={{ fontFamily: 'Arial, Helvetica, sans-serif', color: '#000' }}>
+        <div style={{ textAlign: 'center', marginBottom: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, textTransform: 'uppercase' }}>Melann Lending</div>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>{title}</div>
+          <div style={{ fontSize: 9, marginTop: 2 }}>
+            Branch: {branch} | Date: {printDateLabel} | Total Clients: {totalCount}
+          </div>
+        </div>
+
+        {groups.length === 0 ? (
+          <div style={{ border: '0.5pt solid #000', padding: 10, textAlign: 'center', fontSize: 9 }}>
+            No Critical Action clients to print.
+          </div>
+        ) : (
+          groups.map(group => (
+            <div key={group.collector} style={{ breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: 12 }}>
+              <div
+                style={{
+                  background: '#e5e7eb',
+                  border: '0.5pt solid #000',
+                  borderBottom: 'none',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: '4px 6px',
+                  textTransform: 'uppercase'
+                }}
+              >
+                Collector: {group.collector} ({group.items.length})
+              </div>
+              <table>
+                <colgroup>
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '24%' }} />
+                  <col style={{ width: '34%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '22%' }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Client Code</th>
+                    <th>Client Name</th>
+                    <th>Address</th>
+                    <th>Pay</th>
+                    <th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.items.map(loan => (
+                    <tr key={loan.id}>
+                      <td style={{ textAlign: 'center', fontWeight: 700 }}>{loan.code}</td>
+                      <td>{loan.borrowerName}</td>
+                      <td>{getLoanAddress(loan)}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span style={{ display: 'inline-block', width: 12, height: 12, border: '0.8pt solid #000' }}></span>
+                      </td>
+                      <td style={{ height: 28 }}></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))
+        )}
+
+        <div style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, fontSize: 9 }}>
+          <div>
+            Prepared by:
+            <div style={{ borderBottom: '0.5pt solid #000', height: 24 }}></div>
+          </div>
+          <div>
+            Received by:
+            <div style={{ borderBottom: '0.5pt solid #000', height: 24 }}></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </>
+  );
+}
 
 function CollectorAccountabilitySummary({ summary }: { summary: Array<{ collector: string; critical: number; followUps: number; monitoring: number; noActivity: number; total: number }> }) {
   if (summary.length === 0) return null;

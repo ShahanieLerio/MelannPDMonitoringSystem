@@ -1,6 +1,6 @@
 import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction, ContactLog, ContactMethod, DeletedLoan, MigrationBatch, ManagementDisposition, DispositionType, DispositionStatus, isAllBranchRole, canApproveWriteOff } from '../types';
 import { dedupeCollectors, getCollectorDisplayMatchKeys, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorAliasKey, normalizeCollectorKey, normalizeCollectorLooseKey } from './collectorUtils';
-import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReportableCollectionPayment } from './loanUtils';
+import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReconstructedPaymentRemark, isReportableCollectionPayment } from './loanUtils';
 const API_URL = `http://${window.location.hostname}:5000/api`;
 
 const INITIAL_USERS: User[] = [
@@ -1651,18 +1651,37 @@ class DataStore {
   getCollectorPerformance(branch?: Branch) {
     const collectors: Record<string, CollectorPerformance> = {};
     const filteredLoans = this.getLoans(branch);
-    filteredLoans.forEach(loan => {
-      // Exclude Dead write-off loans from collection performance
-      if (this.isExcludedFromCollectionReports(loan)) return;
+    const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
+    const hasReconstructedOutcome = (loan: Loan) =>
+      (loan.payments || []).some(payment =>
+        payment.status !== PaymentStatus.REVERSED && isReconstructedPaymentRemark(payment.remarks)
+      ) ||
+      (loan.remarks || []).some(remark => isReconstructedPaymentRemark(remark.text));
+    const hasWriteOffOutcome = (loan: Loan) =>
+      this.isOfficialWriteOff(loan.id) ||
+      hasWriteOffText(loan.actionStage) ||
+      hasWriteOffText(loan.actionNote) ||
+      (loan.payments || []).some(payment =>
+        payment.status !== PaymentStatus.REVERSED && hasWriteOffText(payment.remarks)
+      ) ||
+      (loan.remarks || []).some(remark => hasWriteOffText(remark.text));
+    const isTerminalOutcome = (loan: Loan) =>
+      this.isDeadWriteOff(loan) || hasReconstructedOutcome(loan) || hasWriteOffOutcome(loan);
 
+    filteredLoans.forEach(loan => {
       const coll = this.getCollectorDisplayName(loan.collector);
       if (!coll || coll === 'N/A' || coll === 'UNDEFINED' || coll === 'UNASSIGNED') return;
 
       if (!collectors[coll]) {
-        collectors[coll] = { collector: coll, totalAccounts: 0, reportedAmount: 0, collectedAmount: 0, runningBalance: 0, collectionRate: 0, paidCount: 0 };
+        collectors[coll] = { collector: coll, totalAccounts: 0, activeAccountCount: 0, reportedAmount: 0, collectedAmount: 0, runningBalance: 0, collectionRate: 0, paidCount: 0 };
       }
       const p = collectors[coll];
       p.totalAccounts++;
+      const terminalOutcome = isTerminalOutcome(loan);
+      const isActiveAccount = Number(loan.runningBalance || 0) > 0 && loan.status !== MovingStatus.PAID && !terminalOutcome;
+      if (isActiveAccount) p.activeAccountCount = (p.activeAccountCount || 0) + 1;
+      if (terminalOutcome) return;
+
       p.reportedAmount += loan.outstandingBalance;
 
       // Only count payments made on or after the month the loan was reported

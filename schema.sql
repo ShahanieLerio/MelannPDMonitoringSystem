@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     full_name TEXT NOT NULL,
+    password_hash TEXT,
     role TEXT NOT NULL, -- SUPER_ADMIN, NAVAL_USER, ORMOC_USER
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, ACTIVE, DEACTIVATED
     branch TEXT NOT NULL,
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS collectors (
     name TEXT NOT NULL,
     nickname TEXT,
     address TEXT,
+    assigned_supervisor TEXT,
     photo_url TEXT,
     branch TEXT NOT NULL
 );
@@ -58,6 +60,9 @@ CREATE TABLE IF NOT EXISTS loans (
     recurring_schedule JSONB,
     action_note TEXT,
     action_stage TEXT,
+    date_release TEXT,
+    principal NUMERIC(15, 2),
+    total_loan NUMERIC(15, 2),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -111,7 +116,6 @@ CREATE TABLE IF NOT EXISTS activity_logs (
     id TEXT PRIMARY KEY,
     loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    type TEXT NOT NULL,
     description TEXT NOT NULL,
     user_name TEXT NOT NULL,
     user_role TEXT NOT NULL,
@@ -129,4 +133,58 @@ CREATE TABLE IF NOT EXISTS visit_logs (
     action TEXT NOT NULL DEFAULT 'Log Only',
     logged_by TEXT NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Contact Logs (Action Tracker - Visit/Contact Log)
+CREATE TABLE IF NOT EXISTS contact_logs (
+    id TEXT PRIMARY KEY,
+    loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
+    contact_date TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT 'Call',
+    notes TEXT NOT NULL,
+    client_response TEXT DEFAULT '',
+    has_response BOOLEAN DEFAULT FALSE,
+    logged_by TEXT NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Deleted Loans (Recycle Bin)
+CREATE TABLE IF NOT EXISTS deleted_loans (
+    id TEXT PRIMARY KEY,
+    original_loan_data JSONB NOT NULL,
+    deleted_by TEXT NOT NULL,
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    reason TEXT,
+    branch TEXT NOT NULL
+);
+
+-- Read-only JCASH source migration batches
+CREATE TABLE IF NOT EXISTS migration_batches (
+    id TEXT PRIMARY KEY,
+    cycle_start TEXT NOT NULL,
+    cycle_end TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    detected_count INTEGER NOT NULL DEFAULT 0,
+    payment_count INTEGER NOT NULL DEFAULT 0,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_path TEXT NOT NULL,
+    detected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    migrated_at TIMESTAMP WITH TIME ZONE,
+    migrated_by TEXT,
+    error TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS migration_batches_cycle_unique
+ON migration_batches (cycle_start, cycle_end);
+
+-- Management Dispositions (Action Tracker)
+CREATE TABLE IF NOT EXISTS management_dispositions (
+    id TEXT PRIMARY KEY,
+    loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    evidence JSONB DEFAULT '[]'::jsonb,
+    status TEXT NOT NULL DEFAULT 'Pending Review',
+    decided_by TEXT NOT NULL,
+    decision_date TEXT NOT NULL
 );

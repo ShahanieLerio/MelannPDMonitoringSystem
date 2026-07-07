@@ -1,0 +1,1 @@
+localLoanId,sourceLoanId,code,borrowerName,localDateRelease,jcashDateRelease,releaseDiffDays,localMaturity,jcashMaturity,maturityDiffDays,localPaymentCount,jcashPaymentCount,missingPaymentCount,sameDatePaymentDiffCount,localRunningBalance,jcashRunningBalance,localStatus,jcashStatus,skipped,notes

@@ -180,8 +180,8 @@ describe('Constants', () => {
                 const { container } = render(<IconComponent />);
                 const svg = container.querySelector('svg');
 
-                expect(svg?.className).toContain('w-5');
-                expect(svg?.className).toContain('h-5');
+                expect(svg?.getAttribute('class')).toContain('w-5');
+                expect(svg?.getAttribute('class')).toContain('h-5');
             });
         });
 
