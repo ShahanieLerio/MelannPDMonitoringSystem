@@ -1,4 +1,4 @@
-import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction, ContactLog, ContactMethod, DeletedLoan, MigrationBatch, ManagementDisposition, DispositionType, DispositionStatus, isAllBranchRole, canApproveWriteOff } from '../types';
+import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, CollectorPerformanceClientDetail, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction, ContactLog, ContactMethod, DeletedLoan, MigrationBatch, ManagementDisposition, DispositionType, DispositionStatus, isAllBranchRole, canApproveWriteOff } from '../types';
 import { dedupeCollectors, getCollectorDisplayMatchKeys, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorAliasKey, normalizeCollectorKey, normalizeCollectorLooseKey } from './collectorUtils';
 import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReconstructedPaymentRemark, isReportableCollectionPayment } from './loanUtils';
 const API_URL = `http://${window.location.hostname}:5000/api`;
@@ -1086,6 +1086,29 @@ class DataStore {
     this.save();
   }
 
+  async deleteRemark(loanId: string, remarkId: string, user: string, role: string) {
+    const loanIndex = this.loans.findIndex(l => l.id === loanId);
+    if (loanIndex === -1) return;
+    const remarkIndex = this.loans[loanIndex].remarks.findIndex(r => r.id === remarkId);
+    if (remarkIndex === -1) return;
+
+    const previousLoan = { ...this.loans[loanIndex], remarks: [...this.loans[loanIndex].remarks] };
+    const remarkText = this.loans[loanIndex].remarks[remarkIndex].text;
+    this.loans[loanIndex].remarks.splice(remarkIndex, 1);
+    this.syncLoanInteractionDates(loanId);
+
+    try {
+      await this.api(`/remarks/${remarkId}`, 'DELETE');
+      await this.api(`/loans/${loanId}`, 'PUT', this.loans[loanIndex]);
+      await this.recordHistory(loanId, 'Remark Deleted', `Remark deleted: "${remarkText.substring(0, 50)}${remarkText.length > 50 ? '...' : ''}"`, user, role, 'Field Intelligence');
+    } catch (err) {
+      this.loans[loanIndex] = previousLoan;
+      throw err;
+    }
+
+    this.save();
+  }
+
   async deleteLoan(id: string, deletedBy: string, reason?: string) {
     const loanIndex = this.loans.findIndex(l => l.id === id);
     if (loanIndex === -1) return;
@@ -1648,7 +1671,7 @@ class DataStore {
     };
   }
 
-  getCollectorPerformance(branch?: Branch) {
+  getCollectorPerformance(branch?: Branch, yearRange?: { from: number; to: number }) {
     const collectors: Record<string, CollectorPerformance> = {};
     const filteredLoans = this.getLoans(branch);
     const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
@@ -1669,6 +1692,11 @@ class DataStore {
       this.isDeadWriteOff(loan) || hasReconstructedOutcome(loan) || hasWriteOffOutcome(loan);
 
     filteredLoans.forEach(loan => {
+      if (yearRange) {
+        const reportedYear = Number((loan.monthReported || '').slice(0, 4));
+        if (!reportedYear || reportedYear < yearRange.from || reportedYear > yearRange.to) return;
+      }
+
       const coll = this.getCollectorDisplayName(loan.collector);
       if (!coll || coll === 'N/A' || coll === 'UNDEFINED' || coll === 'UNASSIGNED') return;
 
@@ -1697,6 +1725,65 @@ class DataStore {
       if (loan.status === MovingStatus.PAID) p.paidCount++;
     });
     return Object.values(collectors).map(p => ({ ...p, collectionRate: p.reportedAmount > 0 ? (p.collectedAmount / p.reportedAmount) * 100 : 0 }));
+  }
+
+  getCollectorPerformanceDetails(branch: Branch | undefined, collector: string, yearRange: { from: number; to: number }): CollectorPerformanceClientDetail[] {
+    const filteredLoans = this.getLoans(branch);
+    const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
+    const hasReconstructedOutcome = (loan: Loan) =>
+      (loan.payments || []).some(payment =>
+        payment.status !== PaymentStatus.REVERSED && isReconstructedPaymentRemark(payment.remarks)
+      ) ||
+      (loan.remarks || []).some(remark => isReconstructedPaymentRemark(remark.text));
+    const hasWriteOffOutcome = (loan: Loan) =>
+      this.isOfficialWriteOff(loan.id) ||
+      hasWriteOffText(loan.actionStage) ||
+      hasWriteOffText(loan.actionNote) ||
+      (loan.payments || []).some(payment =>
+        payment.status !== PaymentStatus.REVERSED && hasWriteOffText(payment.remarks)
+      ) ||
+      (loan.remarks || []).some(remark => hasWriteOffText(remark.text));
+    const isTerminalOutcome = (loan: Loan) =>
+      this.isDeadWriteOff(loan) || hasReconstructedOutcome(loan) || hasWriteOffOutcome(loan);
+
+    return filteredLoans
+      .filter(loan => {
+        const reportedYear = Number((loan.monthReported || '').slice(0, 4));
+        if (!reportedYear || reportedYear < yearRange.from || reportedYear > yearRange.to) return false;
+        return this.getCollectorDisplayName(loan.collector) === collector;
+      })
+      .map(loan => {
+        if (isTerminalOutcome(loan)) {
+          return {
+            loanId: loan.id,
+            code: loan.code,
+            borrowerName: loan.borrowerName,
+            monthReported: loan.monthReported,
+            status: loan.status,
+            reportedAmount: 0,
+            collectedAmount: 0,
+            runningBalance: 0
+          };
+        }
+
+        const reportedStart = loan.monthReported ? new Date(loan.monthReported + '-01').getTime() : 0;
+        const collectedSinceReported = (loan.payments || [])
+          .filter(isReportableCollectionPayment)
+          .filter(pay => new Date(pay.date).getTime() >= reportedStart)
+          .reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
+
+        return {
+          loanId: loan.id,
+          code: loan.code,
+          borrowerName: loan.borrowerName,
+          monthReported: loan.monthReported,
+          status: loan.status,
+          reportedAmount: loan.outstandingBalance,
+          collectedAmount: collectedSinceReported,
+          runningBalance: Math.max(0, loan.outstandingBalance - collectedSinceReported)
+        };
+      })
+      .sort((a, b) => b.monthReported.localeCompare(a.monthReported) || a.borrowerName.localeCompare(b.borrowerName));
   }
 
   /**
@@ -1780,6 +1867,22 @@ class DataStore {
     return newLog;
   }
 
+  async deleteVisitLog(loanId: string, logId: string, user: string, role: string) {
+    const logIndex = this.visitLogs.findIndex(v => v.id === logId);
+    if (logIndex === -1) return;
+    const log = this.visitLogs[logIndex];
+    this.visitLogs.splice(logIndex, 1);
+    
+    try {
+      await this.api(`/visit_logs/${logId}`, 'DELETE');
+      await this.recordHistory(loanId, 'Visit Log Deleted', `Visit log deleted: "${log.collectorNotes.substring(0, 50)}${log.collectorNotes.length > 50 ? '...' : ''}"`, user, role, 'Close Monitoring');
+    } catch (err) {
+      this.visitLogs.splice(logIndex, 0, log);
+      throw err;
+    }
+    this.save();
+  }
+
   // Contact Log Methods (Action Tracker)
   getContactLogs(loanId: string): ContactLog[] {
     return this.contactLogs.filter(c => c.loanId === loanId).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -1812,6 +1915,23 @@ class DataStore {
 
     this.save();
     return newLog;
+  }
+
+  async deleteContactLog(loanId: string, logId: string, user: string, role: string) {
+    const logIndex = this.contactLogs.findIndex(c => c.id === logId);
+    if (logIndex === -1) return;
+    const log = this.contactLogs[logIndex];
+    this.contactLogs.splice(logIndex, 1);
+    
+    try {
+      await this.api(`/contact_logs/${logId}`, 'DELETE');
+      const responseStatus = log.hasResponse ? 'with response' : 'no response';
+      await this.recordHistory(loanId, 'Contact Log Deleted', `Contact log deleted via ${log.method} (${responseStatus}): "${log.notes.substring(0, 50)}${log.notes.length > 50 ? '...' : ''}"`, user, role, 'Action Tracker');
+    } catch (err) {
+      this.contactLogs.splice(logIndex, 0, log);
+      throw err;
+    }
+    this.save();
   }
 
   getCollectorDistribution(branch?: Branch) {

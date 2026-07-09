@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Loan, User, VisitLog, VisitLogAction } from '../types.ts';
 import { store } from '../services/dataStore.ts';
 import SuccessModal from './SuccessModal.tsx';
+import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface VisitLogModalProps {
   loan: Loan;
@@ -21,6 +22,7 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
   const [successFeedback, setSuccessFeedback] = useState<{ title: string; message: string } | null>(null);
   const [showConfirmAction, setShowConfirmAction] = useState<'return' | 'settled' | null>(null);
+  const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
 
   useEffect(() => {
     setVisitLogs(store.getVisitLogs(loan.id));
@@ -89,6 +91,24 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
     }
   };
 
+  const handleDeleteLog = async () => {
+    if (!deletingLogId) return;
+    setIsSubmitting(true);
+    try {
+      await store.deleteVisitLog(loan.id, deletingLogId, currentUser.username, currentUser.role);
+      setSuccessFeedback({
+        title: 'Visit Log Deleted',
+        message: 'The visit log has been successfully removed.'
+      });
+      setVisitLogs(store.getVisitLogs(loan.id));
+    } catch (err: any) {
+      setErrorFeedback(err.message || 'Failed to delete visit log.');
+    } finally {
+      setIsSubmitting(false);
+      setDeletingLogId(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn">
       <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh] animate-slideUp border border-white/20">
@@ -141,9 +161,14 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
                             </span>
                           )}
                         </div>
-                        <span className="text-[9px] font-bold text-slate-400">
-                          {new Date(log.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-bold text-slate-400">
+                            {new Date(log.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                          <button onClick={() => setDeletingLogId(log.id)} className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-600 transition-colors">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-slate-700 font-bold leading-relaxed mb-1">
                         <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Collector: </span>
@@ -372,6 +397,17 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
               onClose();
             }
           }}
+        />
+
+        <ConfirmationModal
+          isOpen={!!deletingLogId}
+          title="Delete Visit Log"
+          message="Are you sure you want to delete this visit log? This action cannot be undone."
+          onConfirm={handleDeleteLog}
+          onCancel={() => setDeletingLogId(null)}
+          type="danger"
+          confirmText="Delete"
+          cancelText="Cancel"
         />
       </div>
     </div>

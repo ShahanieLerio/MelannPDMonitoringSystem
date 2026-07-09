@@ -4,6 +4,7 @@ import { Loan, PriorityLevel, User, Remark, RecurringSchedule } from '../types.t
 import { store } from '../services/dataStore.ts';
 import { analyzeRemarkPriority } from '../services/geminiService.ts';
 import SuccessModal from './SuccessModal.tsx';
+import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface RemarksModalProps {
   loan: Loan;
@@ -17,6 +18,7 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
   const [followUpDate, setFollowUpDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingRemark, setEditingRemark] = useState<{ id: string } | null>(null);
+  const [deletingRemarkId, setDeletingRemarkId] = useState<string | null>(null);
   const [successFeedback, setSuccessFeedback] = useState<{ title: string, message: string } | null>(null);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
   const [recurringEnabled, setRecurringEnabled] = useState(loan.recurringSchedule?.enabled || false);
@@ -24,6 +26,10 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
   const [selectedDays, setSelectedDays] = useState<number[]>(loan.recurringSchedule?.days || []);
   const [selectedWeekDays, setSelectedWeekDays] = useState<number[]>(loan.recurringSchedule?.weekDays || []);
   const scheduleSignature = JSON.stringify(loan.recurringSchedule || null);
+
+  // Get the most up-to-date loan data from the store
+  const currentLoanData = store.getLoans().find(l => l.id === loan.id) || loan;
+  const currentRemarks = currentLoanData.remarks || [];
 
   useEffect(() => {
     setRecurringEnabled(loan.recurringSchedule?.enabled || false);
@@ -196,6 +202,23 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
     setFollowUpDate(remark.followUpDate || '');
   };
 
+  const handleDeleteRemark = async () => {
+    if (!deletingRemarkId) return;
+    setIsSubmitting(true);
+    try {
+      await store.deleteRemark(loan.id, deletingRemarkId, currentUser.username, currentUser.role);
+      setSuccessFeedback({
+        title: "Field Intel Deleted",
+        message: "The remark has been successfully removed."
+      });
+    } catch (err: any) {
+      setErrorFeedback(err.message || 'Failed to delete remark.');
+    } finally {
+      setIsSubmitting(false);
+      setDeletingRemarkId(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn">
       <div className="bg-white w-full max-w-lg rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col max-h-[85vh] animate-slideUp border border-white/20">
@@ -220,14 +243,14 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
 
         <div className="flex-1 overflow-y-auto p-8 space-y-6 bg-white custom-scrollbar">
           {/* A. RECENT ACTIVITY PREVIEW (Last 1-2 entries) */}
-          {loan.remarks.length > 0 && (
+          {currentRemarks.length > 0 && (
             <div className="mb-6">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                 Recent Activity Context
               </p>
               <div className="space-y-3">
-                {loan.remarks.slice().reverse().slice(0, 2).map(remark => (
+                {currentRemarks.slice().reverse().slice(0, 2).map(remark => (
                   <div key={remark.id} className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 group transition-all hover:bg-white hover:border-emerald-100 hover:shadow-sm">
                     <div className="flex justify-between items-start mb-2">
                       <span className="text-[9px] font-black text-emerald-600/70 uppercase tracking-widest">{remark.collector}</span>
@@ -236,13 +259,16 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
                         <button onClick={() => handleEditClick(remark)} className="p-1 hover:bg-emerald-50 rounded text-slate-300 hover:text-emerald-600 transition-colors">
                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                         </button>
+                        <button onClick={() => setDeletingRemarkId(remark.id)} className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-600 transition-colors">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
                       </div>
                     </div>
                     <p className="text-xs text-slate-600 font-medium leading-relaxed italic line-clamp-2">"{remark.text}"</p>
                   </div>
                 ))}
-                {loan.remarks.length > 2 && (
-                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center pt-1">+ {loan.remarks.length - 2} More entries below</p>
+                {currentRemarks.length > 2 && (
+                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest text-center pt-1">+ {currentRemarks.length - 2} More entries below</p>
                 )}
               </div>
             </div>
@@ -525,11 +551,11 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
           </div>
 
           {/* C. FULL HISTORY SECTION (Separator) */}
-          {loan.remarks.length > 2 && (
+          {currentRemarks.length > 2 && (
             <div className="pt-10 border-t border-slate-100 flex flex-col items-center">
                <span className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] mb-8">Previous Field Logs</span>
                <div className="w-full space-y-8">
-                  {loan.remarks.slice().reverse().slice(2).map(remark => (
+                  {currentRemarks.slice().reverse().slice(2).map(remark => (
                     <div key={remark.id} className="relative pl-8 border-l-2 border-slate-100 bg-white group">
                       <div className="absolute left-[-5px] top-0 w-2 h-2 rounded-full bg-slate-300 shadow-sm transition-colors group-hover:bg-emerald-500"></div>
                       <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex justify-between items-center">
@@ -561,7 +587,7 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
             </div>
           )}
 
-          {loan.remarks.length === 0 && (
+          {currentRemarks.length === 0 && (
             <div className="py-20 flex flex-col items-center justify-center text-center space-y-4">
                <div className="w-16 h-16 rounded-3xl bg-slate-50 flex items-center justify-center text-3xl animate-bounce">📄</div>
                <div>
@@ -578,6 +604,17 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
         title={successFeedback?.title || ''}
         message={successFeedback?.message || ''}
         onConfirm={() => setSuccessFeedback(null)}
+      />
+
+      <ConfirmationModal
+        isOpen={!!deletingRemarkId}
+        title="Delete Field Intel"
+        message="Are you sure you want to delete this remark? This action cannot be undone."
+        onConfirm={handleDeleteRemark}
+        onCancel={() => setDeletingRemarkId(null)}
+        type="danger"
+        confirmText="Delete"
+        cancelText="Cancel"
       />
     </div>
   );

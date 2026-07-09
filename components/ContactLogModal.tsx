@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Loan, User, ContactLog, ContactMethod } from '../types.ts';
 import { store } from '../services/dataStore.ts';
+import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface ContactLogModalProps {
   loan: Loan;
@@ -59,6 +60,7 @@ const ContactLogModal: React.FC<ContactLogModalProps> = ({ loan, currentUser, on
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
 
   useEffect(() => {
     setContactLogs(store.getContactLogs(loan.id));
@@ -98,6 +100,20 @@ const ContactLogModal: React.FC<ContactLogModalProps> = ({ loan, currentUser, on
       setErrorFeedback(err.message || 'Failed to save contact log.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteLog = async () => {
+    if (!deletingLogId) return;
+    setIsSubmitting(true);
+    try {
+      await store.deleteContactLog(loan.id, deletingLogId, currentUser.username, currentUser.role);
+      setContactLogs(store.getContactLogs(loan.id));
+    } catch (err: any) {
+      setErrorFeedback(err.message || 'Failed to delete contact log.');
+    } finally {
+      setIsSubmitting(false);
+      setDeletingLogId(null);
     }
   };
 
@@ -156,9 +172,14 @@ const ContactLogModal: React.FC<ContactLogModalProps> = ({ loan, currentUser, on
                             {log.hasResponse ? '✓ With Response' : '✗ No Response'}
                           </span>
                         </div>
-                        <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500">
-                          {new Date(log.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500">
+                            {new Date(log.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                          <button onClick={() => setDeletingLogId(log.id)} className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-600 transition-colors">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-slate-700 dark:text-slate-300 font-bold leading-relaxed mb-1">
                         <span className="text-[9px] text-slate-400 dark:text-slate-500 font-black uppercase tracking-widest">Notes: </span>
@@ -320,6 +341,17 @@ const ContactLogModal: React.FC<ContactLogModalProps> = ({ loan, currentUser, on
             </button>
           </div>
         </div>
+
+        <ConfirmationModal
+          isOpen={!!deletingLogId}
+          title="Delete Contact Log"
+          message="Are you sure you want to delete this contact log? This action cannot be undone."
+          onConfirm={handleDeleteLog}
+          onCancel={() => setDeletingLogId(null)}
+          type="danger"
+          confirmText="Delete"
+          cancelText="Cancel"
+        />
       </div>
     </div>
   );

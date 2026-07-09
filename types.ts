@@ -222,6 +222,17 @@ export interface CollectorPerformance {
   paidCount: number;
 }
 
+export interface CollectorPerformanceClientDetail {
+  loanId: string;
+  code: string;
+  borrowerName: string;
+  monthReported: string;
+  status: MovingStatus;
+  reportedAmount: number;
+  collectedAmount: number;
+  runningBalance: number;
+}
+
 export enum DemandLetterType {
   FIRST = '1st Demand Letter',
   SECOND = '2nd Demand Letter',

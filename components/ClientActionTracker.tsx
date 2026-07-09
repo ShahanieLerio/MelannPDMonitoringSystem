@@ -290,7 +290,7 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
 
     const combinedHistory = useMemo(() => {
         if (!selectedRow) return [];
-        const items: { date: Date, type: string, user: string, desc: string }[] = [];
+        const items: { date: Date, type: string, user: string, desc: string, visitLog?: VisitLog }[] = [];
         
         // Add remarks
         selectedRow.remarks?.forEach(r => {
@@ -308,7 +308,8 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                 desc.includes('address impart') || typeStr.includes('address impart') ||
                 desc.includes('address import') || typeStr.includes('address import') ||
                 typeStr.includes('remark added') || typeStr.includes('remark edited') ||
-                typeStr.includes('contact log');
+                typeStr.includes('contact log') ||
+                typeStr.includes('visit log');
 
             if (!isExcluded) {
                 items.push({ date: new Date(h.timestamp), type: h.type, user: h.user, desc: h.description });
@@ -332,13 +333,12 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
         // Add Visit Logs
         const clientVisitLogs = store.getVisitLogs(selectedRow.id);
         clientVisitLogs.forEach(vl => {
-            const visitedStr = vl.visitedByCollector ? 'Visited in person' : 'Attempted visit';
-            const personnelInfo = vl.personnelAssigned ? ` [Personnel: ${vl.personnelAssigned}]` : '';
             items.push({ 
                 date: new Date(vl.timestamp), 
                 type: 'Visit Log', 
                 user: vl.loggedBy, 
-                desc: `${visitedStr} - Action: ${vl.action}. Notes: ${vl.collectorNotes}. Client Comment: ${vl.clientComment || 'None'}${personnelInfo}` 
+                desc: vl.collectorNotes,
+                visitLog: vl
             });
         });
 
@@ -708,12 +708,40 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                                                         {item.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                                                     </span>
                                                 </div>
-                                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300 leading-relaxed mb-2">
-                                                    {item.desc}
-                                                </p>
-                                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                                    By {item.user}
-                                                </p>
+                                                {item.visitLog ? (
+                                                    <>
+                                                        <p className="text-xs text-slate-700 dark:text-slate-300 font-bold leading-relaxed mb-2">
+                                                            <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Collector: </span>
+                                                            "{item.visitLog.collectorNotes}"
+                                                        </p>
+                                                        {item.visitLog.clientComment && (
+                                                            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium leading-relaxed italic mb-2">
+                                                                <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest not-italic">Client: </span>
+                                                                "{item.visitLog.clientComment}"
+                                                            </p>
+                                                        )}
+                                                        {item.visitLog.personnelAssigned && (
+                                                            <p className="text-xs text-slate-700 dark:text-slate-300 font-bold leading-relaxed mb-2">
+                                                                <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Personnel Assigned: </span>
+                                                                {item.visitLog.personnelAssigned}
+                                                            </p>
+                                                        )}
+                                                        <div className="flex flex-wrap items-center gap-2 text-[9px] font-bold text-slate-400">
+                                                            <span>Visit: {new Date(item.visitLog.visitDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                                                            <span>&bull;</span>
+                                                            <span>By: {item.user}</span>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <p className="text-xs font-medium text-slate-700 dark:text-slate-300 leading-relaxed mb-2">
+                                                            {item.desc}
+                                                        </p>
+                                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                                            By {item.user}
+                                                        </p>
+                                                    </>
+                                                )}
                                             </div>
                                         </div>
                                     )) : (

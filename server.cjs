@@ -1036,6 +1036,13 @@ app.put('/api/remarks/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.delete('/api/remarks/:id', async (req, res) => {
+    try {
+        await query('DELETE FROM remarks WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Demand Letters
 app.get('/api/demand_letters', async (req, res) => {
     try {
@@ -1112,6 +1119,13 @@ app.post('/api/visit_logs', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.delete('/api/visit_logs/:id', async (req, res) => {
+    try {
+        await query('DELETE FROM visit_logs WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Contact Logs (Action Tracker - Visit/Contact Log)
 app.get('/api/contact_logs', async (req, res) => {
     try {
@@ -1134,6 +1148,13 @@ app.post('/api/contact_logs', async (req, res) => {
             'INSERT INTO contact_logs (id, loan_id, contact_date, method, notes, client_response, has_response, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
             [id, loanId, contactDate, method, notes, clientResponse, hasResponse, loggedBy, timestamp]
         );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/contact_logs/:id', async (req, res) => {
+    try {
+        await query('DELETE FROM contact_logs WHERE id = $1', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

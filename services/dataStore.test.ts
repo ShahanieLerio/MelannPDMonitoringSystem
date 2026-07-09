@@ -356,6 +356,132 @@ describe('DataStore Service', () => {
             expect(performance.runningBalance).toBe(800);
             expect(performance.collectionRate).toBe(60);
         });
+
+        it('filters collector performance by reported year range when requested', async () => {
+            const { store } = await import('./dataStore');
+            const baseLoan = {
+                id: 'collector-year-base',
+                collector: 'OFFICE',
+                code: 'CP-YEAR',
+                borrowerName: 'YEAR, CLIENT',
+                firstName: 'Year',
+                lastName: 'Client',
+                monthReported: '2024-01',
+                dueDate: '2024-03-15',
+                totalLoan: 1000,
+                outstandingBalance: 1000,
+                amountCollected: 0,
+                runningBalance: 1000,
+                status: MovingStatus.MOVING,
+                location: LocationStatus.LOCATED,
+                area: 'Ormoc',
+                city: 'Ormoc',
+                barangay: 'Poblacion',
+                fullAddress: 'Ormoc, Leyte',
+                payments: [],
+                remarks: [],
+                history: [],
+                branch: Branch.ORMOC
+            };
+
+            (store as any).collectors = [
+                { id: 'collector-office', name: 'OFFICE', nickname: 'OFFICE', address: 'Ormoc', branch: Branch.ORMOC }
+            ];
+            (store as any).managementDispositions = [];
+            (store as any).loans = [
+                {
+                    ...baseLoan,
+                    id: 'collector-2024',
+                    monthReported: '2024-01',
+                    outstandingBalance: 1000
+                },
+                {
+                    ...baseLoan,
+                    id: 'collector-2025',
+                    monthReported: '2025-02',
+                    outstandingBalance: 2000
+                },
+                {
+                    ...baseLoan,
+                    id: 'collector-2026',
+                    monthReported: '2026-03',
+                    outstandingBalance: 3000
+                }
+            ];
+
+            const historical = store.getCollectorPerformance(Branch.ORMOC, { from: 2016, to: 2024 });
+            const year2025 = store.getCollectorPerformance(Branch.ORMOC, { from: 2025, to: 2025 });
+            const year2026 = store.getCollectorPerformance(Branch.ORMOC, { from: 2026, to: 2026 });
+
+            expect(historical).toHaveLength(1);
+            expect(historical[0].totalAccounts).toBe(1);
+            expect(historical[0].reportedAmount).toBe(1000);
+            expect(year2025[0].reportedAmount).toBe(2000);
+            expect(year2026[0].reportedAmount).toBe(3000);
+        });
+
+        it('returns client rows for a collector yearly performance drilldown', async () => {
+            const { store } = await import('./dataStore');
+            const baseLoan = {
+                id: 'collector-detail-base',
+                collector: 'OFFICE',
+                code: 'CP-DETAIL',
+                borrowerName: 'DETAIL, CLIENT',
+                firstName: 'Detail',
+                lastName: 'Client',
+                monthReported: '2025-02',
+                dueDate: '2025-03-15',
+                totalLoan: 1000,
+                outstandingBalance: 1000,
+                amountCollected: 0,
+                runningBalance: 1000,
+                status: MovingStatus.MOVING,
+                location: LocationStatus.LOCATED,
+                area: 'Ormoc',
+                city: 'Ormoc',
+                barangay: 'Poblacion',
+                fullAddress: 'Ormoc, Leyte',
+                payments: [{
+                    id: 'pay-detail',
+                    loanId: 'collector-detail-base',
+                    date: '2025-02-20',
+                    orNumber: 'OR-DETAIL',
+                    amount: 300,
+                    balanceAfter: 700,
+                    recorder: 'Admin',
+                    remarks: '',
+                    status: PaymentStatus.GOOD,
+                    createdAt: '2025-02-20T08:00:00.000Z'
+                }],
+                remarks: [],
+                history: [],
+                branch: Branch.ORMOC
+            };
+
+            (store as any).collectors = [
+                { id: 'collector-office', name: 'OFFICE', nickname: 'OFFICE', address: 'Ormoc', branch: Branch.ORMOC }
+            ];
+            (store as any).managementDispositions = [];
+            (store as any).loans = [
+                baseLoan,
+                {
+                    ...baseLoan,
+                    id: 'collector-detail-other-year',
+                    monthReported: '2026-02',
+                    borrowerName: 'OTHER YEAR, CLIENT'
+                }
+            ];
+
+            const details = store.getCollectorPerformanceDetails(Branch.ORMOC, 'OFFICE', { from: 2025, to: 2025 });
+
+            expect(details).toHaveLength(1);
+            expect(details[0]).toMatchObject({
+                borrowerName: 'DETAIL, CLIENT',
+                reportedAmount: 1000,
+                collectedAmount: 300,
+                runningBalance: 700
+            });
+        });
     });
 
     describe('Data Validation', () => {
