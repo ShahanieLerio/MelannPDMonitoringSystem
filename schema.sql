@@ -80,10 +80,8 @@ CREATE TABLE IF NOT EXISTS payments (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Required by the payment upsert in server.cjs.
--- One loan should only have one payment row per collection date.
-CREATE UNIQUE INDEX IF NOT EXISTS payments_loan_id_date_unique
-ON payments (loan_id, date);
+-- Same-loan same-date payments are allowed after the duplicate warning is confirmed.
+-- OR numbers remain unique for audit and reversal lookup.
 
 -- Remarks Table
 CREATE TABLE IF NOT EXISTS remarks (

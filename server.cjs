@@ -87,6 +87,7 @@ pool.connect((err, client, release) => {
 
 // Generic Query Handler
 const query = (text, params) => pool.query(text, params);
+const PAYMENT_DUPLICATE_DATE_INDEX = 'payments_loan_id_date_unique';
 
 const JCASHDB_PATH = process.env.JCASHDB_PATH || '\\\\SERVERPC\\LendingV2Melan\\db\\jcashdb.mdb';
 const JCASHDB_PASSWORD = process.env.JCASHDB_PASSWORD || '';
@@ -146,6 +147,15 @@ const ensureMigrationTables = async () => {
 
 ensureMigrationTables().catch(err => {
     console.error('Failed to ensure migration tables', err.message);
+});
+
+const ensurePaymentDuplicateDatesAllowed = async () => {
+    await query(`ALTER TABLE payments DROP CONSTRAINT IF EXISTS ${PAYMENT_DUPLICATE_DATE_INDEX}`);
+    await query('DROP INDEX IF EXISTS payments_loan_id_date_unique');
+};
+
+ensurePaymentDuplicateDatesAllowed().catch(err => {
+    console.error('Failed to allow same-date duplicate payments', err.message);
 });
 
 const toDateOnly = (value) => {
@@ -1065,24 +1075,30 @@ app.get('/api/payments', async (req, res) => {
 
 app.post('/api/payments', async (req, res) => {
     const { id, loanId, amount, orNumber, date, balanceAfter, recorder, remarks, status, createdAt } = req.body;
+    const params = [id, loanId, amount, orNumber, date, balanceAfter, recorder, remarks, status, createdAt];
+    const insertPaymentSql = `
+        INSERT INTO payments (id, loan_id, amount, or_number, date, balance_after, recorder, remarks, status, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `;
+
     try {
-        // Upsert: if a GOOD payment already exists for this loan on this date, replace it.
-        // This prevents duplicate payment dates in the Payment Stream.
-        await query(`
-            INSERT INTO payments (id, loan_id, amount, or_number, date, balance_after, recorder, remarks, status, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (loan_id, date) DO UPDATE SET
-                id           = EXCLUDED.id,
-                amount       = EXCLUDED.amount,
-                or_number    = EXCLUDED.or_number,
-                balance_after= EXCLUDED.balance_after,
-                recorder     = EXCLUDED.recorder,
-                remarks      = EXCLUDED.remarks,
-                status       = EXCLUDED.status,
-                created_at   = EXCLUDED.created_at
-        `, [id, loanId, amount, orNumber, date, balanceAfter, recorder, remarks, status, createdAt]);
+        await query(insertPaymentSql, params);
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        if (err.code === '23505' && err.constraint === PAYMENT_DUPLICATE_DATE_INDEX) {
+            try {
+                await query(`ALTER TABLE payments DROP CONSTRAINT IF EXISTS ${PAYMENT_DUPLICATE_DATE_INDEX}`);
+                await query(`DROP INDEX IF EXISTS ${PAYMENT_DUPLICATE_DATE_INDEX}`);
+                await query(insertPaymentSql, params);
+                res.json({ success: true, repairedDuplicateDateIndex: true });
+                return;
+            } catch (retryErr) {
+                res.status(500).json({ error: retryErr.message });
+                return;
+            }
+        }
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.put('/api/payments/:orNumber', async (req, res) => {
@@ -1636,10 +1652,11 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
                 await client.query(`
                     INSERT INTO payments (id, loan_id, amount, or_number, date, balance_after, recorder, remarks, status, created_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                    ON CONFLICT (loan_id, date) DO UPDATE SET
-                        id = EXCLUDED.id,
+                    ON CONFLICT (id) DO UPDATE SET
+                        loan_id = EXCLUDED.loan_id,
                         amount = EXCLUDED.amount,
                         or_number = EXCLUDED.or_number,
+                        date = EXCLUDED.date,
                         balance_after = EXCLUDED.balance_after,
                         recorder = EXCLUDED.recorder,
                         remarks = EXCLUDED.remarks,

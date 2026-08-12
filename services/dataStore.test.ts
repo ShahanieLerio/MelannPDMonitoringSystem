@@ -553,7 +553,7 @@ describe('DataStore Service', () => {
     });
 
     describe('Business Logic', () => {
-        it('persists recalculated balance when replacing a same-date payment', async () => {
+        it('appends confirmed same-date payments and recalculates the stream', async () => {
             const { store } = await import('./dataStore');
             const loan = {
                 id: '8456',
@@ -609,6 +609,8 @@ describe('DataStore Service', () => {
             await store.recordPayment('8456', 150, '2019-03-30', '', 'Shan', UserRole.ORMOC_USER, 'OR-20260619-79FU');
 
             const postedPayment = (store as any).loans[0].payments.find((p: any) => p.orNumber === 'OR-20260619-79FU');
+            expect((store as any).loans[0].payments).toHaveLength(3);
+            expect((store as any).loans[0].payments.find((p: any) => p.orNumber === 'JCASH-153000')).toBeDefined();
             expect(postedPayment.balanceAfter).toBe(2860);
             expect((store as any).loans[0].runningBalance).toBe(2860);
             expect(global.fetch).toHaveBeenCalledWith(
@@ -625,6 +627,54 @@ describe('DataStore Service', () => {
                     body: expect.stringContaining('"runningBalance":2860')
                 })
             );
+        });
+
+        it('keeps an existing good same-date payment when posting another confirmed duplicate', async () => {
+            const { store } = await import('./dataStore');
+            (store as any).loans = [{
+                id: 'tiengo-belen',
+                collector: 'DOMINGGONO',
+                code: '2757',
+                borrowerName: 'TIENGO, BELEN',
+                firstName: 'BELEN',
+                lastName: 'TIENGO',
+                monthReported: '2026-08',
+                dueDate: '2026-03-15',
+                totalLoan: 5000,
+                outstandingBalance: 5000,
+                amountCollected: 3200,
+                runningBalance: 1800,
+                status: MovingStatus.MOVING,
+                location: LocationStatus.LOCATED,
+                area: 'Libo',
+                city: 'Carigara',
+                barangay: '',
+                fullAddress: '',
+                payments: [{
+                    id: 'pay-3200',
+                    loanId: 'tiengo-belen',
+                    date: '2026-08-11',
+                    orNumber: 'OR-3200',
+                    amount: 3200,
+                    balanceAfter: 1800,
+                    recorder: 'Shanie',
+                    remarks: '',
+                    status: PaymentStatus.GOOD,
+                    createdAt: '2026-08-11T08:00:00.000Z'
+                }],
+                remarks: [],
+                history: [],
+                branch: Branch.ORMOC
+            }];
+
+            await store.recordPayment('tiengo-belen', 180, '2026-08-11', '', 'Shanie', UserRole.SUPER_ADMIN, 'OR-180');
+
+            const payments = (store as any).loans[0].payments;
+            expect(payments.map((p: any) => p.orNumber)).toEqual(['OR-3200', 'OR-180']);
+            expect(payments.map((p: any) => p.amount)).toEqual([3200, 180]);
+            expect((store as any).loans[0].amountCollected).toBe(3380);
+            expect((store as any).loans[0].runningBalance).toBe(1620);
+            expect(store.getDailyCollections('2026-08-11', '2026-08-11', Branch.ORMOC).grandTotal).toBe(3380);
         });
 
         it('rebuilds migrated payment stream balances from total loan minus source remitted adjustment', async () => {

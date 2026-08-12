@@ -1445,12 +1445,6 @@ class DataStore {
       await this.recordHistory(loanId, 'Auto-Location Update', 'Location automatically changed to "Located" due to payment activity.', recorder, role, 'Payment');
     }
 
-    const existingSameDateIndex = this.loans[index].payments.findIndex(
-      p => p.loanId === loanId && p.date === date
-    );
-    const previousSameDatePayment = existingSameDateIndex !== -1
-      ? this.loans[index].payments[existingSameDateIndex]
-      : null;
     const previousAmountCollected = loan.amountCollected;
     const previousActivePaymentTotal = loan.payments
       .filter(p => p.status !== PaymentStatus.REVERSED)
@@ -1459,13 +1453,9 @@ class DataStore {
       ? Math.max(0, Number(loan.amountCollected || 0) - previousActivePaymentTotal)
       : 0;
 
-    // Recalculate before persisting so the stored payment row carries the
-    // correct balance_after value, including same-date replacement payments.
-    if (existingSameDateIndex !== -1) {
-      this.loans[index].payments[existingSameDateIndex] = newPayment;
-    } else {
-      this.loans[index].payments.push(newPayment);
-    }
+    // Proceed Anyway on a duplicate date must append a separate audit row.
+    // The duplicate warning is a user checkpoint, not a replacement rule.
+    this.loans[index].payments.push(newPayment);
     const nextActivePaymentTotal = this.loans[index].payments
       .filter(p => p.status !== PaymentStatus.REVERSED)
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
@@ -1482,11 +1472,7 @@ class DataStore {
         await this.api('/payments', 'POST', { loanId, ...newPayment });
         await this.api(`/loans/${loanId}`, 'PUT', updatedLoan);
       } else {
-        if (previousSameDatePayment) {
-          this.loans[index].payments[existingSameDateIndex] = previousSameDatePayment;
-        } else {
-          this.loans[index].payments = this.loans[index].payments.filter(p => p.id !== newPayment.id);
-        }
+        this.loans[index].payments = this.loans[index].payments.filter(p => p.id !== newPayment.id);
         this.loans[index].amountCollected = previousAmountCollected;
         this.recalculateLoanFinances(loanId);
         throw apiErr;

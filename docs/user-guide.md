@@ -104,7 +104,7 @@ Payment rules:
 
 - Good payments count toward collection totals.
 - Reversed payments are ignored by financial recalculation.
-- The backend upserts payments by `loan_id` and `date`, so a loan can only have one payment row per collection date.
+- Multiple same-loan same-date payments trigger a duplicate warning. If the user chooses Proceed Anyway, the new payment is still posted as a separate audit row and counts in totals.
 
 Reversing a payment:
 
@@ -252,4 +252,3 @@ Alerts include:
 - Payments due today.
 - Demand letter follow-ups due today or earlier.
 - Third demand letters requiring constant follow-up.
-
