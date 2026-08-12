@@ -7,23 +7,57 @@ interface DailyCollectionReportProps {
   selectedBranch: Branch;
 }
 
+const DCR_SYNC_INTERVAL_MS = 5000;
+
 const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedBranch }) => {
   const today = new Date().toISOString().split('T')[0];
   const [fromDate, setFromDate] = useState(today);
   const [toDate, setToDate] = useState(today);
   const [data, setData] = useState(store.getDailyCollections(today, today, selectedBranch));
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [hasFreshData, setHasFreshData] = useState(false);
   const [filterCollector, setFilterCollector] = useState('');
   const [filterArea, setFilterArea] = useState('');
 
-  const refresh = useCallback(() => {
+  const refreshReportData = useCallback(() => {
     setData(store.getDailyCollections(fromDate, toDate, selectedBranch));
   }, [fromDate, toDate, selectedBranch]);
 
   useEffect(() => {
-    refresh();
-    const unsubscribe = store.subscribe(refresh);
+    refreshReportData();
+    const unsubscribe = store.subscribe(refreshReportData);
     return () => unsubscribe();
-  }, [refresh]);
+  }, [refreshReportData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHasFreshData(false);
+
+    const syncLatestCollections = async () => {
+      setIsSyncing(true);
+      try {
+        await store.refresh();
+      } catch (err) {
+        console.error('Failed to refresh Daily Collection Report data:', err);
+      } finally {
+        if (!cancelled) {
+          refreshReportData();
+          setHasFreshData(true);
+          setIsSyncing(false);
+        }
+      }
+    };
+
+    void syncLatestCollections();
+    const intervalId = window.setInterval(syncLatestCollections, DCR_SYNC_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [refreshReportData]);
+
+  const isWaitingForFreshData = !hasFreshData;
 
   // Derived filtered transaction list
   const filteredTransactions = data.transactions.filter(t => {
@@ -53,6 +87,7 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
           <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight transition-colors duration-300">Daily Collection Report</h2>
           <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1 transition-colors duration-300">
             Branch: <span className="text-emerald-600 dark:text-emerald-400">{selectedBranch}</span>
+            {isSyncing && <span className="ml-3 text-amber-500 dark:text-amber-300">Syncing latest payments...</span>}
           </p>
         </div>
 
@@ -90,7 +125,7 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100 dark:text-emerald-200/70 mb-1 transition-colors duration-300">Grand Total Collected</p>
-            <p className="text-3xl font-black transition-colors duration-300">{formatCurrency(data.grandTotal)}</p>
+            <p className="text-3xl font-black transition-colors duration-300">{isWaitingForFreshData ? 'Updating...' : formatCurrency(data.grandTotal)}</p>
             <p className="text-[10px] text-emerald-200 dark:text-emerald-400/70 mt-1 font-bold transition-colors duration-300">
               {fromDate === toDate ? formatDate(fromDate) : `${formatDate(fromDate)} – ${formatDate(toDate)}`}
             </p>
@@ -102,7 +137,7 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1 transition-colors duration-300">Total Accounts Collected</p>
-            <p className="text-3xl font-black text-slate-800 dark:text-white transition-colors duration-300">{data.grandTotalAccounts}</p>
+            <p className="text-3xl font-black text-slate-800 dark:text-white transition-colors duration-300">{isWaitingForFreshData ? '...' : data.grandTotalAccounts}</p>
             <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 font-bold transition-colors duration-300">transactions recorded</p>
           </div>
         </div>
@@ -116,7 +151,11 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
             <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-0.5 transition-colors duration-300">Grouped totals per collector</p>
           </div>
           <div className="overflow-x-auto">
-            {data.collectorSummary.length > 0 ? (
+            {isWaitingForFreshData ? (
+              <div className="min-h-[220px] flex items-center justify-center px-8 py-14 text-center text-slate-400 dark:text-slate-500 italic text-[10px] font-black uppercase tracking-[0.2em] transition-colors duration-300">
+                Syncing latest collections from database.
+              </div>
+            ) : data.collectorSummary.length > 0 ? (
               <table className="w-full text-left">
                 <thead className="bg-slate-50/80 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 uppercase text-[10px] font-black tracking-widest transition-colors duration-300">
                   <tr>
@@ -183,7 +222,11 @@ const DailyCollectionReport: React.FC<DailyCollectionReportProps> = ({ selectedB
             </div>
           </div>
           <div className="max-h-[520px] overflow-auto">
-            {filteredTransactions.length > 0 ? (
+            {isWaitingForFreshData ? (
+              <div className="min-h-[220px] flex items-center justify-center px-8 py-14 text-center text-slate-400 dark:text-slate-500 italic text-[10px] font-black uppercase tracking-[0.2em] transition-colors duration-300">
+                Syncing latest transactions from database.
+              </div>
+            ) : filteredTransactions.length > 0 ? (
               <table className="w-full text-left">
                 <thead className="sticky top-0 z-10 bg-slate-50/95 dark:bg-slate-900/95 text-slate-400 dark:text-slate-500 uppercase text-[9px] font-black tracking-widest transition-colors duration-300">
                   <tr>

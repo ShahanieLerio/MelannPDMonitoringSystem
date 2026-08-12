@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import Dashboard from './Dashboard';
 import { store } from '../services/dataStore';
@@ -199,7 +199,7 @@ describe('Dashboard', () => {
     expect(screen.getByText('1 Active as of now')).toBeInTheDocument();
   });
 
-  it('counts all assigned collector accounts while calculating efficiency from collectible accounts only', () => {
+  it('counts all assigned collector accounts while calculating efficiency from collectible accounts only', async () => {
     (store.getLoans as any).mockReturnValue([
       makeLoan({
         id: 'active',
@@ -277,6 +277,7 @@ describe('Dashboard', () => {
 
     fireEvent.click(screen.getByText('Export Excel'));
 
+    await waitFor(() => expect(XLSX.utils.aoa_to_sheet).toHaveBeenCalled());
     const exportRows = (XLSX.utils.aoa_to_sheet as any).mock.calls[0][0];
     expect(exportRows).toContainEqual(['JOHN', 5, 18000, 13000, 5000, 72.22, 1]);
   });
@@ -324,7 +325,7 @@ describe('Dashboard', () => {
     expect(screen.getAllByText(/800/).length).toBeGreaterThan(0);
   });
 
-  it('exports near-full-payment clients grouped by collector with client and loan details', () => {
+  it('exports near-full-payment clients grouped by collector with client and loan details', async () => {
     (store.getLoans as any).mockReturnValue([
       makeLoan({
         id: 'l3',
@@ -362,6 +363,7 @@ describe('Dashboard', () => {
 
     fireEvent.click(screen.getByTitle('Export Near Full Payment clients'));
 
+    await waitFor(() => expect(XLSX.utils.aoa_to_sheet).toHaveBeenCalled());
     const exportRows = (XLSX.utils.aoa_to_sheet as any).mock.calls[0][0];
     expect(exportRows).toContainEqual(['Collector Filter', 'All Collectors']);
     expect(exportRows).toContainEqual(['Collector: JANE']);

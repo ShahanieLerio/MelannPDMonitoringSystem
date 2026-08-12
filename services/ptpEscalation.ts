@@ -26,6 +26,13 @@ const getLocalISODate = (date: Date) => {
 
 const normalizeDate = (value?: string | null) => value ? value.slice(0, 10) : null;
 
+const hasGoodPaymentToday = (loan: Loan, todayStr: string) => {
+  return (loan.payments || []).some(payment =>
+    payment.status === PaymentStatus.GOOD &&
+    normalizeDate(payment.date) === todayStr
+  );
+};
+
 const hasGoodPaymentInWindow = (loan: Loan, dueDate: string, nextDueDate?: string) => {
   return (loan.payments || []).some(payment => {
     if (payment.status !== PaymentStatus.GOOD) return false;
@@ -82,6 +89,30 @@ const getRecurringMissedDates = (loan: Loan, todayStr: string) => {
   return missedDates;
 };
 
+const getRemarkDate = (remark: Remark) => normalizeDate(remark.timestamp);
+
+const getRelevantRecurringRemark = (loan: Loan, dueDate: string) => {
+  const scheduleStartDate = normalizeDate(loan.recurringSchedule?.startDate);
+  const remarks = [...(loan.remarks || [])]
+    .filter(remark => remark.text?.trim())
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  return remarks.find(remark => {
+    const remarkDate = getRemarkDate(remark);
+    if (!remarkDate) return false;
+    if (scheduleStartDate && remarkDate < scheduleStartDate) return false;
+    return remarkDate <= dueDate;
+  }) || remarks[0];
+};
+
+const getRecurringContext = (loan: Loan, dueDate: string) => {
+  const remark = getRelevantRecurringRemark(loan, dueDate);
+  return {
+    remark,
+    context: remark?.text?.trim() || 'Recurring payment commitment'
+  };
+};
+
 const getLatestEverydayMissedStreak = (missedCommitments: EscalationMiss[]) => {
   const recurringMisses = missedCommitments
     .filter(miss => miss.type === 'Recurring Schedule')
@@ -111,6 +142,7 @@ export const getPTPEscalationCases = (loans: Loan[], todayStr = getLocalISODate(
   return loans
     .map(loan => {
       if (loan.status === 'Paid' || loan.runningBalance <= 0) return null;
+      if (hasGoodPaymentToday(loan, todayStr)) return null;
 
       const commitmentCandidates = (loan.remarks || [])
         .flatMap(remark => {
@@ -142,12 +174,16 @@ export const getPTPEscalationCases = (loans: Loan[], todayStr = getLocalISODate(
         })
         .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-      const recurringCandidates = getRecurringMissedDates(loan, todayStr).map((dueDate, index) => ({
-        id: `${loan.id}-recurring-${dueDate}-${index}`,
-        type: 'Recurring Schedule' as const,
-        dueDate,
-        context: 'Scheduled payment was not satisfied.'
-      }));
+      const recurringCandidates = getRecurringMissedDates(loan, todayStr).map((dueDate, index) => {
+        const { remark, context } = getRecurringContext(loan, dueDate);
+        return {
+          id: `${loan.id}-recurring-${dueDate}-${index}`,
+          type: 'Recurring Schedule' as const,
+          dueDate,
+          remark,
+          context
+        };
+      });
 
       const allCandidates = [...commitmentCandidates, ...recurringCandidates]
         .sort((a, b) => a.dueDate.localeCompare(b.dueDate));

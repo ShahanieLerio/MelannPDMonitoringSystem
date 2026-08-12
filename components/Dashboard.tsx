@@ -6,7 +6,6 @@ import { getLoanInsights } from '../services/geminiService.ts';
 import { MovingStatus, Branch, Loan, PaymentStatus } from '../types.ts';
 import { isDeadWriteOffLoan, isReconstructedPaymentRemark, isReportableCollectionPayment } from '../services/loanUtils.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
-import * as XLSX from 'xlsx';
 
 interface DashboardProps {
   selectedBranch: Branch;
@@ -287,7 +286,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     return nearFullPaymentClients.reduce((sum, l) => sum + l.runningBalance, 0);
   }, [nearFullPaymentClients]);
 
-  const sortedCollectorData = [...collectorData].sort((a, b) => {
+  const sortedCollectorData = useMemo(() => [...collectorData].sort((a, b) => {
     if (collectorViewMode === 'Performance View') {
       const aPerf = a.reportedAmount > 0 ? (a.collectedAmount / a.reportedAmount) : 0;
       const bPerf = b.reportedAmount > 0 ? (b.collectedAmount / b.reportedAmount) : 0;
@@ -295,7 +294,55 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     } else {
       return b.reportedAmount - a.reportedAmount;
     }
-  });
+  }), [collectorData, collectorViewMode]);
+
+  const collectionTrend = useMemo(() => {
+    const now = new Date();
+    const days30Ago = new Date();
+    days30Ago.setDate(now.getDate() - 29);
+
+    const dailyMap: Record<string, { amount: number; count: number }> = {};
+    for (let i = 0; i < 30; i++) {
+      const d = new Date(days30Ago);
+      d.setDate(days30Ago.getDate() + i);
+      const key = d.toISOString().split('T')[0];
+      dailyMap[key] = { amount: 0, count: 0 };
+    }
+
+    loans.forEach(loan => {
+      loan.payments.forEach(p => {
+        if (p.status === PaymentStatus.GOOD && dailyMap[p.date] !== undefined) {
+          dailyMap[p.date].amount += p.amount;
+          dailyMap[p.date].count += 1;
+        }
+      });
+    });
+
+    let cumulative = 0;
+    const trendData = Object.keys(dailyMap).sort().map(date => {
+      cumulative += dailyMap[date].amount;
+      const d = new Date(`${date}T00:00:00`);
+      return {
+        date,
+        label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        amount: dailyMap[date].amount,
+        cumulative,
+        count: dailyMap[date].count,
+      };
+    });
+
+    const totalCollected30 = trendData.reduce((s, d) => s + d.amount, 0);
+    const totalTransactions30 = trendData.reduce((s, d) => s + d.count, 0);
+    const peakDay = trendData.reduce((best, d) => d.amount > best.amount ? d : best, trendData[0]);
+
+    return {
+      avgDaily: totalCollected30 / 30,
+      peakDay,
+      totalCollected30,
+      totalTransactions30,
+      trendData,
+    };
+  }, [loans]);
 
   const COLORS = ['#3b82f6', '#059669', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f43f5e', '#6366f1'];
 
@@ -306,7 +353,8 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     setIsAiLoading(false);
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
+    const XLSX = await import('xlsx');
     const exportData: any[][] = [
       ['Melann Lending — Dashboard Export'],
       ['Branch', selectedBranch],
@@ -392,7 +440,8 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     XLSX.writeFile(wb, `Dashboard_${branchTag}_${today}.xlsx`);
   };
 
-  const handleExportNearFullPayment = () => {
+  const handleExportNearFullPayment = async () => {
+    const XLSX = await import('xlsx');
     const collectorGroups = nearFullPaymentClients.reduce<Record<string, Loan[]>>((groups, loan) => {
       const collectorName = getCollectorDisplayName(loan.collector, allCollectors);
       if (!groups[collectorName]) groups[collectorName] = [];
@@ -550,51 +599,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       {/* Main 3-Column Content Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch mt-6">
         {/* Collection Trend Chart */}
-      {(() => {
-        // Compute daily collection data for the last 30 days
-        const now = new Date();
-        const days30Ago = new Date();
-        days30Ago.setDate(now.getDate() - 29);
-
-        // Build a map of date -> { amount, count }
-        const dailyMap: Record<string, { amount: number; count: number }> = {};
-        // Pre-fill all 30 days with zeros
-        for (let i = 0; i < 30; i++) {
-          const d = new Date(days30Ago);
-          d.setDate(days30Ago.getDate() + i);
-          const key = d.toISOString().split('T')[0];
-          dailyMap[key] = { amount: 0, count: 0 };
-        }
-        // Aggregate payments
-        loans.forEach(loan => {
-          loan.payments.forEach(p => {
-            if (p.status === PaymentStatus.GOOD && dailyMap[p.date] !== undefined) {
-              dailyMap[p.date].amount += p.amount;
-              dailyMap[p.date].count += 1;
-            }
-          });
-        });
-
-        const sortedDates = Object.keys(dailyMap).sort();
-        let cumulative = 0;
-        const trendData = sortedDates.map(date => {
-          cumulative += dailyMap[date].amount;
-          const d = new Date(date + 'T00:00:00');
-          return {
-            date,
-            label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            amount: dailyMap[date].amount,
-            cumulative,
-            count: dailyMap[date].count,
-          };
-        });
-
-        const totalCollected30 = trendData.reduce((s, d) => s + d.amount, 0);
-        const totalTransactions30 = trendData.reduce((s, d) => s + d.count, 0);
-        const avgDaily = totalCollected30 / 30;
-        const peakDay = trendData.reduce((best, d) => d.amount > best.amount ? d : best, trendData[0]);
-
-        return (
+      <>
           <div className="xl:col-span-5 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300 flex flex-col h-[500px]">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
               <div>
@@ -607,20 +612,20 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">30-Day Total</div>
-                  <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">₱{totalCollected30.toLocaleString()}</div>
+                  <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">₱{collectionTrend.totalCollected30.toLocaleString()}</div>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Avg / Day</div>
-                  <div className="text-sm font-black text-slate-800 dark:text-white">₱{Math.round(avgDaily).toLocaleString()}</div>
+                  <div className="text-sm font-black text-slate-800 dark:text-white">₱{Math.round(collectionTrend.avgDaily).toLocaleString()}</div>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Transactions</div>
-                  <div className="text-sm font-black text-slate-800 dark:text-white">{totalTransactions30.toLocaleString()}</div>
+                  <div className="text-sm font-black text-slate-800 dark:text-white">{collectionTrend.totalTransactions30.toLocaleString()}</div>
                 </div>
-                {peakDay && peakDay.amount > 0 && (
+                {collectionTrend.peakDay && collectionTrend.peakDay.amount > 0 && (
                   <div className="bg-slate-50 dark:bg-slate-900 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Peak Day</div>
-                    <div className="text-sm font-black text-blue-600 dark:text-blue-400">{peakDay.label} — ₱{peakDay.amount.toLocaleString()}</div>
+                    <div className="text-sm font-black text-blue-600 dark:text-blue-400">{collectionTrend.peakDay.label} — ₱{collectionTrend.peakDay.amount.toLocaleString()}</div>
                   </div>
                 )}
               </div>
@@ -628,7 +633,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
 
             <div className="flex-1 mt-4 min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart data={collectionTrend.trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="gradientAmount" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#064e3b" stopOpacity={0.3} />
@@ -641,7 +646,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
                     tick={{ fontSize: 10, fontWeight: 600, fill: '#94a3b8' }}
                     tickLine={false}
                     axisLine={false}
-                    interval={Math.floor(trendData.length / 7)}
+                    interval={Math.floor(collectionTrend.trendData.length / 7)}
                   />
                   <YAxis
                     tick={{ fontSize: 10, fontWeight: 600, fill: '#94a3b8' }}
@@ -679,8 +684,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
               </ResponsiveContainer>
             </div>
           </div>
-        );
-      })()}
+      </>
 
         {/* CENTER: Collector Performance Matrix */}
         <div className="xl:col-span-4 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col h-[500px]">

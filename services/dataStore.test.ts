@@ -677,6 +677,86 @@ describe('DataStore Service', () => {
             expect((store as any).loans[0].runningBalance).toBe(7397);
         });
 
+        it('restores migrated account balance when reversing a newly posted payment', async () => {
+            const { store } = await import('./dataStore');
+            const loan = {
+                id: '48223',
+                collector: 'TORRETA',
+                code: '3947',
+                borrowerName: 'ESPINOSA, MHARENIEL',
+                firstName: 'MHARENIEL',
+                lastName: 'ESPINOSA',
+                monthReported: '2026-04',
+                dueDate: '2026-05-19',
+                totalLoan: 2645,
+                outstandingBalance: 1095,
+                amountCollected: 350,
+                runningBalance: 2295,
+                status: MovingStatus.MOVING,
+                location: LocationStatus.LOCATED,
+                area: 'Ormoc',
+                city: 'Ormoc',
+                barangay: 'Biasong',
+                fullAddress: '',
+                payments: [
+                    {
+                        id: 'jcash-payment-970758',
+                        loanId: '48223',
+                        date: '2026-04-07',
+                        orNumber: 'JCASH-970758',
+                        amount: 150,
+                        balanceAfter: 2495,
+                        recorder: 'mia',
+                        remarks: 'Migrated from jcashdb.mdb',
+                        status: PaymentStatus.GOOD,
+                        createdAt: '2026-07-02T05:01:57.033Z'
+                    },
+                    {
+                        id: 'p-jul-18',
+                        loanId: '48223',
+                        date: '2026-07-18',
+                        orNumber: 'OR-20260720-ILGP',
+                        amount: 100,
+                        balanceAfter: 595,
+                        recorder: 'Shanie',
+                        remarks: '',
+                        status: PaymentStatus.GOOD,
+                        createdAt: '2026-07-20T01:45:20.047Z'
+                    },
+                    {
+                        id: 'p-jul-20',
+                        loanId: '48223',
+                        date: '2026-07-20',
+                        orNumber: 'OR-20260720-YPP5',
+                        amount: 100,
+                        balanceAfter: 595,
+                        recorder: 'Shanie',
+                        remarks: '',
+                        status: PaymentStatus.GOOD,
+                        createdAt: '2026-07-20T01:42:55.592Z'
+                    }
+                ],
+                remarks: [],
+                history: [],
+                branch: Branch.ORMOC
+            };
+            (store as any).loans = [loan];
+
+            const result = await store.reversePayment('OR-20260720-YPP5', 'Misposting', 'Shanie', UserRole.ORMOC_USER);
+
+            expect(result.success).toBe(true);
+            expect((store as any).loans[0].amountCollected).toBe(250);
+            expect((store as any).loans[0].runningBalance).toBe(2395);
+            expect((store as any).loans[0].payments.find((p: any) => p.orNumber === 'OR-20260720-YPP5').status).toBe(PaymentStatus.REVERSED);
+            expect(global.fetch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/loans/48223'),
+                expect.objectContaining({
+                    method: 'PUT',
+                    body: expect.stringContaining('"runningBalance":2395')
+                })
+            );
+        });
+
         it('rebuilds stale JCASH payment balances on refresh instead of displaying stored zero balances', async () => {
             vi.resetModules();
             localStorageMock.clear();

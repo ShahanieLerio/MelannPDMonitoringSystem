@@ -28,7 +28,10 @@ const getAccountKey = (account: MigrationAccount) =>
 const isZeroPaymentOrNmsrAccount = (account: MigrationAccount) =>
   account.payments.length === 0 || account.loan.status === 'NMSR';
 
+type MigrationCenterTab = 'jcash' | 'modern';
+
 const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrationChange }) => {
+  const [activeMigrationTab, setActiveMigrationTab] = useState<MigrationCenterTab>('jcash');
   const [batches, setBatches] = useState<MigrationBatch[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
@@ -42,6 +45,22 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
   const [successPopup, setSuccessPopup] = useState<{ isOpen: boolean; name: string }>({ isOpen: false, name: '' });
   const [sortConfig, setSortConfig] = useState<{ key: 'borrowerName' | 'dueDate' | null; direction: 'asc' | 'desc' }>({ key: null, direction: 'asc' });
   const [selectedAccountKeys, setSelectedAccountKeys] = useState<string[]>([]);
+  const activeSourceType = activeMigrationTab;
+  const sourceDetails = activeMigrationTab === 'modern'
+    ? {
+        heading: 'Modern Migration',
+        scanLabel: 'Modern database',
+        noAccountsLabel: 'active accounts',
+        sourcePath: 'C:\\Users\\Admin\\OneDrive\\Documents\\PRD\\ModernizationMelannSystem\\server\\melann.db',
+        batchPrefix: 'modern'
+      }
+    : {
+        heading: 'JCASH Cycle Migration',
+        scanLabel: 'JCASH database',
+        noAccountsLabel: 'Good/NMSR accounts',
+        sourcePath: '\\\\SERVERPC\\LendingV2Melan\\db\\jcashdb.mdb',
+        batchPrefix: 'jcash'
+      };
 
   const selectedBatch = useMemo(
     () => batches.find(batch => batch.id === selectedBatchId) || batches[0],
@@ -74,6 +93,24 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
     return sortableAccounts;
   }, [accounts, sortConfig]);
 
+  const collectorGroups = useMemo(() => {
+    const groups = new Map<string, MigrationAccount[]>();
+    for (const account of sortedAccounts) {
+      const collector = String(account.loan.collector || 'UNASSIGNED').trim() || 'UNASSIGNED';
+      if (!groups.has(collector)) groups.set(collector, []);
+      groups.get(collector)!.push(account);
+    }
+
+    return Array.from(groups.entries())
+      .map(([collector, collectorAccounts]) => ({
+        collector,
+        accounts: collectorAccounts,
+        totalClients: collectorAccounts.length,
+        totalBalance: collectorAccounts.reduce((sum, account) => sum + Number(account.loan.runningBalance || 0), 0)
+      }))
+      .sort((a, b) => a.collector.localeCompare(b.collector));
+  }, [sortedAccounts]);
+
   const totalBalance = accounts.reduce((sum, account) => sum + Number(account.loan.runningBalance || 0), 0);
   const totalPayments = accounts.reduce((sum, account) => sum + account.payments.reduce((pSum, payment) => pSum + Number(payment.amount || 0), 0), 0);
   const selectedBalance = selectedAccounts.reduce((sum, account) => sum + Number(account.loan.runningBalance || 0), 0);
@@ -87,7 +124,13 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
       setSelectedBatchId(preferredBatchId);
       return;
     }
-    if (!selectedBatchId && nextBatches.length > 0) setSelectedBatchId(nextBatches[0].id);
+    if (nextBatches.length === 0) {
+      setSelectedBatchId('');
+      return;
+    }
+    if (!selectedBatchId || !nextBatches.some(batch => batch.id === selectedBatchId)) {
+      setSelectedBatchId(nextBatches[0].id);
+    }
   };
 
   const selectAccounts = (nextAccounts: MigrationAccount[]) => {
@@ -119,7 +162,7 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
   const loadPending = async () => {
     setIsLoading(true);
     try {
-      const pending = await store.getMigrationBatches();
+      const pending = await store.getMigrationBatches(activeSourceType);
       publishBatches(pending);
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message || 'Unable to load pending migrations.' });
@@ -135,10 +178,10 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
     }
 
     setIsScanning(true);
-    setMessage({ type: 'info', text: `Scanning read-only JCASH database for Maturity Date ${formatDate(maturityFrom)} to ${formatDate(maturityTo)}...` });
+    setMessage({ type: 'info', text: `Scanning read-only ${sourceDetails.scanLabel} for Maturity Date ${formatDate(maturityFrom)} to ${formatDate(maturityTo)}...` });
     try {
-      const pending = await store.scanMigrationBatches(maturityFrom, maturityTo);
-      const scannedBatchId = `jcash-${maturityFrom}-${maturityTo}`;
+      const pending = await store.scanMigrationBatches(maturityFrom, maturityTo, activeSourceType);
+      const scannedBatchId = `${sourceDetails.batchPrefix}-${maturityFrom}-${maturityTo}`;
       const scannedBatch = pending.find(batch => batch.id === scannedBatchId);
       publishBatches(pending, scannedBatchId);
       setMessage({
@@ -146,11 +189,11 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
         text: scannedBatch
           ? scannedBatch.detectedCount > 0
             ? `Migration-ready Maturity Date range detected: ${formatDate(maturityFrom)} to ${formatDate(maturityTo)} (${scannedBatch.detectedCount} accounts).`
-            : `No migration-ready Good/NMSR accounts detected for Maturity Date ${formatDate(maturityFrom)} to ${formatDate(maturityTo)}.`
+            : `No migration-ready ${sourceDetails.noAccountsLabel} detected for Maturity Date ${formatDate(maturityFrom)} to ${formatDate(maturityTo)}.`
           : `Scan completed, but no batch was created for Maturity Date ${formatDate(maturityFrom)} to ${formatDate(maturityTo)}.`
       });
     } catch (error: any) {
-      setMessage({ type: 'error', text: error.message || 'Unable to scan jcashdb.mdb.' });
+      setMessage({ type: 'error', text: error.message || `Unable to scan ${sourceDetails.scanLabel}.` });
     } finally {
       setIsScanning(false);
     }
@@ -206,7 +249,12 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
     const deletedName = deletingAccount.borrowerName;
     
     try {
-      await store.removeMigrationBatchAccount(selectedBatchId, deletingAccount.code, currentUser.username);
+      await store.removeMigrationBatchAccount(
+        selectedBatchId,
+        deletingAccount.code,
+        currentUser.username,
+        activeMigrationTab === 'modern' ? 'Excluded from Modern Migration' : 'Excluded from JCASH Migration'
+      );
       await loadPending();
       setDeletingAccount(null);
       setSuccessPopup({ isOpen: true, name: deletedName });
@@ -217,7 +265,9 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
 
   useEffect(() => {
     loadPending();
-  }, []);
+    setSelectedAccountKeys([]);
+    setMessage(null);
+  }, [activeMigrationTab]);
 
   useEffect(() => {
     setSelectedAccountKeys(current => current.filter(key => accountKeys.includes(key)));
@@ -225,6 +275,37 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
 
   return (
     <div className="animate-fadeIn space-y-6 transition-colors duration-300">
+      <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">Migration Center</h2>
+          <p className="mt-1 text-xs font-bold text-slate-500 dark:text-slate-400">Manage available migration sources from one workspace.</p>
+        </div>
+        <div className="inline-flex rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
+          <button
+            type="button"
+            onClick={() => setActiveMigrationTab('jcash')}
+            className={`h-10 rounded-md px-4 text-xs font-black uppercase tracking-widest transition-colors ${
+              activeMigrationTab === 'jcash'
+                ? 'bg-white text-emerald-700 shadow-sm dark:bg-slate-700 dark:text-emerald-300'
+                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            Jcash Migration
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMigrationTab('modern')}
+            className={`h-10 rounded-md px-4 text-xs font-black uppercase tracking-widest transition-colors ${
+              activeMigrationTab === 'modern'
+                ? 'bg-white text-emerald-700 shadow-sm dark:bg-slate-700 dark:text-emerald-300'
+                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            Modern Migration
+          </button>
+        </div>
+      </div>
+
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-900 to-slate-900 p-8 shadow-xl">
         <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-emerald-500/20 blur-3xl"></div>
         <div className="absolute -bottom-20 -left-20 h-64 w-64 rounded-full bg-sky-500/20 blur-3xl"></div>
@@ -234,10 +315,10 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 0 1 9-9"></path></svg>
               </div>
-              <h2 className="text-3xl font-black text-white tracking-tight">JCASH Cycle Migration</h2>
+              <h2 className="text-3xl font-black text-white tracking-tight">{sourceDetails.heading}</h2>
             </div>
             <p className="mt-2 text-sm font-medium text-emerald-100/70">
-              Read-only scan from <code className="rounded bg-black/30 px-1.5 py-0.5 text-emerald-300">\\SERVERPC\LendingV2Melan\db\jcashdb.mdb</code> by selected Maturity Date range.
+              Read-only scan from <code className="rounded bg-black/30 px-1.5 py-0.5 text-emerald-300">{sourceDetails.sourcePath}</code> by selected Maturity Date range.
             </p>
           </div>
           <div className="flex flex-col gap-3 rounded-xl bg-white/10 p-4 backdrop-blur-md border border-white/10 sm:flex-row sm:items-end">
@@ -485,11 +566,33 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                {sortedAccounts.map(account => {
-                  const accountKey = getAccountKey(account);
-                  const isSelected = selectedAccountKeySet.has(accountKey);
+                {collectorGroups.map(group => (
+                  <React.Fragment key={group.collector}>
+                    <tr className="bg-emerald-50/90 text-slate-700 shadow-sm dark:bg-emerald-950/30 dark:text-slate-200">
+                      <td colSpan={15} className="px-4 py-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-[10px] font-black text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                              COL
+                            </span>
+                            <span className="truncate text-sm font-black uppercase tracking-widest" title={group.collector}>{group.collector}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="inline-flex items-center rounded-lg bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-slate-600 shadow-sm ring-1 ring-emerald-100 dark:bg-slate-900 dark:text-slate-300 dark:ring-emerald-900/50">
+                              Total Client: {group.totalClients}
+                            </span>
+                            <span className="inline-flex items-center rounded-lg bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-slate-700 shadow-sm ring-1 ring-emerald-100 dark:bg-slate-900 dark:text-slate-200 dark:ring-emerald-900/50">
+                              Total Balance: {formatCurrency(group.totalBalance)}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    {group.accounts.map(account => {
+                      const accountKey = getAccountKey(account);
+                      const isSelected = selectedAccountKeySet.has(accountKey);
 
-                  return (
+                      return (
                   <tr key={account.sourceLoanId} className={`group transition-all duration-200 ${isSelected ? 'bg-emerald-50/70 dark:bg-emerald-950/20' : 'hover:bg-emerald-50/40 dark:hover:bg-slate-700/30'}`}>
                     <td className="px-2 py-3 text-center">
                       <input
@@ -559,7 +662,9 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
                     </td>
                   </tr>
                   );
-                })}
+                    })}
+                  </React.Fragment>
+                ))}
               </tbody>
               <tfoot className="bg-slate-50/80 backdrop-blur-md dark:bg-slate-900/80 sticky bottom-0 z-20">
                 <tr>
@@ -586,7 +691,6 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
           onSave={handleSaveAccount}
         />
       )}
-
       <SecureDeleteModal
         isOpen={!!deletingAccount}
         clientName={deletingAccount?.borrowerName || ''}

@@ -88,4 +88,44 @@ describe('getPTPEscalationCases everyday schedules', () => {
 
     expect(cases).toHaveLength(0);
   });
+
+  it('shows the client remark as recurring schedule context', () => {
+    const cases = getPTPEscalationCases([
+      makeEverydayLoan({
+        remarks: [{
+          id: 'remark-1',
+          text: 'Client committed to daily collections after market closing.',
+          timestamp: '2026-07-01T08:00:00.000Z',
+          collector: 'COLLECTOR'
+        }]
+      })
+    ], '2026-07-04');
+
+    expect(cases).toHaveLength(1);
+    expect(cases[0].missedCommitments.map(miss => miss.context)).toEqual([
+      'Client committed to daily collections after market closing.',
+      'Client committed to daily collections after market closing.',
+      'Client committed to daily collections after market closing.'
+    ]);
+  });
+
+  it('removes an escalated client immediately when a good payment is posted today', () => {
+    const cases = getPTPEscalationCases([
+      makeEverydayLoan({
+        payments: [{
+          id: 'payment-today',
+          loanId: 'loan-everyday',
+          date: '2026-07-04',
+          orNumber: 'OR-TODAY',
+          amount: 100,
+          balanceAfter: 900,
+          recorder: 'cashier',
+          status: PaymentStatus.GOOD,
+          createdAt: '2026-07-04T08:00:00.000Z'
+        }]
+      })
+    ], '2026-07-04');
+
+    expect(cases).toHaveLength(0);
+  });
 });

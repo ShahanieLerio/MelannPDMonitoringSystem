@@ -58,7 +58,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
     setError('');
     setSuccess('');
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      try {
+        await store.whenReady();
         const result = store.authenticate(username, password);
         if (result.user) {
           onLogin(result.user);
@@ -66,6 +68,11 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           setError(result.error || 'Invalid credentials or account pending approval.');
           setIsLoading(false);
         }
+      } catch (err) {
+        console.error('Login sync failed:', err);
+        setError('Unable to sync account data. Please check the server connection and try again.');
+        setIsLoading(false);
+      }
     }, 800);
   };
 

@@ -2,6 +2,7 @@ import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserR
 import { dedupeCollectors, getCollectorDisplayMatchKeys, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorAliasKey, normalizeCollectorKey, normalizeCollectorLooseKey } from './collectorUtils';
 import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReconstructedPaymentRemark, isReportableCollectionPayment } from './loanUtils';
 const API_URL = `http://${window.location.hostname}:5000/api`;
+const AUTO_SYNC_INTERVAL_MS = 60000;
 
 const INITIAL_USERS: User[] = [
   {
@@ -60,6 +61,11 @@ class DataStore {
   private deletedLoans: DeletedLoan[] = [];
   private managementDispositions: ManagementDisposition[] = [];
   private listeners: (() => void)[] = [];
+  private readyPromise: Promise<void>;
+  private isRefreshing = false;
+  private refreshPromise: Promise<void> | null = null;
+  private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private loanViewCache = new Map<string, { loansRef: Loan[]; collectorsRef: Collector[]; result: Loan[] }>();
 
   private getCollectorDisplayName(collector?: string | null) {
     return getCollectorDisplayName(collector, this.collectors);
@@ -149,11 +155,39 @@ class DataStore {
 
   constructor() {
     this.loadFromLocalStorage();
-    this.refresh();
+    this.readyPromise = this.refresh();
+    this.startAutoSync();
+  }
+
+  whenReady() {
+    return this.readyPromise;
+  }
+
+  private startAutoSync() {
+    if (this.autoSyncTimer || typeof window === 'undefined') return;
+
+    this.autoSyncTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void this.refresh();
+    }, AUTO_SYNC_INTERVAL_MS);
+
+    window.addEventListener('focus', () => {
+      void this.refresh();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        void this.refresh();
+      }
+    });
   }
 
   async refresh() {
-    try {
+    if (this.refreshPromise) return this.refreshPromise;
+
+    this.isRefreshing = true;
+    this.refreshPromise = (async () => {
+      try {
       console.log('Syncing with Local PostgreSQL via Bridge...');
       const [dbLoans, dbUsers, dbCollectors, dbDLs, dbPayments, dbRemarks, dbLogs, dbVisitLogs, dbContactLogs, dbDeletedLoans, dbDispositions] = await Promise.all([
         fetch(`${API_URL}/loans`).then(r => r.json()),
@@ -341,13 +375,23 @@ class DataStore {
         decisionDate: d.decision_date
       })) as ManagementDisposition[];
 
-    } catch (err) {
+      this.saveLocalSnapshot();
+      } catch (err) {
       console.error('DB Sync Error, falling back to LocalStorage:', err);
       if (this.loans.length === 0) {
         this.loadFromLocalStorage();
       }
+      } finally {
+      this.isRefreshing = false;
+      this.notify();
+      }
+    })();
+
+    try {
+      await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
     }
-    this.notify();
   }
 
   private async api(path: string, method: string = 'GET', body?: any) {
@@ -460,6 +504,7 @@ class DataStore {
 
   private notify() {
     this.sortLoans();
+    this.loanViewCache.clear();
     this.listeners.forEach(l => l());
   }
 
@@ -483,6 +528,11 @@ class DataStore {
   }
 
   private save() {
+    this.saveLocalSnapshot();
+    this.notify();
+  }
+
+  private saveLocalSnapshot() {
     try {
       localStorage.setItem('melann_loans', JSON.stringify(this.loans));
       localStorage.setItem('melann_users', JSON.stringify(this.users));
@@ -491,7 +541,6 @@ class DataStore {
     } catch (err) {
       console.warn('Failed to save to localStorage (likely quota exceeded). Offline fallback cache will not be updated.', err);
     }
-    this.notify();
   }
 
   // User accounts are permanent system records and must never be deleted.
@@ -841,12 +890,18 @@ class DataStore {
   }
 
   getLoans(branch?: Branch) {
+    const cacheKey = branch || Branch.ALL;
+    const cachedLoans = this.loanViewCache.get(cacheKey);
+    if (cachedLoans && cachedLoans.loansRef === this.loans && cachedLoans.collectorsRef === this.collectors) {
+      return cachedLoans.result;
+    }
+
     const activeLoans = this.loans.filter(isLoanAllowedInActivePortfolio);
     const branchLoans = !branch || branch === Branch.ALL
       ? activeLoans
       : activeLoans.filter(l => l.branch === branch);
 
-    return branchLoans.map(loan => ({
+    const normalizedLoans = branchLoans.map(loan => ({
       ...loan,
       collector: this.getCollectorDisplayName(loan.collector),
       remarks: (loan.remarks || []).map(remark => ({
@@ -854,15 +909,23 @@ class DataStore {
         collector: this.getCollectorDisplayName(remark.collector)
       }))
     }));
+
+    this.loanViewCache.set(cacheKey, {
+      loansRef: this.loans,
+      collectorsRef: this.collectors,
+      result: normalizedLoans
+    });
+    return normalizedLoans;
   }
 
-  async getMigrationBatches(): Promise<MigrationBatch[]> {
-    const rows = await this.api('/migration_batches');
+  async getMigrationBatches(sourceType?: 'jcash' | 'modern'): Promise<MigrationBatch[]> {
+    const query = sourceType ? `?sourceType=${encodeURIComponent(sourceType)}` : '';
+    const rows = await this.api(`/migration_batches${query}`);
     return rows.map((row: any) => this.mapMigrationBatch(row));
   }
 
-  async scanMigrationBatches(maturityFrom: string, maturityTo: string): Promise<MigrationBatch[]> {
-    const result = await this.api('/migration_batches/scan', 'POST', { maturityFrom, maturityTo });
+  async scanMigrationBatches(maturityFrom: string, maturityTo: string, sourceType: 'jcash' | 'modern' = 'jcash'): Promise<MigrationBatch[]> {
+    const result = await this.api('/migration_batches/scan', 'POST', { maturityFrom, maturityTo, sourceType });
     return (result.batches || []).map((row: any) => this.mapMigrationBatch(row));
   }
 
@@ -877,10 +940,10 @@ class DataStore {
     return result;
   }
 
-  async removeMigrationBatchAccount(batchId: string, code: string, deletedBy?: string) {
+  async removeMigrationBatchAccount(batchId: string, code: string, deletedBy?: string, reason = 'Excluded from JCASH Migration') {
     const result = await this.api(`/migration_batches/${batchId}/account/${code}`, 'DELETE', {
       deletedBy: deletedBy || 'System',
-      reason: 'Excluded from JCASH Migration'
+      reason
     });
     // Refresh deleted loans list so recycle bin updates immediately
     try {
@@ -1220,9 +1283,13 @@ class DataStore {
     // Rebuild the payment stream from the authoritative opening balance. Some
     // imported JCASH rows contain stale balance-after values, so every active
     // row must follow the same rule: previous balance minus payment amount.
-    activePayments.forEach(p => {
-      totalCollected += Number(p.amount || 0);
-      currentBalance -= Number(p.amount || 0);
+    // Reversed rows keep the current balance so their displayed running value
+    // reflects that they no longer affect the account.
+    loan.payments.forEach(p => {
+      if (p.status !== PaymentStatus.REVERSED) {
+        totalCollected += Number(p.amount || 0);
+        currentBalance -= Number(p.amount || 0);
+      }
       p.balanceAfter = currentBalance;
     });
 
@@ -1487,10 +1554,20 @@ class DataStore {
       payments: loan.payments.map(p => ({ ...p })),
       history: [...loan.history]
     };
+    const previousActivePaymentTotal = loan.payments
+      .filter(p => p.status !== PaymentStatus.REVERSED)
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
+      ? Math.max(0, Number(loan.amountCollected || 0) - previousActivePaymentTotal)
+      : 0;
 
     // Mark as reversed
     loan.payments[paymentIndex].status = PaymentStatus.REVERSED;
     loan.payments[paymentIndex].remarks = reason ? `${payment.remarks || ''} (REVERSED: ${reason})` : `${payment.remarks || ''} (REVERSED)`;
+    const nextActivePaymentTotal = loan.payments
+      .filter(p => p.status !== PaymentStatus.REVERSED)
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    loan.amountCollected = sourceCollectedAdjustment + nextActivePaymentTotal;
 
     // Authoritative Recalculation
     const updatedLoan = this.recalculateLoanFinances(loan.id)!;

@@ -91,12 +91,34 @@ const query = (text, params) => pool.query(text, params);
 const JCASHDB_PATH = process.env.JCASHDB_PATH || '\\\\SERVERPC\\LendingV2Melan\\db\\jcashdb.mdb';
 const JCASHDB_PASSWORD = process.env.JCASHDB_PASSWORD || '';
 const JCASHDB_BRANCH = process.env.JCASHDB_BRANCH || 'Ormoc Branch';
+const MODERN_MIGRATION_DB_PATH = process.env.MODERN_MIGRATION_DB_PATH || 'C:\\Users\\Admin\\OneDrive\\Documents\\PRD\\ModernizationMelannSystem\\server\\melann.db';
+const MODERN_MIGRATION_SQLITE3_MODULE = process.env.MODERN_MIGRATION_SQLITE3_MODULE || path.join(path.dirname(MODERN_MIGRATION_DB_PATH), 'node_modules', 'sqlite3');
 const MIGRATION_ANCHOR_START = process.env.JCASHDB_CYCLE_ANCHOR_START || '2016-01-01';
 const MIGRATION_FIRST_CYCLE_END = process.env.JCASHDB_FIRST_CYCLE_END || '2026-03-31';
 const MIGRATION_TEMP_DIR = process.env.JCASHDB_SCAN_TEMP_DIR || 'C:\\tmp';
 const ACTIVE_PORTFOLIO_MATURITY_START = '2016-01-01';
 const ACTIVE_PORTFOLIO_MATURITY_END = '2026-03-31';
 const JCASH_MIGRATION_PAYMENT_REMARK = 'Migrated from jcashdb.mdb';
+const MODERN_MIGRATION_PAYMENT_REMARK = 'Migrated from melann.db';
+
+const MIGRATION_SOURCES = {
+    jcash: {
+        type: 'jcash',
+        idPrefix: 'jcash',
+        label: 'JCASH',
+        path: JCASHDB_PATH,
+        paymentRemark: JCASH_MIGRATION_PAYMENT_REMARK
+    },
+    modern: {
+        type: 'modern',
+        idPrefix: 'modern',
+        label: 'Modern',
+        path: MODERN_MIGRATION_DB_PATH,
+        paymentRemark: MODERN_MIGRATION_PAYMENT_REMARK
+    }
+};
+
+const getMigrationSource = (sourceType) => MIGRATION_SOURCES[sourceType] || MIGRATION_SOURCES.jcash;
 
 const ensureMigrationTables = async () => {
     await query(`
@@ -115,9 +137,10 @@ const ensureMigrationTables = async () => {
             error TEXT
         )
     `);
+    await query('DROP INDEX IF EXISTS migration_batches_cycle_unique');
     await query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS migration_batches_cycle_unique
-        ON migration_batches (cycle_start, cycle_end)
+        CREATE UNIQUE INDEX IF NOT EXISTS migration_batches_source_cycle_unique
+        ON migration_batches (source_path, cycle_start, cycle_end)
     `);
 };
 
@@ -243,7 +266,7 @@ const sortSourcePayments = (payments) =>
         return getSortablePaymentId(a) - getSortablePaymentId(b);
     });
 
-const mapSourcePayment = (payment, loanId) => {
+const mapSourcePayment = (payment, loanId, source = MIGRATION_SOURCES.jcash) => {
     const rawId = String(pick(payment, ['ID', 'PaymentID', 'PayID', 'ORNumber', 'ORNo'], `${loanId}-${pick(payment, ['Date', 'PaymentDate'], '')}`)).trim();
     const date = toDateOnly(pick(payment, ['Date', 'PaymentDate', 'DatePaid', 'TransDate']));
     const amount = parseNumber(pick(payment, ['PaymentsMade', 'Amount', 'Payment', 'PaidAmount']));
@@ -252,14 +275,14 @@ const mapSourcePayment = (payment, loanId) => {
     if (!date || amount <= 0) return null;
 
     return {
-        id: `jcash-payment-${rawId}`,
+        id: `${source.idPrefix}-payment-${rawId}`,
         loanId,
         amount,
-        orNumber: String(pick(payment, ['ORNumber', 'ORNo', 'ReceiptNo'], `JCASH-${rawId}`)).trim(),
+        orNumber: String(pick(payment, ['ORNumber', 'ORNo', 'ReceiptNo'], `${source.label.toUpperCase()}-${rawId}`)).trim(),
         date,
         balanceAfter,
-        recorder: String(pick(payment, ['User', 'Recorder', 'EncodedBy', 'Collector'], 'JCASH')).trim(),
-        remarks: 'Migrated from jcashdb.mdb',
+        recorder: String(pick(payment, ['User', 'Recorder', 'EncodedBy', 'Collector'], source.label)).trim(),
+        remarks: source.paymentRemark,
         status: 'GOOD',
         createdAt: new Date().toISOString()
     };
@@ -322,7 +345,7 @@ const mapSourceLoan = (loan) => {
             barangay: String(pick(loan, ['Barangay', 'Brgy'], 'N/A')),
             fullAddress: String(pick(loan, ['Address', 'FullAddress'], '')),
             contactNumber: String(pick(loan, ['ContactNumber', 'Cellphone', 'Phone'], 'N/A')),
-            branch: JCASHDB_BRANCH,
+            branch: String(pick(loan, ['BranchName', 'Branch'], JCASHDB_BRANCH)).trim() || JCASHDB_BRANCH,
             aiPriority: 'Lowest Priority',
             promiseToPayDate: null,
             followUpDate: null,
@@ -453,6 +476,105 @@ $conn.Close()
         }
     });
 });
+
+let modernSqlite3;
+const getModernSqlite3 = () => {
+    if (!modernSqlite3) {
+        modernSqlite3 = require(MODERN_MIGRATION_SQLITE3_MODULE).verbose();
+    }
+    return modernSqlite3;
+};
+
+const openModernMigrationDb = () => new Promise((resolve, reject) => {
+    const sqlite3 = getModernSqlite3();
+    const db = new sqlite3.Database(MODERN_MIGRATION_DB_PATH, sqlite3.OPEN_READONLY, (err) => {
+        if (err) reject(new Error(`Unable to open read-only Modern migration database ${MODERN_MIGRATION_DB_PATH}: ${err.message}`));
+        else resolve(db);
+    });
+});
+
+const sqliteAll = (db, sql, params = []) => new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || []));
+});
+
+const closeSqlite = (db) => new Promise((resolve) => {
+    db.close(() => resolve());
+});
+
+const readModernCycleSnapshot = async (cycleStart, cycleEnd) => {
+    const db = await openModernMigrationDb();
+    try {
+        const loans = await sqliteAll(db, `
+            SELECT
+                'modern-' || l.id AS LoanID,
+                l.loan_code AS Code,
+                c.first_name AS FirstName,
+                c.last_name AS Customer,
+                c.full_name AS BorrowerName,
+                l.principal AS Principal,
+                CASE
+                    WHEN COALESCE(l.total_amortization, 0) > 0 THEN l.total_amortization
+                    WHEN COALESCE(l.balance, 0) + COALESCE(l.total_paid, 0) > 0 THEN COALESCE(l.balance, 0) + COALESCE(l.total_paid, 0)
+                    ELSE l.principal
+                END AS Total,
+                l.total_paid AS TotalPayment,
+                l.balance AS Balance,
+                l.date_maturity AS Maturity,
+                l.date_released AS DateRelease,
+                'Good' AS Status,
+                'Good' AS LoanStatus,
+                TRIM(COALESCE(co.first_name, '') || ' ' || COALESCE(co.last_name, '')) AS CollectorFname,
+                c.address AS Address,
+                c.contact AS ContactNumber,
+                c.city AS City,
+                c.brgy AS Barangay,
+                c.purok AS Area,
+                b.branch_name AS BranchName
+            FROM tblLoan l
+            LEFT JOIN tblCustomer c ON c.id = l.customer_id
+            LEFT JOIN tblCollector co ON co.id = l.collector_id
+            LEFT JOIN tblBranch b ON b.id = l.branch_id
+            WHERE l.date_maturity >= ?
+              AND l.date_maturity <= ?
+              AND lower(COALESCE(l.status, '')) = 'active'
+            ORDER BY l.date_maturity ASC, l.id ASC
+        `, [cycleStart, cycleEnd]);
+
+        const loanIds = loans
+            .map(loan => Number(String(loan.LoanID || '').replace(/^modern-/, '')))
+            .filter(Number.isFinite);
+        const payments = [];
+        for (let offset = 0; offset < loanIds.length; offset += 200) {
+            const chunk = loanIds.slice(offset, offset + 200);
+            const placeholders = chunk.map(() => '?').join(',');
+            const rows = await sqliteAll(db, `
+                SELECT
+                    p.id AS ID,
+                    'modern-' || p.loan_id AS LoanID,
+                    p.payment_code AS PaymentID,
+                    CASE
+                        WHEN p.or_number IS NULL OR TRIM(p.or_number) = '' OR upper(TRIM(p.or_number)) = 'N/A' THEN 'MODERN-' || p.id
+                        ELSE p.or_number
+                    END AS ORNumber,
+                    p.date_paid AS Date,
+                    p.amount_paid AS PaymentsMade,
+                    p.balance_before AS TotalBalance,
+                    p.balance_after AS NewBalance,
+                    'Good' AS Status,
+                    p.remarks AS Remarks
+                FROM tblPayment p
+                WHERE p.loan_id IN (${placeholders})
+                  AND lower(COALESCE(p.status, '')) = 'active'
+                ORDER BY p.date_paid ASC, p.id ASC
+            `, chunk);
+            payments.push(...rows);
+        }
+
+        return { loans, payments, customers: [] };
+    } finally {
+        await closeSqlite(db);
+    }
+};
 
 const normalizeCollectorKey = (collector) =>
     String(collector || '')
@@ -1204,13 +1326,16 @@ app.put('/api/management_dispositions/:id/status', async (req, res) => {
 app.get('/api/migration_batches', async (req, res) => {
     try {
         await ensureMigrationTables();
+        const source = req.query.sourceType ? getMigrationSource(req.query.sourceType) : null;
+        const params = source ? [source.path] : [];
         const result = await query(`
             SELECT id, cycle_start, cycle_end, status, detected_count, payment_count,
                    payload, source_path, detected_at, migrated_at, migrated_by, error
             FROM migration_batches
             WHERE status = 'PENDING'
+              ${source ? 'AND source_path = $1' : ''}
             ORDER BY cycle_start ASC
-        `);
+        `, params);
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1218,7 +1343,8 @@ app.get('/api/migration_batches', async (req, res) => {
 app.post('/api/migration_batches/scan', async (req, res) => {
     try {
         await ensureMigrationTables();
-        const { maturityFrom, maturityTo } = req.body || {};
+        const { maturityFrom, maturityTo, sourceType } = req.body || {};
+        const source = getMigrationSource(sourceType);
         const rangeFrom = maturityFrom;
         const rangeTo = maturityTo;
         const hasSelectedRange = Boolean(rangeFrom && rangeTo);
@@ -1230,17 +1356,19 @@ app.post('/api/migration_batches/scan', async (req, res) => {
         const cycles = [{ start: rangeFrom, end: rangeTo }];
         if (cycles.length === 0) return res.json({ success: true, batches: [] });
 
-        const existing = await query('SELECT cycle_start, cycle_end, status FROM migration_batches');
+        const existing = await query('SELECT cycle_start, cycle_end, status FROM migration_batches WHERE source_path = $1', [source.path]);
         const openKeys = new Set(existing.rows.filter(row => row.status === 'MIGRATED').map(row => `${row.cycle_start}|${row.cycle_end}`));
         const cyclesToScan = hasSelectedRange ? cycles : cycles.filter(cycle => !openKeys.has(`${cycle.start}|${cycle.end}`));
 
         if (cyclesToScan.length === 0) {
-            const pending = await query("SELECT * FROM migration_batches WHERE status = 'PENDING' ORDER BY cycle_start ASC");
+            const pending = await query("SELECT * FROM migration_batches WHERE status = 'PENDING' AND source_path = $1 ORDER BY cycle_start ASC", [source.path]);
             return res.json({ success: true, batches: pending.rows });
         }
 
         for (const cycle of cyclesToScan) {
-            const snapshot = await readJcashCycleSnapshot(cycle.start, cycle.end);
+            const snapshot = source.type === 'modern'
+                ? await readModernCycleSnapshot(cycle.start, cycle.end)
+                : await readJcashCycleSnapshot(cycle.start, cycle.end);
 
             // Build a lookup map from tblCustomer keyed by Code
             const customerMap = new Map();
@@ -1281,7 +1409,7 @@ app.post('/api/migration_batches/scan', async (req, res) => {
                         })
                         .filter(isGoodSourcePayment));
                     const payments = sourcePayments
-                        .map(payment => mapSourcePayment(payment, item.loan.id))
+                        .map(payment => mapSourcePayment(payment, item.loan.id, source))
                         .filter(Boolean);
 
                     const latestSourceBalance = sourcePayments.length > 0
@@ -1312,19 +1440,22 @@ app.post('/api/migration_batches/scan', async (req, res) => {
                 });
 
             const payload = {
-                sourcePath: JCASHDB_PATH,
+                sourceType: source.type,
+                sourcePath: source.path,
                 cycleStart: cycle.start,
                 cycleEnd: cycle.end,
+                sourcePaymentRemark: source.paymentRemark,
                 accounts
             };
             const paymentCount = accounts.reduce((sum, account) => sum + account.payments.length, 0);
-            const batchId = `jcash-${cycle.start}-${cycle.end}`;
+            const batchId = `${source.idPrefix}-${cycle.start}-${cycle.end}`;
 
             await query(`
                 INSERT INTO migration_batches
                     (id, cycle_start, cycle_end, status, detected_count, payment_count, payload, source_path)
                 VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7)
-                ON CONFLICT (cycle_start, cycle_end) DO UPDATE SET
+                ON CONFLICT (source_path, cycle_start, cycle_end) DO UPDATE SET
+                    id = EXCLUDED.id,
                     status = 'PENDING',
                     detected_count = EXCLUDED.detected_count,
                     payment_count = EXCLUDED.payment_count,
@@ -1332,10 +1463,10 @@ app.post('/api/migration_batches/scan', async (req, res) => {
                     source_path = EXCLUDED.source_path,
                     detected_at = CURRENT_TIMESTAMP,
                     error = NULL
-            `, [batchId, cycle.start, cycle.end, accounts.length, paymentCount, JSON.stringify(payload), JCASHDB_PATH]);
+            `, [batchId, cycle.start, cycle.end, accounts.length, paymentCount, JSON.stringify(payload), source.path]);
         }
 
-        const pending = await query("SELECT * FROM migration_batches WHERE status = 'PENDING' ORDER BY cycle_start ASC");
+        const pending = await query("SELECT * FROM migration_batches WHERE status = 'PENDING' AND source_path = $1 ORDER BY cycle_start ASC", [source.path]);
         res.json({ success: true, batches: pending.rows });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1432,6 +1563,7 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
         const batch = result.rows[0];
         const payload = typeof batch.payload === 'string' ? JSON.parse(batch.payload) : batch.payload;
         const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+        const sourcePaymentRemark = payload.sourcePaymentRemark || JCASH_MIGRATION_PAYMENT_REMARK;
         const selectedKeySet = Array.isArray(selectedAccountKeys) && selectedAccountKeys.length > 0
             ? new Set(selectedAccountKeys.map(key => String(key).trim()).filter(Boolean))
             : null;
@@ -1496,8 +1628,8 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
             ]);
 
             await client.query(
-                "DELETE FROM payments WHERE loan_id = $1 AND remarks = 'Migrated from jcashdb.mdb'",
-                [loan.id]
+                'DELETE FROM payments WHERE loan_id = $1 AND remarks = $2',
+                [loan.id, sourcePaymentRemark]
             );
 
             for (const payment of account.payments || []) {

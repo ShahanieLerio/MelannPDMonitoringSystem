@@ -27,6 +27,34 @@ const formatDate = (date: string) => {
   });
 };
 
+const formatDateTime = (date: Date) => date.toLocaleString(undefined, {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit'
+});
+
+const formatCurrency = (amount: number) => `PHP ${Number(amount || 0).toLocaleString()}`;
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const getLatestGoodPayment = (item: PTPEscalationCase) => {
+  return [...(item.payments || [])]
+    .filter(payment => payment.status === 'GOOD')
+    .sort((a, b) => {
+      const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime();
+    })[0];
+};
+
 const priorityClass = (level?: PriorityLevel) => {
   switch (level) {
     case PriorityLevel.TOP:
@@ -68,6 +96,122 @@ const PTPEscalation: React.FC<PTPEscalationProps> = ({ selectedBranch, currentUs
     return { exposure, missed, collectors };
   }, [escalationCases]);
 
+  const handlePrintByCollector = () => {
+    const grouped = filteredCases.reduce<Record<string, PTPEscalationCase[]>>((acc, item) => {
+      const collector = item.collector || 'UNASSIGNED';
+      acc[collector] = acc[collector] || [];
+      acc[collector].push(item);
+      return acc;
+    }, {});
+
+    const collectorSections = Object.entries(grouped)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([collector, items]) => {
+        const rows = items
+          .sort((a, b) => a.borrowerName.localeCompare(b.borrowerName))
+          .map(item => {
+            const latestMiss = item.missedCommitments[item.missedCommitments.length - 1];
+            const latestPayment = getLatestGoodPayment(item);
+            const latestPaymentText = latestPayment
+              ? `${formatDate(latestPayment.date)} - ${formatCurrency(latestPayment.amount)}`
+              : 'No payment';
+            const missedCommitment = latestMiss
+              ? `${latestMiss.type} - ${formatDate(latestMiss.dueDate)}`
+              : 'No missed commitment';
+            const remarks = latestMiss
+              ? cleanRemarkText(latestMiss.context)
+              : 'No additional remarks.';
+
+            return `
+              <tr>
+                <td>${escapeHtml(item.code)}</td>
+                <td>${escapeHtml(item.borrowerName)}</td>
+                <td class="num">${item.missedCount}</td>
+                <td>${escapeHtml(missedCommitment)}</td>
+                <td class="num">${escapeHtml(formatCurrency(item.runningBalance))}</td>
+                <td>${escapeHtml(latestPaymentText)}</td>
+                <td>${escapeHtml(remarks)}</td>
+              </tr>
+            `;
+          })
+          .join('');
+
+        const totalBalance = items.reduce((sum, item) => sum + item.runningBalance, 0);
+
+        return `
+          <section class="collector-section">
+            <div class="collector-header">
+              <h2>${escapeHtml(collector)}</h2>
+              <div>${items.length} client${items.length === 1 ? '' : 's'} | ${escapeHtml(formatCurrency(totalBalance))}</div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Client Code</th>
+                  <th>Client Name</th>
+                  <th>Missed</th>
+                  <th>Latest Missed Commitment</th>
+                  <th>Balance</th>
+                  <th>Last Payment Date - Amount</th>
+                  <th>Remarks</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </section>
+        `;
+      })
+      .join('');
+
+    const printWindow = window.open('', '_blank', 'width=1200,height=800');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>PTP Escalation - Print By Collector</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; color: #0f172a; margin: 24px; }
+            h1 { font-size: 22px; margin: 0; }
+            h2 { font-size: 16px; margin: 0; letter-spacing: 0.08em; text-transform: uppercase; }
+            .meta { color: #64748b; font-size: 11px; font-weight: 700; margin-top: 6px; text-transform: uppercase; }
+            .summary { display: flex; gap: 12px; margin: 18px 0 22px; }
+            .summary div { border: 1px solid #cbd5e1; padding: 10px 12px; font-size: 12px; font-weight: 700; }
+            .collector-section { page-break-inside: avoid; margin: 0 0 26px; }
+            .collector-header { align-items: center; border-bottom: 2px solid #0f172a; display: flex; justify-content: space-between; margin-bottom: 8px; padding-bottom: 6px; }
+            .collector-header div { color: #475569; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #cbd5e1; font-size: 10px; line-height: 1.35; padding: 6px 7px; vertical-align: top; }
+            th { background: #f1f5f9; color: #334155; font-size: 9px; letter-spacing: 0.06em; text-align: left; text-transform: uppercase; }
+            .num { text-align: right; white-space: nowrap; }
+            @media print {
+              body { margin: 12mm; }
+              .collector-section { break-inside: avoid; }
+            }
+          </style>
+        </head>
+        <body>
+          <h1>PTP Escalation - Print By Collector</h1>
+          <div class="meta">${escapeHtml(selectedBranch)} Branch | Generated ${escapeHtml(formatDateTime(new Date()))}</div>
+          <div class="summary">
+            <div>Escalated Clients: ${filteredCases.length.toLocaleString()}</div>
+            <div>Total Missed: ${filteredCases.reduce((sum, item) => sum + item.missedCount, 0).toLocaleString()}</div>
+            <div>Balance Exposure: ${escapeHtml(formatCurrency(filteredCases.reduce((sum, item) => sum + item.runningBalance, 0)))}</div>
+          </div>
+          ${collectorSections || '<p>No PTP escalation cases found.</p>'}
+          <script>
+            window.onload = () => {
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   const currentRemarksLoan = useMemo(() => {
     if (!remarksLoan) return null;
     return loans.find(loan => loan.id === remarksLoan.id) || remarksLoan;
@@ -85,16 +229,27 @@ const PTPEscalation: React.FC<PTPEscalationProps> = ({ selectedBranch, currentUs
             Clients with 3 or more missed remarks, commitments, or scheduled payments for <span className="text-emerald-700">{selectedBranch}</span>.
           </p>
         </div>
-        <div className="relative w-full lg:w-80">
-          <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search client, code, collector..."
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100"
-          />
+        <div className="flex w-full flex-col gap-3 lg:w-auto lg:flex-row lg:items-center">
+          <button
+            onClick={handlePrintByCollector}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-red-700 transition hover:bg-red-100"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z" />
+            </svg>
+            Print By Collector
+          </button>
+          <div className="relative w-full lg:w-80">
+            <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search client, code, collector..."
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100"
+            />
+          </div>
         </div>
       </div>
 
@@ -184,7 +339,7 @@ function EscalationRow({ item, onViewDetails, onAddRemark, onVisitLog }: {
   onAddRemark: (loan: Loan) => void;
   onVisitLog: (loan: Loan) => void;
 }) {
-  const visibleMisses = item.missedCommitments.slice(-3).reverse();
+  const latestMiss = item.missedCommitments[item.missedCommitments.length - 1];
 
   return (
     <tr className="group hover:bg-red-50/40 transition-colors">
@@ -208,23 +363,21 @@ function EscalationRow({ item, onViewDetails, onAddRemark, onVisitLog }: {
         </span>
       </td>
       <td className="p-4 align-top min-w-[340px]">
-        <div className="space-y-2">
-          {visibleMisses.map(miss => (
-            <div key={miss.id} className="rounded-xl border border-red-100 bg-white p-3 shadow-sm">
-              <div className="mb-1 flex flex-wrap items-center gap-2">
-                <span className="rounded bg-red-50 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-red-700 border border-red-100">
-                  {miss.type}
-                </span>
-                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
-                  Missed {formatDate(miss.dueDate)}
-                </span>
-              </div>
-              <p className="line-clamp-2 text-[11px] font-bold italic leading-relaxed text-slate-600">
-                "{cleanRemarkText(miss.context)}"
-              </p>
+        {latestMiss && (
+          <div className="rounded-xl border border-red-100 bg-white p-3 shadow-sm">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <span className="rounded bg-red-50 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-red-700 border border-red-100">
+                {latestMiss.type}
+              </span>
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                Missed {formatDate(latestMiss.dueDate)}
+              </span>
             </div>
-          ))}
-        </div>
+            <p className="line-clamp-2 text-[11px] font-bold italic leading-relaxed text-slate-600">
+              "{cleanRemarkText(latestMiss.context)}"
+            </p>
+          </div>
+        )}
       </td>
       <td className="p-4 align-top text-right whitespace-nowrap">
         <span className="text-sm font-black text-slate-900">PHP {item.runningBalance.toLocaleString()}</span>

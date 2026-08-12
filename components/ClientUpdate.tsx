@@ -64,6 +64,19 @@ const formatRecurringScheduleLabel = (loan: Loan, compact = false) => {
   return schedule.days?.join(' & ') || '';
 };
 
+const stripSystemMarkers = (text?: string) => {
+  return (text || '')
+    .replace(/\[[^\]]+:[^\]]+\]/g, '')
+    .replace(/\[DL_MARKER\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const getClientCommitment = (loan: Loan) => {
+  const latestRemark = (loan as CriticalActionLoan).latestRemark || loan.remarks?.[loan.remarks.length - 1];
+  return stripSystemMarkers(latestRemark?.text);
+};
+
 const ClientUpdate: React.FC<ClientUpdateProps> = ({ selectedBranch, currentUser, activeView }) => {
   const { loans, updateList, topPriorityList, reminderList, closeMonitoringList, filteredMainList } = useClientUpdates(selectedBranch);
   const activeFilter = activeView || 'All';
@@ -586,6 +599,11 @@ function ClientUpdatePrintSheet({
     <>
     <style>{`
       @media print {
+        @page {
+          size: letter;
+          margin: 0;
+        }
+
         body.client-update-printing #root > div {
           display: block !important;
           height: auto !important;
@@ -601,7 +619,7 @@ function ClientUpdatePrintSheet({
 
         body.client-update-printing #printable-sheet {
           box-sizing: border-box !important;
-          padding-top: 8mm !important;
+          padding: 0 !important;
           page-break-before: auto !important;
         }
 
@@ -609,14 +627,37 @@ function ClientUpdatePrintSheet({
           break-before: avoid !important;
           page-break-before: avoid !important;
         }
+
+        body.client-update-printing #printable-sheet table {
+          width: 100% !important;
+          border-collapse: collapse !important;
+          table-layout: fixed !important;
+        }
+
+        body.client-update-printing #printable-sheet th,
+        body.client-update-printing #printable-sheet td {
+          border: 0.5pt solid #000 !important;
+          padding: 2px 4px !important;
+          font-size: 8px !important;
+          line-height: 1.15 !important;
+          vertical-align: top !important;
+          word-break: break-word !important;
+        }
+
+        body.client-update-printing #printable-sheet th {
+          background: #f3f4f6 !important;
+          color: #1f2937 !important;
+          text-align: center !important;
+          font-weight: 700 !important;
+        }
       }
     `}</style>
     <div id="printable-sheet">
       <div style={{ fontFamily: 'Arial, Helvetica, sans-serif', color: '#000' }}>
-        <div style={{ textAlign: 'center', marginBottom: 10 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, textTransform: 'uppercase' }}>Melann Lending</div>
-          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>{title}</div>
-          <div style={{ fontSize: 9, marginTop: 2 }}>
+        <div style={{ textAlign: 'center', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Melann Lending</div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' }}>{title}</div>
+          <div style={{ fontSize: 8, marginTop: 1 }}>
             Branch: {branch} | Date: {printDateLabel} | Total Clients: {totalCount}
           </div>
         </div>
@@ -627,15 +668,15 @@ function ClientUpdatePrintSheet({
           </div>
         ) : (
           groups.map(group => (
-            <div key={group.collector} style={{ breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: 12 }}>
+            <div key={group.collector} style={{ breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: 6 }}>
               <div
                 style={{
                   background: '#e5e7eb',
                   border: '0.5pt solid #000',
                   borderBottom: 'none',
-                  fontSize: 9,
+                  fontSize: 8,
                   fontWeight: 700,
-                  padding: '4px 6px',
+                  padding: '2px 4px',
                   textTransform: 'uppercase'
                 }}
               >
@@ -643,17 +684,21 @@ function ClientUpdatePrintSheet({
               </div>
               <table>
                 <colgroup>
-                  <col style={{ width: '12%' }} />
-                  <col style={{ width: '24%' }} />
-                  <col style={{ width: '34%' }} />
-                  <col style={{ width: '8%' }} />
-                  <col style={{ width: '22%' }} />
+                  <col style={{ width: '5%' }} />
+                  <col style={{ width: '15%' }} />
+                  <col style={{ width: '23%' }} />
+                  <col style={{ width: '18%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '4%' }} />
+                  <col style={{ width: '25%' }} />
                 </colgroup>
                 <thead>
                   <tr>
                     <th>Client Code</th>
                     <th>Client Name</th>
                     <th>Address</th>
+                    <th>Saad</th>
+                    <th>Balance</th>
                     <th>Pay</th>
                     <th>Remarks</th>
                   </tr>
@@ -664,10 +709,12 @@ function ClientUpdatePrintSheet({
                       <td style={{ textAlign: 'center', fontWeight: 700 }}>{loan.code}</td>
                       <td>{loan.borrowerName}</td>
                       <td>{getLoanAddress(loan)}</td>
+                      <td>{getClientCommitment(loan)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>₱{loan.runningBalance.toLocaleString()}</td>
                       <td style={{ textAlign: 'center' }}>
-                        <span style={{ display: 'inline-block', width: 12, height: 12, border: '0.8pt solid #000' }}></span>
+                        <span style={{ display: 'inline-block', width: 10, height: 10, border: '0.8pt solid #000' }}></span>
                       </td>
-                      <td style={{ height: 28 }}></td>
+                      <td style={{ height: 22 }}></td>
                     </tr>
                   ))}
                 </tbody>
@@ -676,14 +723,14 @@ function ClientUpdatePrintSheet({
           ))
         )}
 
-        <div style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, fontSize: 9 }}>
+        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, fontSize: 8 }}>
           <div>
             Prepared by:
-            <div style={{ borderBottom: '0.5pt solid #000', height: 24 }}></div>
+            <div style={{ borderBottom: '0.5pt solid #000', height: 18 }}></div>
           </div>
           <div>
             Received by:
-            <div style={{ borderBottom: '0.5pt solid #000', height: 24 }}></div>
+            <div style={{ borderBottom: '0.5pt solid #000', height: 18 }}></div>
           </div>
         </div>
       </div>
