@@ -1,4 +1,4 @@
-import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, CollectorPerformanceClientDetail, Remark, PriorityLevel, Collector, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction, ContactLog, ContactMethod, DeletedLoan, MigrationBatch, ManagementDisposition, DispositionType, DispositionStatus, isAllBranchRole, canApproveWriteOff } from '../types';
+import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, CollectorPerformanceClientDetail, Remark, PriorityLevel, Collector, Supervisor, ActionPersonnel, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction, ContactLog, ContactMethod, DeletedLoan, MigrationBatch, ManagementDisposition, DispositionType, DispositionStatus, isAllBranchRole, canApproveWriteOff } from '../types';
 import { dedupeCollectors, getCollectorDisplayMatchKeys, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorAliasKey, normalizeCollectorKey, normalizeCollectorLooseKey } from './collectorUtils';
 import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReconstructedPaymentRemark, isReportableCollectionPayment } from './loanUtils';
 const API_URL = `http://${window.location.hostname}:5000/api`;
@@ -55,6 +55,8 @@ class DataStore {
   private loans: Loan[] = [];
   private users: User[] = [];
   private collectors: Collector[] = [];
+  private supervisors: Supervisor[] = [];
+  private actionPersonnel: ActionPersonnel[] = [];
   private demandLetters: DemandLetter[] = [];
   private visitLogs: VisitLog[] = [];
   private contactLogs: ContactLog[] = [];
@@ -468,10 +470,14 @@ class DataStore {
     const savedLoans = localStorage.getItem('melann_loans');
     const savedUsers = localStorage.getItem('melann_users');
     const savedCollectors = localStorage.getItem('melann_collectors');
+    const savedSupervisors = localStorage.getItem('melann_supervisors');
+    const savedActionPersonnel = localStorage.getItem('melann_action_personnel');
     const savedDemandLetters = localStorage.getItem('melann_demand_letters');
     this.loans = (savedLoans ? JSON.parse(savedLoans).map((l: any) => ({ ...l, history: l.history || [] })) : INITIAL_LOANS.map(l => ({ ...l, history: [] }))).filter(isLoanAllowedInActivePortfolio);
     this.users = savedUsers ? JSON.parse(savedUsers).map((u: any) => ({ ...u, statusHistory: u.statusHistory || [] })) : INITIAL_USERS;
     this.collectors = dedupeCollectors(savedCollectors ? JSON.parse(savedCollectors) : INITIAL_COLLECTORS);
+    this.supervisors = savedSupervisors ? JSON.parse(savedSupervisors) : [];
+    this.actionPersonnel = savedActionPersonnel ? JSON.parse(savedActionPersonnel) : [];
     this.demandLetters = savedDemandLetters ? JSON.parse(savedDemandLetters) : [];
     this.loans = this.loans.map(loan => ({
       ...loan,
@@ -537,6 +543,8 @@ class DataStore {
       localStorage.setItem('melann_loans', JSON.stringify(this.loans));
       localStorage.setItem('melann_users', JSON.stringify(this.users));
       localStorage.setItem('melann_collectors', JSON.stringify(this.collectors));
+      localStorage.setItem('melann_supervisors', JSON.stringify(this.supervisors));
+      localStorage.setItem('melann_action_personnel', JSON.stringify(this.actionPersonnel));
       localStorage.setItem('melann_demand_letters', JSON.stringify(this.demandLetters));
     } catch (err) {
       console.warn('Failed to save to localStorage (likely quota exceeded). Offline fallback cache will not be updated.', err);
@@ -745,6 +753,177 @@ class DataStore {
   async deleteCollector(id: string) {
     await this.api(`/collectors/${id}`, 'DELETE');
     this.collectors = this.collectors.filter(c => c.id !== id);
+    this.save();
+  }
+
+  getSupervisors(branch?: Branch): Supervisor[] {
+    if (!branch || branch === Branch.ALL) return this.supervisors;
+    return this.supervisors.filter(s => s.branch === branch);
+  }
+
+  async addSupervisor(name: string, branch: Branch, nickname?: string, photoUrl?: string, notes?: string, contactNumber?: string): Promise<Supervisor> {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      throw new Error('Supervisor name is required.');
+    }
+    const id = Math.random().toString(36).substring(2, 9);
+    const newSupervisor: Supervisor = {
+      id,
+      name: trimmedName,
+      nickname: nickname?.trim().toUpperCase() || '',
+      branch,
+      contactNumber: contactNumber?.trim() || '',
+      photoUrl: photoUrl || '',
+      notes: notes?.trim() || ''
+    };
+
+    try {
+      await this.api('/supervisors', 'POST', newSupervisor);
+    } catch (e) {
+      console.warn('Supervisors API unavailable, saved locally.', e);
+    }
+
+    this.supervisors = [...this.supervisors, newSupervisor];
+    this.save();
+    return newSupervisor;
+  }
+
+  async updateSupervisor(id: string, name: string, branch: Branch, nickname?: string, photoUrl?: string, notes?: string, contactNumber?: string): Promise<Supervisor> {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      throw new Error('Supervisor name is required.');
+    }
+    const index = this.supervisors.findIndex(s => s.id === id);
+    if (index === -1) {
+      throw new Error('Supervisor not found.');
+    }
+
+    const oldName = this.supervisors[index].name;
+    const oldNickname = this.supervisors[index].nickname;
+    const updated: Supervisor = {
+      id,
+      name: trimmedName,
+      nickname: nickname?.trim().toUpperCase() || '',
+      branch,
+      contactNumber: contactNumber?.trim() || '',
+      photoUrl: photoUrl || '',
+      notes: notes?.trim() || ''
+    };
+
+    try {
+      await this.api(`/supervisors/${id}`, 'PUT', updated);
+    } catch (e) {
+      console.warn('Supervisors API unavailable, updated locally.', e);
+    }
+
+    this.supervisors[index] = updated;
+
+    // Update collectors assigned to old supervisor name or nickname if renamed
+    if (oldName && oldName !== trimmedName) {
+      this.collectors = this.collectors.map(c => {
+        if (c.assignedSupervisor === oldName || (oldNickname && c.assignedSupervisor === oldNickname)) {
+          return { ...c, assignedSupervisor: updated.nickname || trimmedName };
+        }
+        return c;
+      });
+    }
+
+    this.save();
+    return updated;
+  }
+
+  async deleteSupervisor(id: string): Promise<void> {
+    const supervisor = this.supervisors.find(s => s.id === id);
+    try {
+      await this.api(`/supervisors/${id}`, 'DELETE');
+    } catch (e) {
+      console.warn('Supervisors API unavailable, deleted locally.', e);
+    }
+
+    if (supervisor) {
+      this.collectors = this.collectors.map(c => {
+        if (c.assignedSupervisor === supervisor.name) {
+          return { ...c, assignedSupervisor: '' };
+        }
+        return c;
+      });
+    }
+
+    this.supervisors = this.supervisors.filter(s => s.id !== id);
+    this.save();
+  }
+
+  getActionPersonnel(branch?: Branch): ActionPersonnel[] {
+    if (!branch || branch === Branch.ALL) return this.actionPersonnel;
+    return this.actionPersonnel.filter(p => p.branch === branch);
+  }
+
+  async addActionPersonnel(name: string, branch: Branch, nickname?: string, role?: string, contactNumber?: string, notes?: string): Promise<ActionPersonnel> {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      throw new Error('Personnel name is required.');
+    }
+    const id = Math.random().toString(36).substring(2, 9);
+    const newPersonnel: ActionPersonnel = {
+      id,
+      name: trimmedName,
+      nickname: nickname?.trim().toUpperCase() || '',
+      branch,
+      role: role?.trim() || 'Account Officer',
+      contactNumber: contactNumber?.trim() || '',
+      notes: notes?.trim() || ''
+    };
+
+    try {
+      await this.api('/action_personnel', 'POST', newPersonnel);
+    } catch (e) {
+      console.warn('Action Personnel API unavailable, saved locally.', e);
+    }
+
+    this.actionPersonnel = [...this.actionPersonnel, newPersonnel];
+    this.save();
+    return newPersonnel;
+  }
+
+  async updateActionPersonnel(id: string, name: string, branch: Branch, nickname?: string, role?: string, contactNumber?: string, notes?: string): Promise<ActionPersonnel> {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      throw new Error('Personnel name is required.');
+    }
+    const index = this.actionPersonnel.findIndex(p => p.id === id);
+    if (index === -1) {
+      throw new Error('Personnel not found.');
+    }
+
+    const updated: ActionPersonnel = {
+      id,
+      name: trimmedName,
+      nickname: nickname?.trim().toUpperCase() || '',
+      branch,
+      role: role?.trim() || 'Account Officer',
+      contactNumber: contactNumber?.trim() || '',
+      notes: notes?.trim() || ''
+    };
+
+    try {
+      await this.api(`/action_personnel/${id}`, 'PUT', updated);
+    } catch (e) {
+      console.warn('Action Personnel API unavailable, updated locally.', e);
+    }
+
+    this.actionPersonnel[index] = updated;
+    this.save();
+    return updated;
+  }
+
+  async deleteActionPersonnel(id: string): Promise<void> {
+    try {
+      await this.api(`/action_personnel/${id}`, 'DELETE');
+    } catch (e) {
+      console.warn('Action Personnel API unavailable, deleted locally.', e);
+    }
+
+    this.actionPersonnel = this.actionPersonnel.filter(p => p.id !== id);
     this.save();
   }
 

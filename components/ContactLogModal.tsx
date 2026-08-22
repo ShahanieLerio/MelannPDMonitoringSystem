@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Loan, User, ContactLog, ContactMethod } from '../types.ts';
 import { store } from '../services/dataStore.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
@@ -61,6 +61,41 @@ const ContactLogModal: React.FC<ContactLogModalProps> = ({ loan, currentUser, on
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
+
+  const availablePersonnel = useMemo(() => {
+    const actionPersonnel = store.getActionPersonnel(loan.branch);
+    const collectors = store.getCollectors(loan.branch);
+    const supervisors = store.getSupervisors(loan.branch);
+
+    const names = new Map<string, { value: string; display: string }>();
+
+    actionPersonnel.forEach(p => {
+      const val = (p.nickname || p.name).trim();
+      const key = val.toUpperCase();
+      const display = p.nickname ? `${p.name} (@${p.nickname})` : p.name;
+      names.set(key, { value: val, display });
+    });
+
+    collectors.forEach(c => {
+      const val = (c.nickname || c.name).trim();
+      const key = val.toUpperCase();
+      if (!names.has(key)) {
+        const display = c.nickname ? `${c.name} (@${c.nickname})` : c.name;
+        names.set(key, { value: val, display });
+      }
+    });
+
+    supervisors.forEach(s => {
+      const val = (s.nickname || s.name).trim();
+      const key = val.toUpperCase();
+      if (!names.has(key)) {
+        const display = s.nickname ? `${s.name} (@${s.nickname})` : s.name;
+        names.set(key, { value: val, display });
+      }
+    });
+
+    return Array.from(names.values());
+  }, [loan.branch]);
 
   useEffect(() => {
     setContactLogs(store.getContactLogs(loan.id));
@@ -250,17 +285,28 @@ const ContactLogModal: React.FC<ContactLogModalProps> = ({ loan, currentUser, on
             <div className="mb-4">
               <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1.5 block">Personnel Assigned <span className="text-red-500">*</span></label>
               <div className="relative">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                 </div>
-                <input
-                  type="text"
+                <select
                   value={personnelAssigned}
                   onChange={e => setPersonnelAssigned(e.target.value)}
-                  placeholder="Full name of person who contacted the client..."
-                  className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                  className="w-full pl-10 pr-10 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all appearance-none cursor-pointer"
                   disabled={isSubmitting}
-                />
+                >
+                  <option value="">-- Select Personnel Assigned --</option>
+                  {availablePersonnel.map((p, idx) => (
+                    <option key={idx} value={p.value}>
+                      {p.display}
+                    </option>
+                  ))}
+                  {personnelAssigned && !availablePersonnel.some(p => p.value.toUpperCase() === personnelAssigned.toUpperCase()) && (
+                    <option value={personnelAssigned}>{personnelAssigned}</option>
+                  )}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                </div>
               </div>
             </div>
 

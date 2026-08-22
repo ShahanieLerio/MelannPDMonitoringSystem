@@ -131,7 +131,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, activeTab, setActi
     { id: 'demand-letters', label: 'Demand Letters', icon: () => <span className="text-xl">✉️</span>, roles: fieldViewRoles },
     { id: 'action-tracker', label: 'Action Tracker', icon: () => <span className="text-xl">🎯</span>, roles: fieldViewRoles },
     { id: 'write-off', label: 'Write-Off', icon: () => <span className="text-[10px] font-black tracking-tight">WO</span>, roles: fieldViewRoles },
-    { id: 'collectors', label: 'Collectors', icon: () => <span className="text-xl">👥</span>, roles: dataMaintenanceRoles },
+    { id: 'collectors', label: 'Personnel Management', icon: () => <span className="text-xl">👥</span>, roles: dataMaintenanceRoles },
     { id: 'migration', label: 'Migration Center', icon: () => <span className="text-[10px] font-black tracking-tight">SYNC</span>, roles: dataMaintenanceRoles },
     { id: 'documentation', label: 'Documentation', icon: () => <span className="text-[10px] font-black tracking-tight">DOC</span>, roles: allOperationalRoles },
     { id: 'users', label: 'Manage Users', icon: () => <span className="text-xl">⚙️</span>, roles: canManageUsers(role) ? [role] : [] },

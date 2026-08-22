@@ -443,7 +443,7 @@ const App: React.FC = () => {
             <div className="flex items-center gap-3 min-w-0">
               <span className="hidden sm:block h-8 w-1 rounded-full bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"></span>
               <h2 className="text-xs sm:text-sm font-black text-slate-800 dark:text-white uppercase tracking-widest transition-colors duration-300 truncate">
-                {activeTab.replace(/-/g, ' ')}
+                {activeTab === 'collectors' ? 'Personnel Management' : activeTab.replace(/-/g, ' ')}
               </h2>
             </div>
 

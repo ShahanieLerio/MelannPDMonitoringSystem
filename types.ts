@@ -157,6 +157,26 @@ export interface Collector {
   branch: Branch;
 }
 
+export interface Supervisor {
+  id: string;
+  name: string;
+  nickname?: string;
+  branch: Branch;
+  contactNumber?: string;
+  photoUrl?: string;
+  notes?: string;
+}
+
+export interface ActionPersonnel {
+  id: string;
+  name: string;
+  nickname?: string;
+  branch: Branch;
+  role?: string;
+  contactNumber?: string;
+  notes?: string;
+}
+
 export interface HistoryRecord {
   id: string;
   timestamp: string;

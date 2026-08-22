@@ -6,6 +6,7 @@ import RemarksModal from './RemarksModal.tsx';
 import ContactLogModal from './ContactLogModal.tsx';
 import VisitLogModal from './VisitLogModal.tsx';
 import ManagementDispositionModal from './ManagementDispositionModal.tsx';
+import ActionTrackerPersonnelModal from './ActionTrackerPersonnelModal.tsx';
 
 // Helper to get days diff
 const getDifferenceInDays = (date1: Date, date2: Date) => {
@@ -79,6 +80,9 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
 
     // Sidebar UI
     const [activeSidebarTab, setActiveSidebarTab] = useState<'activity' | 'decisions'>('activity');
+
+    // Personnel Modal
+    const [isPersonnelModalOpen, setIsPersonnelModalOpen] = useState(false);
 
     // Override Modal
     const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
@@ -474,10 +478,19 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                         <p className="text-sm font-medium text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
                             Lifecycle classification and decision support tool to determine the next best step for past-due clients.
                         </p>
-                        <button onClick={handleExportCSV} className="flex items-center gap-2 px-4 py-2 bg-slate-900 dark:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition shadow-sm w-max">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                            Export List to CSV
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2.5">
+                            <button
+                                onClick={() => setIsPersonnelModalOpen(true)}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition shadow-sm hover:scale-[1.02] active:scale-95"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                                Personnel Management
+                            </button>
+                            <button onClick={handleExportCSV} className="flex items-center gap-2 px-4 py-2 bg-slate-900 dark:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition shadow-sm">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                Export List to CSV
+                            </button>
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 xl:w-[820px] gap-3">
@@ -910,6 +923,12 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                     }}
                 />
             )}
+
+            <ActionTrackerPersonnelModal
+                isOpen={isPersonnelModalOpen}
+                selectedBranch={selectedBranch}
+                onClose={() => setIsPersonnelModalOpen(false)}
+            />
         </div>
     );
 };

@@ -43,7 +43,7 @@ describe('Sidebar', () => {
     expect(screen.getByText('Client Update')).toBeInTheDocument();
     expect(screen.getByText('Demand Letters')).toBeInTheDocument();
     expect(screen.getAllByText('Reports').length).toBeGreaterThan(0);
-    expect(screen.getByText('Collectors')).toBeInTheDocument();
+    expect(screen.getByText('Personnel Management')).toBeInTheDocument();
     expect(screen.getByText('Manage Users')).toBeInTheDocument();
     expect(screen.getByText('Backup & Restore')).toBeInTheDocument();
   });
@@ -57,8 +57,8 @@ describe('Sidebar', () => {
   it('shows data maintenance modules for IT/Accounting Clerk without backup access', () => {
     render(<Sidebar {...defaultProps} role={UserRole.IT_ACCOUNTING_CLERK} />);
 
-    expect(screen.getByText('Collectors')).toBeInTheDocument();
-    expect(screen.getByText('JCASH Migration')).toBeInTheDocument();
+    expect(screen.getByText('Personnel Management')).toBeInTheDocument();
+    expect(screen.getByText('Migration Center')).toBeInTheDocument();
     expect(screen.getByText('Recycle Bin')).toBeInTheDocument();
     expect(screen.queryByText('Backup & Restore')).not.toBeInTheDocument();
   });
