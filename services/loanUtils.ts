@@ -1,8 +1,9 @@
 import { Branch, Loan, MovingStatus, Payment, PaymentStatus } from '../types';
 
 export const ACTIVE_PORTFOLIO_MATURITY_START = '2016-01-01';
-export const ACTIVE_PORTFOLIO_MATURITY_END = '2026-03-31';
+export const ACTIVE_PORTFOLIO_MATURITY_END = '2026-12-31';
 export const JCASH_MIGRATION_PAYMENT_REMARK = 'Migrated from jcashdb.mdb';
+export const MODERN_MIGRATION_PAYMENT_REMARK = 'Migrated from melann.db';
 
 export function normalizeDateOnly(value?: string | null): string {
   if (!value) return '';
@@ -32,7 +33,9 @@ type PortfolioLoanShape = {
 };
 
 export function isJcashMigratedLoan(loan: PortfolioLoanShape): boolean {
-  return (loan.payments || []).some(payment => payment.remarks === JCASH_MIGRATION_PAYMENT_REMARK);
+  return (loan.payments || []).some(
+    payment => payment.remarks === JCASH_MIGRATION_PAYMENT_REMARK || payment.remarks === MODERN_MIGRATION_PAYMENT_REMARK
+  );
 }
 
 export function isZeroPaymentJcashSourceLoan(

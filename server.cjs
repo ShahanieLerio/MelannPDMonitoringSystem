@@ -98,7 +98,7 @@ const MIGRATION_ANCHOR_START = process.env.JCASHDB_CYCLE_ANCHOR_START || '2016-0
 const MIGRATION_FIRST_CYCLE_END = process.env.JCASHDB_FIRST_CYCLE_END || '2026-03-31';
 const MIGRATION_TEMP_DIR = process.env.JCASHDB_SCAN_TEMP_DIR || 'C:\\tmp';
 const ACTIVE_PORTFOLIO_MATURITY_START = '2016-01-01';
-const ACTIVE_PORTFOLIO_MATURITY_END = '2026-03-31';
+const ACTIVE_PORTFOLIO_MATURITY_END = '2026-12-31';
 const JCASH_MIGRATION_PAYMENT_REMARK = 'Migrated from jcashdb.mdb';
 const MODERN_MIGRATION_PAYMENT_REMARK = 'Migrated from melann.db';
 
@@ -715,7 +715,7 @@ app.get('/api/loans', async (req, res) => {
                     SELECT 1
                     FROM payments p
                     WHERE p.loan_id = l.id
-                      AND p.remarks = $3
+                      AND p.remarks IN ($3, $5)
                )
                OR (
                     l.branch = $4
@@ -726,7 +726,7 @@ app.get('/api/loans', async (req, res) => {
                     )
                )
             ORDER BY l.last_name ASC, l.first_name ASC
-        `, [ACTIVE_PORTFOLIO_MATURITY_START, ACTIVE_PORTFOLIO_MATURITY_END, JCASH_MIGRATION_PAYMENT_REMARK, JCASHDB_BRANCH]);
+        `, [ACTIVE_PORTFOLIO_MATURITY_START, ACTIVE_PORTFOLIO_MATURITY_END, JCASH_MIGRATION_PAYMENT_REMARK, JCASHDB_BRANCH, MODERN_MIGRATION_PAYMENT_REMARK]);
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Loan, LocationStatus, MovingStatus, Branch, User, Collector } from '../types.ts';
 import { store } from '../services/dataStore.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
@@ -55,6 +55,48 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     type: 'success' as 'success' | 'error'
   });
 
+  const availableCollectors = useMemo(() => {
+    const branchSpecific = formData.branch && formData.branch !== Branch.ALL
+      ? allCollectors.filter(c => c.branch === formData.branch)
+      : allCollectors;
+
+    const baseList = branchSpecific.length > 0 ? branchSpecific : allCollectors;
+
+    const currentNick = (formData.collector || '').trim().toUpperCase();
+    const currentExists = baseList.some(c => (c.nickname || c.name || '').trim().toUpperCase() === currentNick);
+
+    const combined = [...baseList];
+    if (currentNick && !currentExists) {
+      const fromAll = allCollectors.find(c => (c.nickname || c.name || '').trim().toUpperCase() === currentNick);
+      if (fromAll) {
+        combined.push(fromAll);
+      } else {
+        combined.push({
+          id: `legacy-${currentNick}`,
+          name: currentNick,
+          nickname: currentNick,
+          branch: formData.branch
+        });
+      }
+    }
+
+    const seen = new Set<string>();
+    const uniqueList: Collector[] = [];
+    for (const c of combined) {
+      const nick = (c.nickname || c.name || '').trim().toUpperCase();
+      if (nick && !seen.has(nick)) {
+        seen.add(nick);
+        uniqueList.push(c);
+      }
+    }
+
+    return uniqueList.sort((a, b) => {
+      const nickA = (a.nickname || a.name || '').trim().toUpperCase();
+      const nickB = (b.nickname || b.name || '').trim().toUpperCase();
+      return nickA.localeCompare(nickB);
+    });
+  }, [allCollectors, formData.branch, formData.collector]);
+
   useEffect(() => {
     // Sync collectors list with store
     const unsubscribe = store.subscribe(() => {
@@ -64,7 +106,11 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     if (loan) {
       // Resolve nickname if stored as full name (legacy)
       const currentCollectors = store.getCollectors(Branch.ALL);
-      const collectorNick = currentCollectors.find(c => c.name === loan.collector || c.nickname === loan.collector)?.nickname || loan.collector;
+      const loanCollector = (loan.collector || '').trim();
+      const collectorNick = currentCollectors.find(c =>
+        (c.name && c.name.trim().toUpperCase() === loanCollector.toUpperCase()) ||
+        (c.nickname && c.nickname.trim().toUpperCase() === loanCollector.toUpperCase())
+      )?.nickname || loanCollector;
 
       setFormData({
         code: loan.code || '',
@@ -82,7 +128,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
         fullAddress: loan.fullAddress || '',
         location: loan.location,
         status: loan.status,
-        collector: collectorNick || '',
+        collector: collectorNick ? collectorNick.trim().toUpperCase() : '',
         contactNumber: loan.contactNumber || '',
         branch: loan.branch,
       });
@@ -162,13 +208,9 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     if (!formData.barangay.trim()) errors.barangay = 'Barangay is required';
     if (!formData.fullAddress.trim()) errors.fullAddress = 'Detailed address is required';
 
-    const inputCollector = formData.collector.trim().toUpperCase();
-    const collectorMatch = allCollectors.find(c =>
-      (c.nickname && c.nickname.trim().toUpperCase() === inputCollector) ||
-      (c.name && c.name.trim().toUpperCase() === inputCollector)
-    );
-    if (!formData.collector.trim()) errors.collector = 'Collector assignment is required';
-    else if (!collectorMatch) errors.collector = 'Collector not found';
+    if (!formData.collector.trim()) {
+      errors.collector = 'Collector assignment is required';
+    }
 
     const digits = formData.contactNumber.replace(/\D/g, '');
     if (digits.length > 0 && (digits.length < 10 || digits.length > 11)) {
@@ -261,15 +303,15 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     const collectorMatch = allCollectors.find(c =>
       (c.nickname && c.nickname.trim().toUpperCase() === input) ||
       (c.name && c.name.trim().toUpperCase() === input)
-    )!; // We know it exists because validateForm passed
+    );
 
-    // Always prioritize storing the Nickname if it exists
+    // Always prioritize storing the Active Nickname if it exists
     const finalData = {
       ...formData,
       principal: parseFloat(formData.principal.toString().replace(/,/g, '')) || null,
       totalLoan: parseFloat(formData.totalLoan.toString().replace(/,/g, '')) || null,
       outstandingBalance: parseFloat(formData.outstandingBalance.toString().replace(/,/g, '')) || 0,
-      collector: collectorMatch.nickname || collectorMatch.name
+      collector: collectorMatch ? (collectorMatch.nickname || collectorMatch.name || input).toUpperCase() : input
     };
 
       const performSave = async () => {
@@ -671,18 +713,30 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="relative">
-                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                  <input
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  <label className={activeFixedIconLabelStyle}>Collector Assigned <span className="text-red-500">*</span></label>
+                  <select
                     name="collector"
-                    placeholder="Collector Nickname"
-                    className={`${floatingIconInputStyle} ${fieldErrors.collector ? 'border-red-500 bg-red-50' : ''}`}
+                    className={`peer w-full bg-white border ${fieldErrors.collector ? 'border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-500/20' : 'border-gray-200'} pl-10 pr-8 pt-5 pb-2 rounded-xl text-gray-800 text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all appearance-none cursor-pointer`}
                     value={formData.collector}
                     onChange={e => {
                       setFormData({ ...formData, collector: e.target.value });
                       if (fieldErrors.collector) setFieldErrors(p => ({ ...p, collector: '' }));
                     }}
-                  />
-                  <label className={floatingIconLabelStyle}>Collector Assigned <span className="text-red-500">*</span></label>
+                  >
+                    <option value="">Select Collector</option>
+                    {availableCollectors.map(c => {
+                      const activeNick = (c.nickname || c.name || '').trim().toUpperCase();
+                      return (
+                        <option key={c.id || activeNick} value={activeNick}>
+                          {activeNick}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                  </div>
                   {fieldErrors.collector && <p className="text-[11px] text-red-500 font-medium px-1 mt-1">{fieldErrors.collector}</p>}
                 </div>
 

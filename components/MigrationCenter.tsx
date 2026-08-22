@@ -645,7 +645,7 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
                     <td className="px-2 py-3 text-center">
                       <div className="flex items-center justify-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() => setEditingLoan(account.loan as Loan)}
+                          onClick={() => setEditingLoan({ ...account.loan, outstandingBalance: account.loan.runningBalance } as Loan)}
                           className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-500 transition-all hover:bg-emerald-100 hover:text-emerald-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-400"
                           title="Edit Client Information"
                         >
