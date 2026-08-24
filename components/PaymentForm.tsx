@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { store } from '../services/dataStore.ts';
-import { Loan, User, Branch, Payment, PaymentStatus } from '../types.ts';
+import { Loan, User, Branch, Payment, PaymentStatus, DispositionType } from '../types.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface PaymentFormProps {
@@ -27,6 +27,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
   const [loan, setLoan] = useState<Loan | null>(null);
   const [amount, setAmount] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [selectedOption, setSelectedOption] = useState<'Reconstruct' | 'Deceased' | 'Write-Off' | null>(null);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -120,6 +121,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
 
   const handleSearch = () => {
     setError('');
+    setSelectedOption(null);
     const found = store.getLoanByCode(code);
     if (!found || (selectedBranch !== Branch.ALL && found.branch !== selectedBranch)) {
       setError(`Client code not found in ${selectedBranch}.`);
@@ -138,6 +140,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
   const handleRecentPostClick = (post: RecentPost) => {
     setCode(post.code);
     setError('');
+    setSelectedOption(null);
     const found = store.getLoanByCode(post.code);
     if (!found || (selectedBranch !== Branch.ALL && found.branch !== selectedBranch)) {
       setError(`Client code not found in ${selectedBranch}.`);
@@ -156,36 +159,65 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
     setError('');
 
     try {
+      let finalRemarks = remarks.trim();
+      if (selectedOption === 'Reconstruct') {
+        finalRemarks = finalRemarks ? `Reconstructed: ${finalRemarks}` : 'Reconstructed';
+      } else if (selectedOption === 'Deceased') {
+        finalRemarks = finalRemarks ? `Deceased: ${finalRemarks}` : 'Deceased';
+      } else if (selectedOption === 'Write-Off') {
+        finalRemarks = finalRemarks ? `Write-off: ${finalRemarks}` : 'Write-off';
+      }
+
       const updated = await store.recordPayment(
         loan.id,
         paymentAmount,
         paymentDate,
-        remarks,
+        finalRemarks,
         currentUser.username,
         currentUser.role
       );
 
       if (updated) {
+        if (selectedOption === 'Write-Off') {
+          try {
+            const existingDispositions = store.getDispositions ? store.getDispositions(loan.id) : [];
+            const hasWriteOffDisp = existingDispositions.some(d => d.type === DispositionType.PROSPECT_WRITE_OFF);
+            if (!hasWriteOffDisp && store.addDisposition) {
+              await store.addDisposition(
+                loan.id,
+                DispositionType.PROSPECT_WRITE_OFF,
+                finalRemarks || 'Tagged as Write-Off in Payment Module',
+                [],
+                currentUser.username,
+                currentUser.role
+              );
+            }
+          } catch (dispErr) {
+            console.warn('Could not auto-create write-off disposition:', dispErr);
+          }
+        }
+
         showSuccess(`Payment of ₱${paymentAmount.toLocaleString()} received for ${loan.borrowerName}.`);
 
-      // Update Recent Posts
-      const newPost: RecentPost = {
-        time: new Date().toISOString(),
-        code: loan.code,
-        borrowerName: loan.borrowerName,
-        amount: paymentAmount,
-        collector: loan.collector,
-        remarks: remarks
-      };
+        // Update Recent Posts
+        const newPost: RecentPost = {
+          time: new Date().toISOString(),
+          code: loan.code,
+          borrowerName: loan.borrowerName,
+          amount: paymentAmount,
+          collector: loan.collector,
+          remarks: finalRemarks
+        };
 
-      const updatedRecent = [newPost, ...recentPosts].slice(0, 10);
-      setRecentPosts(updatedRecent);
-      localStorage.setItem('melann_recent_payments', JSON.stringify(updatedRecent));
+        const updatedRecent = [newPost, ...recentPosts].slice(0, 10);
+        setRecentPosts(updatedRecent);
+        localStorage.setItem('melann_recent_payments', JSON.stringify(updatedRecent));
 
         setLoan(null);
         setCode('');
         setAmount('');
         setRemarks('');
+        setSelectedOption(null);
         setPaymentDate(new Date().toISOString().split('T')[0]);
         setTimeout(() => {
           codeRef.current?.focus();
@@ -249,9 +281,15 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
         '❌ Cancel'
       );
     } else {
+      const confirmText = selectedOption
+        ? `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName} tagged as [${selectedOption}]? This account will be routed to the ${
+            selectedOption === 'Reconstruct' ? 'Reconstructed Report' : selectedOption === 'Deceased' ? 'Deceased Clients Report' : 'Write-Off Module'
+          }.`
+        : `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName}?`;
+
       askConfirm(
         "Confirm Payment Posting",
-        `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName}?`,
+        confirmText,
         confirmSubmit,
         'info'
       );
@@ -536,12 +574,123 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
                         </div>
                       </div>
 
+                      {/* OPTION BUTTONS: RECONSTRUCT, DECEASED, WRITE-OFF */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between px-1">
+                          <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                            <span>Tag Account / Report Route</span>
+                            <span className="text-[9px] font-medium text-slate-400 dark:text-slate-500 lowercase">(optional)</span>
+                          </label>
+                          {selectedOption && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedOption(null)}
+                              className="text-[9px] font-black text-rose-500 hover:text-rose-600 uppercase tracking-wider hover:underline transition-colors"
+                            >
+                              Clear Tag
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          {/* Reconstruct */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOption(prev => prev === 'Reconstruct' ? null : 'Reconstruct')}
+                            className={`group flex items-center justify-between p-3.5 rounded-2xl border-2 font-bold text-xs transition-all duration-200 cursor-pointer active:scale-95 text-left ${
+                              selectedOption === 'Reconstruct'
+                                ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20 ring-2 ring-emerald-400/30'
+                                : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-base">🔄</span>
+                              <div>
+                                <div className="font-black text-xs leading-tight">Reconstruct</div>
+                                <div className={`text-[9px] ${selectedOption === 'Reconstruct' ? 'text-emerald-100' : 'text-slate-400 dark:text-slate-500'}`}>
+                                  Reconstructed Report
+                                </div>
+                              </div>
+                            </div>
+                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ml-2 ${
+                              selectedOption === 'Reconstruct'
+                                ? 'border-white bg-white text-emerald-600'
+                                : 'border-slate-300 dark:border-slate-600 group-hover:border-emerald-400'
+                            }`}>
+                              {selectedOption === 'Reconstruct' && <div className="w-2 h-2 rounded-full bg-emerald-600"></div>}
+                            </div>
+                          </button>
+
+                          {/* Deceased */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOption(prev => prev === 'Deceased' ? null : 'Deceased')}
+                            className={`group flex items-center justify-between p-3.5 rounded-2xl border-2 font-bold text-xs transition-all duration-200 cursor-pointer active:scale-95 text-left ${
+                              selectedOption === 'Deceased'
+                                ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-600/20 ring-2 ring-purple-400/30'
+                                : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-purple-400 hover:bg-purple-50/40 dark:hover:bg-purple-950/20'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-base">🕊️</span>
+                              <div>
+                                <div className="font-black text-xs leading-tight">Deceased</div>
+                                <div className={`text-[9px] ${selectedOption === 'Deceased' ? 'text-purple-100' : 'text-slate-400 dark:text-slate-500'}`}>
+                                  Deceased Module
+                                </div>
+                              </div>
+                            </div>
+                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ml-2 ${
+                              selectedOption === 'Deceased'
+                                ? 'border-white bg-white text-purple-600'
+                                : 'border-slate-300 dark:border-slate-600 group-hover:border-purple-400'
+                            }`}>
+                              {selectedOption === 'Deceased' && <div className="w-2 h-2 rounded-full bg-purple-600"></div>}
+                            </div>
+                          </button>
+
+                          {/* Write-Off */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedOption(prev => prev === 'Write-Off' ? null : 'Write-Off')}
+                            className={`group flex items-center justify-between p-3.5 rounded-2xl border-2 font-bold text-xs transition-all duration-200 cursor-pointer active:scale-95 text-left ${
+                              selectedOption === 'Write-Off'
+                                ? 'bg-rose-600 text-white border-rose-600 shadow-md shadow-rose-600/20 ring-2 ring-rose-400/30'
+                                : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-rose-400 hover:bg-rose-50/40 dark:hover:bg-rose-950/20'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-base">📋</span>
+                              <div>
+                                <div className="font-black text-xs leading-tight">Write-Off</div>
+                                <div className={`text-[9px] ${selectedOption === 'Write-Off' ? 'text-rose-100' : 'text-slate-400 dark:text-slate-500'}`}>
+                                  Write-Off Module
+                                </div>
+                              </div>
+                            </div>
+                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ml-2 ${
+                              selectedOption === 'Write-Off'
+                                ? 'border-white bg-white text-rose-600'
+                                : 'border-slate-300 dark:border-slate-600 group-hover:border-rose-400'
+                            }`}>
+                              {selectedOption === 'Write-Off' && <div className="w-2 h-2 rounded-full bg-rose-600"></div>}
+                            </div>
+                          </button>
+                        </div>
+                      </div>
+
                       <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Collection Remarks</label>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">
+                          Collection Remarks {selectedOption && <span className="text-emerald-600 font-bold lowercase">({selectedOption} notes)</span>}
+                        </label>
                         <textarea
                           className="w-full px-6 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-emerald-500 font-medium text-sm text-slate-800 dark:text-white transition-colors duration-300"
                           rows={3}
-                          placeholder="Collector notes or specific receipt details..."
+                          placeholder={
+                            selectedOption
+                              ? `Optional additional details for ${selectedOption}...`
+                              : "Collector notes or specific receipt details..."
+                          }
                           value={remarks}
                           onChange={(e) => setRemarks(e.target.value)}
                         />

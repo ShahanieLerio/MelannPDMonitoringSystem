@@ -9,7 +9,9 @@ vi.mock('../services/dataStore', () => ({
     getLoanByCode: vi.fn(),
     recordPayment: vi.fn(),
     getPaymentByOR: vi.fn(),
-    reversePayment: vi.fn()
+    reversePayment: vi.fn(),
+    getDispositions: vi.fn(),
+    addDisposition: vi.fn()
   }
 }));
 
@@ -210,4 +212,73 @@ describe('PaymentForm', () => {
       expect(store.reversePayment).toHaveBeenCalledWith('OR-123', 'Wrong posting', 'Admin', UserRole.SUPER_ADMIN);
     });
   });
+
+  it('posts payment with Reconstruct option tag', async () => {
+    const loan = findClient();
+    (store.recordPayment as any).mockResolvedValue({ ...loan, runningBalance: 6000 });
+
+    fireEvent.change(screen.getByPlaceholderText('0'), { target: { value: '500' } });
+    fireEvent.click(screen.getByRole('button', { name: /reconstruct/i }));
+    fireEvent.change(screen.getByPlaceholderText(/optional additional details for reconstruct/i), {
+      target: { value: 'Partial restruct' }
+    });
+    fireEvent.click(screen.getByText(/post payment now/i));
+    fireEvent.click(screen.getByText(/^yes$/i));
+
+    await waitFor(() => {
+      expect(store.recordPayment).toHaveBeenCalledWith(
+        loan.id,
+        500,
+        today(),
+        'Reconstructed: Partial restruct',
+        'Admin',
+        UserRole.SUPER_ADMIN
+      );
+    });
+  });
+
+  it('posts payment with Deceased option tag without extra notes', async () => {
+    const loan = findClient();
+    (store.recordPayment as any).mockResolvedValue({ ...loan, runningBalance: 0 });
+
+    fireEvent.change(screen.getByPlaceholderText('0'), { target: { value: '500' } });
+    fireEvent.click(screen.getByRole('button', { name: /deceased/i }));
+    fireEvent.click(screen.getByText(/post payment now/i));
+    fireEvent.click(screen.getByText(/^yes$/i));
+
+    await waitFor(() => {
+      expect(store.recordPayment).toHaveBeenCalledWith(
+        loan.id,
+        500,
+        today(),
+        'Deceased',
+        'Admin',
+        UserRole.SUPER_ADMIN
+      );
+    });
+  });
+
+  it('posts payment with Write-Off option tag and creates disposition', async () => {
+    const loan = findClient();
+    (store.recordPayment as any).mockResolvedValue({ ...loan, runningBalance: 0 });
+    (store.getDispositions as any).mockReturnValue([]);
+    (store.addDisposition as any).mockResolvedValue({});
+
+    fireEvent.change(screen.getByPlaceholderText('0'), { target: { value: '500' } });
+    fireEvent.click(screen.getByRole('button', { name: /write-off/i }));
+    fireEvent.click(screen.getByText(/post payment now/i));
+    fireEvent.click(screen.getByText(/^yes$/i));
+
+    await waitFor(() => {
+      expect(store.recordPayment).toHaveBeenCalledWith(
+        loan.id,
+        500,
+        today(),
+        'Write-off',
+        'Admin',
+        UserRole.SUPER_ADMIN
+      );
+    });
+  });
 });
+
