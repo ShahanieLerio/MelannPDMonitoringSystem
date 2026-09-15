@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import CollectionSheet from './CollectionSheet';
 import { store } from '../services/dataStore';
-import { Branch, LocationStatus, MovingStatus, UserRole, UserStatus } from '../types';
+import { Branch, LocationStatus, MovingStatus, PaymentStatus, UserRole, UserStatus } from '../types';
 import * as XLSX from 'xlsx';
 
 vi.mock('../services/dataStore', () => ({
@@ -162,5 +162,34 @@ describe('CollectionSheet', () => {
 
     expect(printSpy).toHaveBeenCalled();
     printSpy.mockRestore();
+  });
+
+  it('prints the latest valid payment date with its amount below it', () => {
+    (store.getLoans as any).mockReturnValue([
+      makeLoan({
+        payments: [
+          {
+            id: 'p1', loanId: 'l1', date: '2025-10-01', orNumber: 'OR-1', amount: 500,
+            balanceAfter: 7500, recorder: 'Admin', status: PaymentStatus.GOOD, createdAt: '2025-10-01T08:00:00Z'
+          },
+          {
+            id: 'p2', loanId: 'l1', date: '2025-11-06', orNumber: 'OR-2', amount: 1200,
+            balanceAfter: 6300, recorder: 'Admin', status: PaymentStatus.GOOD, createdAt: '2025-11-06T08:00:00Z'
+          },
+          {
+            id: 'p3', loanId: 'l1', date: '2025-12-01', orNumber: 'OR-3', amount: 999,
+            balanceAfter: 5301, recorder: 'Admin', status: PaymentStatus.REVERSED, createdAt: '2025-12-01T08:00:00Z'
+          }
+        ]
+      })
+    ]);
+
+    render(<CollectionSheet currentUser={currentUser} selectedBranch={Branch.NAVAL} />);
+    fireEvent.click(screen.getByText('JOHN'));
+
+    expect(screen.getByText('Last Payment & Amount')).toBeInTheDocument();
+    expect(screen.getByText('11-06-2025')).toBeInTheDocument();
+    expect(screen.getByText('₱1,200')).toBeInTheDocument();
+    expect(screen.queryByText('12-01-2025')).not.toBeInTheDocument();
   });
 });

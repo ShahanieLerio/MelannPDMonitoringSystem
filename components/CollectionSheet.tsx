@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
 import { Loan, Collector, User, Branch, MovingStatus } from '../types.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
+import { isReportableCollectionPayment } from '../services/loanUtils.ts';
 import { formatMMDDYYYY } from '../constants.tsx';
 import * as XLSX from 'xlsx';
 
@@ -13,6 +14,18 @@ interface CollectionSheetProps {
 
 const isCollectibleLoan = (loan: Loan) =>
   loan.status !== MovingStatus.PAID && loan.runningBalance > 0;
+
+const getLastPayment = (loan: Loan) =>
+  (loan.payments || [])
+    .filter(isReportableCollectionPayment)
+    .reduce<Loan['payments'][number] | null>((latest, payment) => {
+      if (!latest) return payment;
+
+      const dateComparison = payment.date.localeCompare(latest.date);
+      if (dateComparison !== 0) return dateComparison > 0 ? payment : latest;
+
+      return String(payment.createdAt || '').localeCompare(String(latest.createdAt || '')) > 0 ? payment : latest;
+    }, null);
 
 const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => {
   const [selectedCollector, setSelectedCollector] = useState<Collector | null>(null);
@@ -772,11 +785,12 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
         <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', margin: 0, padding: 0, lineHeight: 0, fontSize: 0, border: 'none' }} aria-hidden="true">
           <colgroup>
             <col style={{ width: '7%' }} />
-            <col style={{ width: '20%' }} />
-            <col style={{ width: '30%' }} />
-            <col style={{ width: '13%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '27%' }} />
+            <col style={{ width: '11%' }} />
             <col style={{ width: '15%' }} />
-            <col style={{ width: '15%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '10%' }} />
           </colgroup>
         </table>
 
@@ -784,11 +798,12 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
         <table className="cs-group-table" style={{ marginBottom: 0 }}>
           <colgroup>
             <col style={{ width: '7%' }} />
-            <col style={{ width: '20%' }} />
-            <col style={{ width: '30%' }} />
-            <col style={{ width: '13%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '27%' }} />
+            <col style={{ width: '11%' }} />
             <col style={{ width: '15%' }} />
-            <col style={{ width: '15%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '10%' }} />
           </colgroup>
           <thead>
             <tr style={{ backgroundColor: '#e5e7eb', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' } as React.CSSProperties}>
@@ -796,6 +811,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
               <th style={{ border: '0.5pt solid #000', padding: '4px 3px', textAlign: 'left',   fontSize: '8pt', fontWeight: '800', backgroundColor: '#e5e7eb' }}>Borrower Name</th>
               <th style={{ border: '0.5pt solid #000', padding: '4px 3px', textAlign: 'left',   fontSize: '8pt', fontWeight: '800', backgroundColor: '#e5e7eb' }}>Full Address</th>
               <th style={{ border: '0.5pt solid #000', padding: '4px 3px', textAlign: 'left',   fontSize: '8pt', fontWeight: '800', backgroundColor: '#e5e7eb' }}>Due Date</th>
+              <th style={{ border: '0.5pt solid #000', padding: '4px 3px', textAlign: 'center', fontSize: '8pt', fontWeight: '800', backgroundColor: '#e5e7eb' }}>Last Payment &amp; Amount</th>
               <th style={{ border: '0.5pt solid #000', padding: '4px 3px', textAlign: 'right',  fontSize: '8pt', fontWeight: '800', backgroundColor: '#e5e7eb' }}>Running Balance</th>
               <th style={{ border: '0.5pt solid #000', padding: '4px 3px', textAlign: 'center', fontSize: '8pt', fontWeight: '800', backgroundColor: '#e5e7eb' }}>Payment</th>
             </tr>
@@ -811,15 +827,16 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
               <table className="cs-group-table">
                 <colgroup>
                   <col style={{ width: '7%' }} />
-                  <col style={{ width: '20%' }} />
-                  <col style={{ width: '30%' }} />
-                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '18%' }} />
+                  <col style={{ width: '27%' }} />
+                  <col style={{ width: '11%' }} />
                   <col style={{ width: '15%' }} />
-                  <col style={{ width: '15%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '10%' }} />
                 </colgroup>
                 <tbody>
                   <tr className="cs-city-row">
-                    <td colSpan={6} style={{
+                    <td colSpan={7} style={{
                       border: '0.5pt solid #000', padding: '4px 6px',
                       fontWeight: '800', fontSize: '9pt',
                       textTransform: 'uppercase', letterSpacing: '0.08em',
@@ -842,16 +859,17 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                 <table className="cs-group-table">
                   <colgroup>
                     <col style={{ width: '7%' }} />
-                    <col style={{ width: '20%' }} />
-                    <col style={{ width: '30%' }} />
-                    <col style={{ width: '13%' }} />
+                    <col style={{ width: '18%' }} />
+                    <col style={{ width: '27%' }} />
+                    <col style={{ width: '11%' }} />
                     <col style={{ width: '15%' }} />
-                    <col style={{ width: '15%' }} />
+                    <col style={{ width: '12%' }} />
+                    <col style={{ width: '10%' }} />
                   </colgroup>
                   <tbody>
                     {/* Barangay label */}
                     <tr className="cs-barangay-row">
-                      <td colSpan={6} style={{
+                      <td colSpan={7} style={{
                         border: '0.5pt solid #000', padding: '3px 6px 3px 20px',
                         fontWeight: '700', fontSize: '8.5pt', fontStyle: 'italic',
                         color: '#145a32', backgroundColor: '#d1fae5',
@@ -861,16 +879,27 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                       </td>
                     </tr>
                     {/* Borrower rows */}
-                    {items.map(l => (
+                    {items.map(l => {
+                      const lastPayment = getLastPayment(l);
+                      return (
                       <tr key={l.id} className="cs-data-row">
                         <td style={{ border: '0.5pt solid #000', padding: '3px',     textAlign: 'center', fontWeight: '700', fontSize: '8pt' }}>{l.code}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px 4px', fontWeight: '700',   fontSize: '8.5pt', textTransform: 'uppercase', lineHeight: '1.2' }}>{l.lastName}, {l.firstName}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px 4px', fontSize: '7.5pt',   fontStyle: 'italic', lineHeight: '1.2' }}>{l.fullAddress || '—'}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px 4px', fontSize: '8pt',     lineHeight: '1.2' }}>{formatMMDDYYYY(l.dueDate)}</td>
+                        <td style={{ border: '0.5pt solid #000', padding: '3px 4px', textAlign: 'center', fontSize: '8pt', lineHeight: '1.25' }}>
+                          {lastPayment ? (
+                            <>
+                              <div>{formatMMDDYYYY(lastPayment.date)}</div>
+                              <div style={{ fontWeight: '800' }}>₱{Number(lastPayment.amount || 0).toLocaleString()}</div>
+                            </>
+                          ) : '—'}
+                        </td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px 4px', textAlign: 'right',  fontWeight: '800', fontSize: '8.5pt' }}>₱{l.runningBalance.toLocaleString()}</td>
                         <td style={{ border: '0.5pt solid #000', padding: '3px',     backgroundColor: '#fff' }}>&nbsp;</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
