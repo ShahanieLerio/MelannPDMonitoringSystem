@@ -136,6 +136,23 @@ describe('CollectionSheet', () => {
     expect(XLSX.writeFile).toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/^Collection_Sheet_JOHN_Naval_Branch_/));
   });
 
+  it('filters a collector sheet by city and barangay for location-specific exports', () => {
+    render(<CollectionSheet currentUser={currentUser} selectedBranch={Branch.NAVAL} />);
+
+    fireEvent.click(screen.getByText('JOHN'));
+    fireEvent.change(screen.getByLabelText('Filter by barangay'), { target: { value: 'Caraycaray' } });
+
+    expect(screen.queryByText('SANTOS, MARIA')).not.toBeInTheDocument();
+    expect(screen.getAllByText('REYES, ANA').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText(/^excel$/i));
+    expect(XLSX.utils.aoa_to_sheet).toHaveBeenCalledWith(expect.arrayContaining([
+      ['City', 'All cities'],
+      ['Barangay', 'Caraycaray'],
+      expect.arrayContaining(['C-002', 'REYES, ANA'])
+    ]));
+  });
+
   it('calls browser print for the printable collection sheet', () => {
     const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
     render(<CollectionSheet currentUser={currentUser} selectedBranch={Branch.NAVAL} />);

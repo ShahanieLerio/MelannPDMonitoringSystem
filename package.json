@@ -7,6 +7,7 @@
     "dev": "vite --host",
     "server": "node server.cjs",
     "build": "vite build",
+    "db:validate": "node scripts/validate_database_package.cjs",
     "preview": "vite preview",
     "test": "vitest"
   },

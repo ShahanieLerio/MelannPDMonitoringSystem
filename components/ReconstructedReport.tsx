@@ -84,7 +84,7 @@ const ReconstructedReport: React.FC<ReconstructedReportProps> = ({ selectedBranc
   }, [loans, collectors]);
 
   const collectorOptions = useMemo(() => {
-    return Array.from(new Set(reconstructedEntries.map(entry => entry.collector)))
+    return (Array.from(new Set<string>(reconstructedEntries.map(entry => entry.collector))) as string[])
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b));
   }, [reconstructedEntries]);

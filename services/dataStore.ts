@@ -66,7 +66,7 @@ class DataStore {
   private readyPromise: Promise<void>;
   private isRefreshing = false;
   private refreshPromise: Promise<void> | null = null;
-  private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private autoSyncTimer: number | null = null;
   private loanViewCache = new Map<string, { loansRef: Loan[]; collectorsRef: Collector[]; result: Loan[] }>();
 
   private getCollectorDisplayName(collector?: string | null) {
@@ -191,10 +191,12 @@ class DataStore {
     this.refreshPromise = (async () => {
       try {
       console.log('Syncing with Local PostgreSQL via Bridge...');
-      const [dbLoans, dbUsers, dbCollectors, dbDLs, dbPayments, dbRemarks, dbLogs, dbVisitLogs, dbContactLogs, dbDeletedLoans, dbDispositions] = await Promise.all([
+      const [dbLoans, dbUsers, dbCollectors, dbSupervisors, dbActionPersonnel, dbDLs, dbPayments, dbRemarks, dbLogs, dbVisitLogs, dbContactLogs, dbDeletedLoans, dbDispositions] = await Promise.all([
         fetch(`${API_URL}/loans`).then(r => r.json()),
         fetch(`${API_URL}/users`).then(r => r.json()),
         fetch(`${API_URL}/collectors`).then(r => r.json()),
+        fetch(`${API_URL}/supervisors`).then(r => r.json()),
+        fetch(`${API_URL}/action_personnel`).then(r => r.json()),
         fetch(`${API_URL}/demand_letters`).then(r => r.json()),
         fetch(`${API_URL}/payments`).then(r => r.json()),
         fetch(`${API_URL}/remarks`).then(r => r.json()),
@@ -325,6 +327,24 @@ class DataStore {
       }));
 
       this.collectors = mappedCollectors;
+      this.supervisors = (dbSupervisors || []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        nickname: s.nickname || '',
+        branch: s.branch,
+        contactNumber: s.contact_number || '',
+        photoUrl: s.photo_url || '',
+        notes: s.notes || ''
+      })) as Supervisor[];
+      this.actionPersonnel = (dbActionPersonnel || []).map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        nickname: p.nickname || '',
+        branch: p.branch,
+        role: p.role || 'Account Officer',
+        contactNumber: p.contact_number || '',
+        notes: p.notes || ''
+      })) as ActionPersonnel[];
       this.demandLetters = dbDLs.map((d: any) => ({
         id: d.id,
         loanId: d.loan_id,
@@ -348,6 +368,7 @@ class DataStore {
         clientComment: v.client_comment || '',
         visitedByCollector: v.visited_by_collector || false,
         action: v.action || VisitLogAction.LOG_ONLY,
+        personnelAssigned: v.personnel_assigned || v.personnelAssigned || '',
         loggedBy: v.logged_by,
         timestamp: v.timestamp
       })) as VisitLog[];
@@ -360,6 +381,7 @@ class DataStore {
         notes: c.notes,
         clientResponse: c.client_response || '',
         hasResponse: c.has_response || false,
+        personnelAssigned: c.personnel_assigned || c.personnelAssigned || '',
         loggedBy: c.logged_by,
         timestamp: c.timestamp
       })) as ContactLog[];
@@ -777,11 +799,8 @@ class DataStore {
       notes: notes?.trim() || ''
     };
 
-    try {
-      await this.api('/supervisors', 'POST', newSupervisor);
-    } catch (e) {
-      console.warn('Supervisors API unavailable, saved locally.', e);
-    }
+    const result = await this.api('/supervisors', 'POST', newSupervisor);
+    newSupervisor.photoUrl = result.photoUrl || newSupervisor.photoUrl;
 
     this.supervisors = [...this.supervisors, newSupervisor];
     this.save();
@@ -810,11 +829,8 @@ class DataStore {
       notes: notes?.trim() || ''
     };
 
-    try {
-      await this.api(`/supervisors/${id}`, 'PUT', updated);
-    } catch (e) {
-      console.warn('Supervisors API unavailable, updated locally.', e);
-    }
+    const result = await this.api(`/supervisors/${id}`, 'PUT', updated);
+    updated.photoUrl = result.photoUrl || updated.photoUrl;
 
     this.supervisors[index] = updated;
 
@@ -834,11 +850,7 @@ class DataStore {
 
   async deleteSupervisor(id: string): Promise<void> {
     const supervisor = this.supervisors.find(s => s.id === id);
-    try {
-      await this.api(`/supervisors/${id}`, 'DELETE');
-    } catch (e) {
-      console.warn('Supervisors API unavailable, deleted locally.', e);
-    }
+    await this.api(`/supervisors/${id}`, 'DELETE');
 
     if (supervisor) {
       this.collectors = this.collectors.map(c => {
@@ -874,11 +886,7 @@ class DataStore {
       notes: notes?.trim() || ''
     };
 
-    try {
-      await this.api('/action_personnel', 'POST', newPersonnel);
-    } catch (e) {
-      console.warn('Action Personnel API unavailable, saved locally.', e);
-    }
+    await this.api('/action_personnel', 'POST', newPersonnel);
 
     this.actionPersonnel = [...this.actionPersonnel, newPersonnel];
     this.save();
@@ -905,11 +913,7 @@ class DataStore {
       notes: notes?.trim() || ''
     };
 
-    try {
-      await this.api(`/action_personnel/${id}`, 'PUT', updated);
-    } catch (e) {
-      console.warn('Action Personnel API unavailable, updated locally.', e);
-    }
+    await this.api(`/action_personnel/${id}`, 'PUT', updated);
 
     this.actionPersonnel[index] = updated;
     this.save();
@@ -917,11 +921,7 @@ class DataStore {
   }
 
   async deleteActionPersonnel(id: string): Promise<void> {
-    try {
-      await this.api(`/action_personnel/${id}`, 'DELETE');
-    } catch (e) {
-      console.warn('Action Personnel API unavailable, deleted locally.', e);
-    }
+    await this.api(`/action_personnel/${id}`, 'DELETE');
 
     this.actionPersonnel = this.actionPersonnel.filter(p => p.id !== id);
     this.save();

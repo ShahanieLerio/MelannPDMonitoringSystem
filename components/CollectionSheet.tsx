@@ -21,6 +21,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
 
   const [filterFromDate, setFilterFromDate] = useState<string>('');
   const [filterToDate, setFilterToDate] = useState<string>('');
+  const [filterCity, setFilterCity] = useState<string>('');
+  const [filterBarangay, setFilterBarangay] = useState<string>('');
 
   const formatDateForDisplay = (dateString: string) => {
     if (!dateString) return '';
@@ -46,7 +48,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
     return () => unsubscribe();
   }, [selectedBranch]);
 
-  const collectorLoans = useMemo(() => {
+  const collectorLoansBeforeLocationFilter = useMemo(() => {
     if (!selectedCollector) return [];
     const selectedCollectorName = getCollectorDisplayName(selectedCollector.nickname || selectedCollector.name, collectors);
     let list = loans.filter(l =>
@@ -57,6 +59,27 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
     if (filterToDate) list = list.filter(l => l.dueDate <= filterToDate);
     return list;
   }, [selectedCollector, loans, collectors, filterFromDate, filterToDate]);
+
+  const availableCities = useMemo(
+    () => [...new Set(collectorLoansBeforeLocationFilter.map(loan => loan.city).filter(Boolean))].sort(),
+    [collectorLoansBeforeLocationFilter]
+  );
+
+  const availableBarangays = useMemo(
+    () => [...new Set(collectorLoansBeforeLocationFilter
+      .filter(loan => !filterCity || loan.city === filterCity)
+      .map(loan => loan.barangay)
+      .filter(Boolean))].sort(),
+    [collectorLoansBeforeLocationFilter, filterCity]
+  );
+
+  const collectorLoans = useMemo(
+    () => collectorLoansBeforeLocationFilter.filter(loan =>
+      (!filterCity || loan.city === filterCity) &&
+      (!filterBarangay || loan.barangay === filterBarangay)
+    ),
+    [collectorLoansBeforeLocationFilter, filterCity, filterBarangay]
+  );
 
   const groupedLoans = useMemo(() => {
     return collectorLoans.reduce((acc, loan) => {
@@ -338,7 +361,13 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
             return (
               <button
                 key={c.id}
-                onClick={() => setSelectedCollector(c)}
+                onClick={() => {
+                  setSelectedCollector(c);
+                  setFilterFromDate('');
+                  setFilterToDate('');
+                  setFilterCity('');
+                  setFilterBarangay('');
+                }}
                 className="group relative overflow-hidden rounded-lg border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/10 active:translate-y-0 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-emerald-700 dark:hover:shadow-emerald-950/30"
               >
               <span className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-400 opacity-70 transition-opacity duration-300 group-hover:opacity-100"></span>
@@ -408,6 +437,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
       ['Branch', selectedBranch],
       ['Generated', new Date().toLocaleString('en-PH')],
       ['Due Date Range', `${filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} to ${filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}`],
+      ['City', filterCity || 'All cities'],
+      ['Barangay', filterBarangay || 'All barangays'],
       ['Accounts', collectorLoans.length],
       ['Cities', cityCount],
       ['Barangays', barangayCount],
@@ -455,7 +486,13 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
           <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => setSelectedCollector(null)}
+                onClick={() => {
+                  setSelectedCollector(null);
+                  setFilterFromDate('');
+                  setFilterToDate('');
+                  setFilterCity('');
+                  setFilterBarangay('');
+                }}
                 className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition-all hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-emerald-800 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-300"
                 title="Back to Selection"
               >
@@ -520,8 +557,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
         </div>
 
         {/* Filter Section */}
-        <div className="mx-6 mb-4 mt-4 flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+        <div className="mx-6 mb-4 mt-4 flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
             <span className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
               Filter by Due Date:
@@ -541,24 +578,36 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                 onChange={(e) => setFilterToDate(e.target.value)}
               />
             </div>
-            
-            {(filterFromDate || filterToDate) && (
-               <button onClick={() => { setFilterFromDate(''); setFilterToDate(''); }} className="whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-red-500 transition-all hover:border-red-500 hover:bg-red-500 hover:text-white">
-                 Clear Filter
-               </button>
-            )}
-
+          </div>
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+            <span className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+              Filter by Location:
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <select aria-label="Filter by city" value={filterCity} onChange={(e) => { setFilterCity(e.target.value); setFilterBarangay(''); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none transition-colors focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
+                <option value="">All cities</option>
+                {availableCities.map(city => <option key={city} value={city}>{city}</option>)}
+              </select>
+              <select aria-label="Filter by barangay" value={filterBarangay} onChange={(e) => setFilterBarangay(e.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none transition-colors focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300" disabled={availableBarangays.length === 0}>
+                <option value="">All barangays</option>
+                {availableBarangays.map(barangay => <option key={barangay} value={barangay}>{barangay}</option>)}
+              </select>
+              {(filterFromDate || filterToDate || filterCity || filterBarangay) && (
+                <button onClick={() => { setFilterFromDate(''); setFilterToDate(''); setFilterCity(''); setFilterBarangay(''); }} className="whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-red-500 transition-all hover:border-red-500 hover:bg-red-500 hover:text-white">
+                  Clear Filters
+                </button>
+              )}
+            </div>
             {filterFromDate && filterToDate && filterFromDate > filterToDate && (
-               <span className="text-[10px] text-red-500 font-black uppercase tracking-widest animate-pulse whitespace-nowrap">
-                 Invalid date range
-               </span>
+              <span className="text-[10px] text-red-500 font-black uppercase tracking-widest animate-pulse whitespace-nowrap">Invalid date range</span>
             )}
           </div>
-          
-          {(filterFromDate || filterToDate) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
+
+          {(filterFromDate || filterToDate || filterCity || filterBarangay) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
             <div className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-900/20 dark:text-emerald-300">
                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
-               Showing: Due Date {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
+               Showing: {filterCity || 'All cities'} · {filterBarangay || 'All barangays'} · Due Date {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
             </div>
           )}
         </div>
@@ -636,6 +685,11 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
             {(filterFromDate || filterToDate) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
               <div style={{ fontSize: '10pt', fontWeight: '800', marginTop: '6px' }}>
                 Due Date Range: {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
+              </div>
+            )}
+            {(filterCity || filterBarangay) && (
+              <div style={{ fontSize: '10pt', fontWeight: '800', marginTop: '4px' }}>
+                Location: {filterCity || 'All cities'}{filterBarangay ? ` — ${filterBarangay}` : ''}
               </div>
             )}
           </div>

@@ -388,8 +388,8 @@ const DemandLetterComponent: React.FC<DemandLetterComponentProps> = ({ currentUs
                                 tomorrowTemp.setDate(tomorrowTemp.getDate() + 1);
                                 const tomorrowStr = tomorrowTemp.toISOString().split('T')[0];
 
-                                const isOverdue = dl.followUpDate && dl.followUpDate <= todayStr && dl.status !== DemandLetterStatus.SETTLED && dl.status !== DemandLetterStatus.COMPLETED;
-                                const isTomorrow = dl.followUpDate && dl.followUpDate === tomorrowStr && dl.status !== DemandLetterStatus.SETTLED && dl.status !== DemandLetterStatus.COMPLETED;
+                                const isOverdue = dl.followUpDate && dl.followUpDate <= todayStr && dl.status !== DemandLetterStatus.SETTLED;
+                                const isTomorrow = dl.followUpDate && dl.followUpDate === tomorrowStr && dl.status !== DemandLetterStatus.SETTLED;
                                 const isThirdDL = dl.type === DemandLetterType.THIRD;
                                 const isSettled = dl.status === DemandLetterStatus.SETTLED;
 

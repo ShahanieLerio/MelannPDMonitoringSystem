@@ -21,70 +21,6 @@ const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
 });
 
-// Test DB Connection
-pool.connect((err, client, release) => {
-    if (err) {
-        return console.error('Error acquiring client', err.stack);
-    }
-    console.log('Successfully connected to Local PostgreSQL');
-
-    client.query('ALTER TABLE collectors ADD COLUMN IF NOT EXISTS photo_url TEXT', (err) => {
-        if (err) console.error('Failed to ensure collectors photo column', err.message);
-    });
-    client.query('ALTER TABLE collectors ADD COLUMN IF NOT EXISTS assigned_supervisor TEXT', (err) => {
-        if (err) console.error('Failed to ensure collectors assigned supervisor column', err.message);
-    });
-    client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT', (err) => {
-        if (err) console.error('Failed to ensure users password hash column', err.message);
-    });
-
-    // Seed default admin if table is empty
-    client.query('SELECT COUNT(*) FROM users', (err, result) => {
-        if (!err && parseInt(result.rows[0].count) === 0) {
-            console.log('Seeding default admin user...');
-            const now = new Date().toISOString();
-            const adminHistory = JSON.stringify([{ status: 'ACTIVE', updatedAt: now, updatedBy: 'System' }]);
-            client.query(
-                'INSERT INTO users (id, username, full_name, role, status, branch, created_at, created_by, status_history) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-                ['1', 'admin', 'System Administrator', 'SUPER_ADMIN', 'ACTIVE', 'All Branches', now, 'System', adminHistory]
-            );
-        }
-    });
-
-    release();
-});
-
-    // Create deleted_loans table if it doesn't exist
-    pool.query(`
-        CREATE TABLE IF NOT EXISTS deleted_loans (
-            id TEXT PRIMARY KEY,
-            original_loan_data JSONB NOT NULL,
-            deleted_by TEXT NOT NULL,
-            deleted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            reason TEXT,
-            branch TEXT NOT NULL
-        )
-    `, (err) => {
-        if (err) console.error('Failed to create deleted_loans table', err.message);
-    });
-
-    // Create management_dispositions table if it doesn't exist
-    pool.query(`
-        CREATE TABLE IF NOT EXISTS management_dispositions (
-            id TEXT PRIMARY KEY,
-            loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
-            type TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            evidence JSONB DEFAULT '[]'::jsonb,
-            status TEXT NOT NULL DEFAULT 'Pending Review',
-            decided_by TEXT NOT NULL,
-            decision_date TEXT NOT NULL
-        )
-    `, (err) => {
-        if (err) console.error('Failed to create management_dispositions table', err.message);
-        else console.log('management_dispositions table ready.');
-    });
-
 // Generic Query Handler
 const query = (text, params) => pool.query(text, params);
 const PAYMENT_DUPLICATE_DATE_INDEX = 'payments_loan_id_date_unique';
@@ -145,18 +81,118 @@ const ensureMigrationTables = async () => {
     `);
 };
 
-ensureMigrationTables().catch(err => {
-    console.error('Failed to ensure migration tables', err.message);
-});
-
 const ensurePaymentDuplicateDatesAllowed = async () => {
     await query(`ALTER TABLE payments DROP CONSTRAINT IF EXISTS ${PAYMENT_DUPLICATE_DATE_INDEX}`);
     await query('DROP INDEX IF EXISTS payments_loan_id_date_unique');
 };
 
-ensurePaymentDuplicateDatesAllowed().catch(err => {
-    console.error('Failed to allow same-date duplicate payments', err.message);
-});
+const ensureDatabaseCompatibility = async () => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query('ALTER TABLE collectors ADD COLUMN IF NOT EXISTS photo_url TEXT');
+        await client.query('ALTER TABLE collectors ADD COLUMN IF NOT EXISTS assigned_supervisor TEXT');
+        await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT');
+        await client.query('ALTER TABLE demand_letters ADD COLUMN IF NOT EXISTS courrier TEXT');
+        await client.query('ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS type TEXT');
+        await client.query('ALTER TABLE IF EXISTS visit_logs ADD COLUMN IF NOT EXISTS personnel_assigned TEXT DEFAULT \'\'');
+        await client.query('ALTER TABLE IF EXISTS contact_logs ADD COLUMN IF NOT EXISTS personnel_assigned TEXT DEFAULT \'\'');
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS supervisors (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                nickname TEXT,
+                branch TEXT NOT NULL,
+                contact_number TEXT,
+                photo_url TEXT,
+                notes TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS action_personnel (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                nickname TEXT,
+                branch TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'Account Officer',
+                contact_number TEXT,
+                notes TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS visit_logs (
+                id TEXT PRIMARY KEY,
+                loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
+                visit_date TEXT NOT NULL,
+                collector_notes TEXT NOT NULL,
+                client_comment TEXT DEFAULT '',
+                visited_by_collector BOOLEAN DEFAULT FALSE,
+                action TEXT NOT NULL DEFAULT 'Log Only',
+                personnel_assigned TEXT DEFAULT '',
+                logged_by TEXT NOT NULL,
+                timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS contact_logs (
+                id TEXT PRIMARY KEY,
+                loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
+                contact_date TEXT NOT NULL,
+                method TEXT NOT NULL DEFAULT 'Call',
+                notes TEXT NOT NULL,
+                client_response TEXT DEFAULT '',
+                has_response BOOLEAN DEFAULT FALSE,
+                personnel_assigned TEXT DEFAULT '',
+                logged_by TEXT NOT NULL,
+                timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS deleted_loans (
+                id TEXT PRIMARY KEY,
+                original_loan_data JSONB NOT NULL,
+                deleted_by TEXT NOT NULL,
+                deleted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                reason TEXT,
+                branch TEXT NOT NULL
+            )
+        `);
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS management_dispositions (
+                id TEXT PRIMARY KEY,
+                loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
+                type TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evidence JSONB DEFAULT '[]'::jsonb,
+                status TEXT NOT NULL DEFAULT 'Pending Review',
+                decided_by TEXT NOT NULL,
+                decision_date TEXT NOT NULL
+            )
+        `);
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+
+    await ensureMigrationTables();
+    await ensurePaymentDuplicateDatesAllowed();
+
+    const userCount = await query('SELECT COUNT(*) FROM users');
+    if (Number(userCount.rows[0].count) === 0) {
+        console.log('Seeding default admin user...');
+        const now = new Date().toISOString();
+        const adminHistory = JSON.stringify([{ status: 'ACTIVE', updatedAt: now, updatedBy: 'System' }]);
+        await query(
+            'INSERT INTO users (id, username, full_name, role, status, branch, created_at, created_by, status_history) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING',
+            ['1', 'admin', 'System Administrator', 'SUPER_ADMIN', 'ACTIVE', 'All Branches', now, 'System', adminHistory]
+        );
+    }
+};
 
 const toDateOnly = (value) => {
     if (!value) return null;
@@ -1146,6 +1182,132 @@ app.delete('/api/collectors/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Supervisors
+app.get('/api/supervisors', async (req, res) => {
+    try {
+        const result = await query('SELECT * FROM supervisors ORDER BY name');
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/supervisors', async (req, res) => {
+    const { id, name, nickname, branch, contactNumber, photoUrl, notes } = req.body;
+    if (!name || !String(name).trim() || !branch) {
+        return res.status(400).json({ error: 'Supervisor name and branch are required.' });
+    }
+    try {
+        const savedPhotoUrl = persistCollectorPhoto(`supervisor-${id}`, photoUrl);
+        await query(
+            'INSERT INTO supervisors (id, name, nickname, branch, contact_number, photo_url, notes) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [id, String(name).trim(), nickname || null, branch, contactNumber || null, savedPhotoUrl, notes || null]
+        );
+        res.json({ success: true, photoUrl: savedPhotoUrl });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/supervisors/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, nickname, branch, contactNumber, photoUrl, notes } = req.body;
+    if (!name || !String(name).trim() || !branch) {
+        return res.status(400).json({ error: 'Supervisor name and branch are required.' });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const existing = await client.query('SELECT name, nickname FROM supervisors WHERE id = $1 FOR UPDATE', [id]);
+        if (existing.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Supervisor not found.' });
+        }
+        const savedPhotoUrl = persistCollectorPhoto(`supervisor-${id}`, photoUrl);
+        await client.query(
+            'UPDATE supervisors SET name=$1, nickname=$2, branch=$3, contact_number=$4, photo_url=$5, notes=$6 WHERE id=$7',
+            [String(name).trim(), nickname || null, branch, contactNumber || null, savedPhotoUrl, notes || null, id]
+        );
+        const previous = existing.rows[0];
+        const nextAssignment = nickname || String(name).trim();
+        await client.query(
+            'UPDATE collectors SET assigned_supervisor=$1 WHERE assigned_supervisor=$2 OR ($3 IS NOT NULL AND assigned_supervisor=$3)',
+            [nextAssignment, previous.name, previous.nickname]
+        );
+        await client.query('COMMIT');
+        res.json({ success: true, photoUrl: savedPhotoUrl });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+app.delete('/api/supervisors/:id', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const existing = await client.query('SELECT name, nickname FROM supervisors WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (existing.rowCount > 0) {
+            const supervisor = existing.rows[0];
+            await client.query(
+                'UPDATE collectors SET assigned_supervisor=NULL WHERE assigned_supervisor=$1 OR ($2 IS NOT NULL AND assigned_supervisor=$2)',
+                [supervisor.name, supervisor.nickname]
+            );
+            await client.query('DELETE FROM supervisors WHERE id = $1', [req.params.id]);
+        }
+        await client.query('COMMIT');
+        res.json({ success: true });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Action Tracker personnel
+app.get('/api/action_personnel', async (req, res) => {
+    try {
+        const result = await query('SELECT * FROM action_personnel ORDER BY name');
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/action_personnel', async (req, res) => {
+    const { id, name, nickname, branch, role, contactNumber, notes } = req.body;
+    if (!name || !String(name).trim() || !branch) {
+        return res.status(400).json({ error: 'Personnel name and branch are required.' });
+    }
+    try {
+        await query(
+            'INSERT INTO action_personnel (id, name, nickname, branch, role, contact_number, notes) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [id, String(name).trim(), nickname || null, branch, role || 'Account Officer', contactNumber || null, notes || null]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/action_personnel/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, nickname, branch, role, contactNumber, notes } = req.body;
+    if (!name || !String(name).trim() || !branch) {
+        return res.status(400).json({ error: 'Personnel name and branch are required.' });
+    }
+    try {
+        const result = await query(
+            'UPDATE action_personnel SET name=$1, nickname=$2, branch=$3, role=$4, contact_number=$5, notes=$6 WHERE id=$7',
+            [String(name).trim(), nickname || null, branch, role || 'Account Officer', contactNumber || null, notes || null, id]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Personnel not found.' });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/action_personnel/:id', async (req, res) => {
+    try {
+        await query('DELETE FROM action_personnel WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Remarks
 app.get('/api/remarks', async (req, res) => {
     try {
@@ -1247,11 +1409,11 @@ app.get('/api/visit_logs/:loanId', async (req, res) => {
 });
 
 app.post('/api/visit_logs', async (req, res) => {
-    const { id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, loggedBy, timestamp } = req.body;
+    const { id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, personnelAssigned, loggedBy, timestamp } = req.body;
     try {
         await query(
-            'INSERT INTO visit_logs (id, loan_id, visit_date, collector_notes, client_comment, visited_by_collector, action, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-            [id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, loggedBy, timestamp]
+            'INSERT INTO visit_logs (id, loan_id, visit_date, collector_notes, client_comment, visited_by_collector, action, personnel_assigned, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+            [id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, personnelAssigned || '', loggedBy, timestamp]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1280,11 +1442,11 @@ app.get('/api/contact_logs/:loanId', async (req, res) => {
 });
 
 app.post('/api/contact_logs', async (req, res) => {
-    const { id, loanId, contactDate, method, notes, clientResponse, hasResponse, loggedBy, timestamp } = req.body;
+    const { id, loanId, contactDate, method, notes, clientResponse, hasResponse, personnelAssigned, loggedBy, timestamp } = req.body;
     try {
         await query(
-            'INSERT INTO contact_logs (id, loan_id, contact_date, method, notes, client_response, has_response, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-            [id, loanId, contactDate, method, notes, clientResponse, hasResponse, loggedBy, timestamp]
+            'INSERT INTO contact_logs (id, loan_id, contact_date, method, notes, client_response, has_response, personnel_assigned, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+            [id, loanId, contactDate, method, notes, clientResponse, hasResponse, personnelAssigned || '', loggedBy, timestamp]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1706,7 +1868,16 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Bridge Server running on http://0.0.0.0:${PORT}`);
-    console.log(`Network access: http://192.168.254.115:${PORT}`);
+const startServer = async () => {
+    await ensureDatabaseCompatibility();
+    console.log('Successfully connected to PostgreSQL; database schema is ready.');
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Bridge Server running on http://0.0.0.0:${PORT}`);
+        console.log(`Network access: http://192.168.254.115:${PORT}`);
+    });
+};
+
+startServer().catch((error) => {
+    console.error('Bridge Server failed to start because database initialization failed:', error);
+    process.exitCode = 1;
 });

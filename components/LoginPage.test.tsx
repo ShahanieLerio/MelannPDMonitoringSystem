@@ -8,7 +8,8 @@ vi.mock('../services/dataStore', () => ({
   store: {
     authenticate: vi.fn(),
     registerUser: vi.fn(),
-    refresh: vi.fn()
+    refresh: vi.fn(),
+    whenReady: vi.fn()
   }
 }));
 
@@ -20,6 +21,7 @@ describe('LoginPage', () => {
     vi.clearAllMocks();
     (store.registerUser as any).mockResolvedValue({});
     (store.refresh as any).mockResolvedValue(undefined);
+    (store.whenReady as any).mockResolvedValue(undefined);
   });
 
   afterEach(() => {

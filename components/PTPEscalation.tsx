@@ -77,7 +77,7 @@ const PTPEscalation: React.FC<PTPEscalationProps> = ({ selectedBranch, currentUs
   const [remarksLoan, setRemarksLoan] = useState<Loan | null>(null);
   const [visitLogLoan, setVisitLogLoan] = useState<Loan | null>(null);
 
-  const escalationCases = useMemo(() => getPTPEscalationCases(loans), [loans]);
+  const escalationCases = useMemo<PTPEscalationCase[]>(() => getPTPEscalationCases(loans), [loans]);
   const filteredCases = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     if (!term) return escalationCases;
@@ -107,7 +107,8 @@ const PTPEscalation: React.FC<PTPEscalationProps> = ({ selectedBranch, currentUs
     const collectorSections = Object.entries(grouped)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([collector, items]) => {
-        const rows = items
+        const collectorItems = items as PTPEscalationCase[];
+        const rows = collectorItems
           .sort((a, b) => a.borrowerName.localeCompare(b.borrowerName))
           .map(item => {
             const latestMiss = item.missedCommitments[item.missedCommitments.length - 1];
@@ -136,13 +137,13 @@ const PTPEscalation: React.FC<PTPEscalationProps> = ({ selectedBranch, currentUs
           })
           .join('');
 
-        const totalBalance = items.reduce((sum, item) => sum + item.runningBalance, 0);
+        const totalBalance = collectorItems.reduce((sum, item) => sum + item.runningBalance, 0);
 
         return `
           <section class="collector-section">
             <div class="collector-header">
               <h2>${escapeHtml(collector)}</h2>
-              <div>${items.length} client${items.length === 1 ? '' : 's'} | ${escapeHtml(formatCurrency(totalBalance))}</div>
+              <div>${collectorItems.length} client${collectorItems.length === 1 ? '' : 's'} | ${escapeHtml(formatCurrency(totalBalance))}</div>
             </div>
             <table>
               <thead>
@@ -283,13 +284,14 @@ const PTPEscalation: React.FC<PTPEscalationProps> = ({ selectedBranch, currentUs
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredCases.map(item => (
-                <EscalationRow
-                  key={item.id}
-                  item={item}
-                  onViewDetails={setSelectedLoan}
-                  onAddRemark={setRemarksLoan}
-                  onVisitLog={setVisitLogLoan}
-                />
+                <React.Fragment key={item.id}>
+                  <EscalationRow
+                    item={item}
+                    onViewDetails={setSelectedLoan}
+                    onAddRemark={setRemarksLoan}
+                    onVisitLog={setVisitLogLoan}
+                  />
+                </React.Fragment>
               ))}
               {filteredCases.length === 0 && (
                 <tr>
@@ -333,12 +335,14 @@ function SummaryCard({ label, value, tone }: { label: string; value: string; ton
   );
 }
 
-function EscalationRow({ item, onViewDetails, onAddRemark, onVisitLog }: {
+type EscalationRowProps = {
   item: PTPEscalationCase;
   onViewDetails: (loan: Loan) => void;
   onAddRemark: (loan: Loan) => void;
   onVisitLog: (loan: Loan) => void;
-}) {
+};
+
+const EscalationRow: React.FC<EscalationRowProps> = ({ item, onViewDetails, onAddRemark, onVisitLog }) => {
   const latestMiss = item.missedCommitments[item.missedCommitments.length - 1];
 
   return (
@@ -397,6 +401,6 @@ function EscalationRow({ item, onViewDetails, onAddRemark, onVisitLog }: {
       </td>
     </tr>
   );
-}
+};
 
 export default PTPEscalation;

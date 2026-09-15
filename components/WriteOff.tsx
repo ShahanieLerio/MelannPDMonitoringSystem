@@ -49,7 +49,7 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
   }, [selectedBranch]);
 
   const writeOffRows = useMemo(() => {
-    const loansById = new Map(loans.map(loan => [loan.id, loan]));
+    const loansById = new Map<string, Loan>(loans.map(loan => [loan.id, loan]));
     const latestProspectByLoan = new Map<string, ManagementDisposition>();
 
     dispositions

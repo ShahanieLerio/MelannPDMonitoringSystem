@@ -677,10 +677,14 @@ function ClientUpdatePrintSheet({
                   fontSize: 8,
                   fontWeight: 700,
                   padding: '2px 4px',
-                  textTransform: 'uppercase'
+                  textTransform: 'uppercase',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
                 }}
               >
-                Collector: {group.collector} ({group.items.length})
+                <span>Collector: {group.collector} ({group.items.length})</span>
+                <span>Date: {printDateLabel}</span>
               </div>
               <table>
                 <colgroup>

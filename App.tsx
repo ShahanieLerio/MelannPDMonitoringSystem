@@ -210,7 +210,9 @@ const getModuleLegend = (activeTab: string): LegendItem[] => {
 const AbbreviationLegend: React.FC<{ items: LegendItem[] }> = ({ items }) => {
   if (items.length === 0) return null;
 
-  const uniqueItems = Array.from(new Map(items.map(item => [item.term, item])).values());
+  const uniqueItems: LegendItem[] = Array.from(
+    new Map<string, LegendItem>(items.map(item => [item.term, item])).values()
+  );
 
   return (
     <div className="no-print mb-4 rounded-xl border border-slate-200/80 bg-white/75 px-4 py-2.5 text-[10px] font-semibold text-slate-500 shadow-sm backdrop-blur transition-colors duration-300 dark:border-slate-700 dark:bg-slate-800/75 dark:text-slate-400">

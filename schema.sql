@@ -24,6 +24,30 @@ CREATE TABLE IF NOT EXISTS collectors (
     branch TEXT NOT NULL
 );
 
+-- Supervisors used by collector assignment and personnel management.
+CREATE TABLE IF NOT EXISTS supervisors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    nickname TEXT,
+    branch TEXT NOT NULL,
+    contact_number TEXT,
+    photo_url TEXT,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Personnel selectable in Action Tracker contact and visit workflows.
+CREATE TABLE IF NOT EXISTS action_personnel (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    nickname TEXT,
+    branch TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'Account Officer',
+    contact_number TEXT,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS collectors_name_unique
 ON collectors (UPPER(REGEXP_REPLACE(TRIM(name), '\s+', ' ', 'g')));
 
@@ -106,6 +130,7 @@ CREATE TABLE IF NOT EXISTS demand_letters (
     follow_up_date TEXT,
     status TEXT NOT NULL DEFAULT 'Pending',
     remarks TEXT,
+    courrier TEXT,
     branch TEXT NOT NULL
 );
 
@@ -114,6 +139,7 @@ CREATE TABLE IF NOT EXISTS activity_logs (
     id TEXT PRIMARY KEY,
     loan_id TEXT REFERENCES loans(id) ON DELETE CASCADE,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    type TEXT,
     description TEXT NOT NULL,
     user_name TEXT NOT NULL,
     user_role TEXT NOT NULL,
@@ -129,6 +155,7 @@ CREATE TABLE IF NOT EXISTS visit_logs (
     client_comment TEXT DEFAULT '',
     visited_by_collector BOOLEAN DEFAULT FALSE,
     action TEXT NOT NULL DEFAULT 'Log Only',
+    personnel_assigned TEXT DEFAULT '',
     logged_by TEXT NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -142,6 +169,7 @@ CREATE TABLE IF NOT EXISTS contact_logs (
     notes TEXT NOT NULL,
     client_response TEXT DEFAULT '',
     has_response BOOLEAN DEFAULT FALSE,
+    personnel_assigned TEXT DEFAULT '',
     logged_by TEXT NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -172,8 +200,8 @@ CREATE TABLE IF NOT EXISTS migration_batches (
     error TEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS migration_batches_cycle_unique
-ON migration_batches (cycle_start, cycle_end);
+CREATE UNIQUE INDEX IF NOT EXISTS migration_batches_source_cycle_unique
+ON migration_batches (source_path, cycle_start, cycle_end);
 
 -- Management Dispositions (Action Tracker)
 CREATE TABLE IF NOT EXISTS management_dispositions (

@@ -9,7 +9,8 @@ vi.mock('../services/dataStore', () => ({
   store: {
     addRemark: vi.fn(),
     updateRemark: vi.fn(),
-    updateLoan: vi.fn()
+    updateLoan: vi.fn(),
+    getLoans: vi.fn()
   }
 }));
 
@@ -66,6 +67,7 @@ describe('RemarksModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (store.getLoans as any).mockReturnValue([loan]);
     (analyzeRemarkPriority as any).mockResolvedValue(PriorityLevel.FOLLOW_UP);
   });
 
@@ -165,7 +167,9 @@ describe('RemarksModal', () => {
   });
 
   it('shows empty activity copy when no remarks exist', () => {
-    render(<RemarksModal loan={{ ...loan, remarks: [] } as any} currentUser={currentUser} onClose={onClose} />);
+    const loanWithoutRemarks = { ...loan, remarks: [] } as any;
+    (store.getLoans as any).mockReturnValue([loanWithoutRemarks]);
+    render(<RemarksModal loan={loanWithoutRemarks} currentUser={currentUser} onClose={onClose} />);
 
     expect(screen.getByText(/no field activity yet/i)).toBeInTheDocument();
   });
