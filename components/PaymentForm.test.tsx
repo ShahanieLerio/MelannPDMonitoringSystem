@@ -178,6 +178,48 @@ describe('PaymentForm', () => {
     });
   });
 
+  it('warns and allows cancellation before posting to a fully paid account', () => {
+    findClient(makeLoan({
+      runningBalance: 0,
+      status: MovingStatus.PAID
+    }));
+
+    fireEvent.change(screen.getByPlaceholderText('0'), { target: { value: '250' } });
+    fireEvent.click(screen.getByText(/post payment now/i));
+
+    expect(screen.getByText(/fully paid account warning/i)).toBeInTheDocument();
+    expect(screen.getByText(/already fully paid/i)).toBeInTheDocument();
+    expect(store.recordPayment).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /cancel posting/i }));
+
+    expect(screen.queryByText(/fully paid account warning/i)).not.toBeInTheDocument();
+    expect(store.recordPayment).not.toHaveBeenCalled();
+  });
+
+  it('posts only after the user proceeds through the fully paid warning', async () => {
+    const loan = findClient(makeLoan({
+      runningBalance: 0,
+      status: MovingStatus.PAID
+    }));
+    (store.recordPayment as any).mockResolvedValue(loan);
+
+    fireEvent.change(screen.getByPlaceholderText('0'), { target: { value: '250' } });
+    fireEvent.click(screen.getByText(/post payment now/i));
+    fireEvent.click(screen.getByRole('button', { name: /proceed to post/i }));
+
+    await waitFor(() => {
+      expect(store.recordPayment).toHaveBeenCalledWith(
+        loan.id,
+        250,
+        today(),
+        '',
+        'Admin',
+        UserRole.SUPER_ADMIN
+      );
+    });
+  });
+
   it('verifies an OR number and reverses it only after a reason is supplied', async () => {
     const loan = makeLoan();
     const payment = {
@@ -281,4 +323,3 @@ describe('PaymentForm', () => {
     });
   });
 });
-

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { store } from '../services/dataStore';
 import { isReportableCollectionPayment } from '../services/loanUtils';
@@ -55,6 +56,19 @@ const isWithinDateFilter = (dueDate: string, mode: DateFilterMode, fromDate: str
     if (toDate && loanDate > toDate) return false;
     return true;
 };
+
+const formatExportDate = (value: string) => {
+    if (!value) return 'Any';
+    const [year, month, day] = value.split('-');
+    return year && month && day ? `${month}/${day}/${year}` : value;
+};
+
+const escapeHtml = (value: string | number) => String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 
 const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
     const [loans, setLoans] = useState(store.getLoans(selectedBranch));
@@ -209,6 +223,178 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
         return '#dc2626';
     };
 
+    const dateFilterLabel = dateFilterMode === 'all'
+        ? 'All due dates'
+        : dateFilterMode === 'specific'
+            ? `Due date: ${formatExportDate(fromDate)}`
+            : `Due date range: ${formatExportDate(fromDate)} to ${formatExportDate(toDate)}`;
+
+    const exportViewLabel = activeAgingTab === 'overall' ? 'Overall' : 'By Collector';
+
+    const getExportFileBaseName = () => {
+        const branchTag = selectedBranch.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'All_Branches';
+        const tabTag = activeAgingTab === 'overall' ? 'Overall' : 'By_Collector';
+        const filterTag = dateFilterMode === 'all'
+            ? 'All_Dates'
+            : dateFilterMode === 'specific'
+                ? fromDate || 'Specific_Date'
+                : `${fromDate || 'Start'}_to_${toDate || 'End'}`;
+        return `Aging_Receivables_${tabTag}_${branchTag}_${filterTag}`;
+    };
+
+    const getExportDetails = () => {
+        if (activeAgingTab === 'overall') {
+            return AGING_BUCKETS.flatMap(bucket => overallBuckets[bucket].details.map(detail => ({ bucket, ...detail })));
+        }
+
+        return collectors.flatMap(collector => AGING_BUCKETS.flatMap(bucket =>
+            collector.buckets[bucket].details.map(detail => ({ bucket, ...detail }))
+        ));
+    };
+
+    const handleExportExcel = () => {
+        const generatedAt = new Date().toLocaleString('en-PH');
+        const metadataRows: (string | number)[][] = [
+            ['MELANN LENDING CORPORATION'],
+            ['Aging of Receivables'],
+            ['View', exportViewLabel],
+            ['Branch', selectedBranch],
+            ['Due Date Filter', dateFilterLabel],
+            ['Generated', generatedAt],
+            [],
+        ];
+
+        const summaryRows: (string | number)[][] = activeAgingTab === 'overall'
+            ? [
+                ['Aging Category', 'Accounts', '% Share', 'Reported Amount', 'Collected Amount', 'Ending Balance'],
+                ...AGING_BUCKETS.map(bucket => {
+                    const data = overallBuckets[bucket];
+                    const share = grandTotals.accounts > 0 ? data.accounts / grandTotals.accounts : 0;
+                    return [bucket, data.accounts, share, data.reported, data.collected, data.balance];
+                }),
+                ['GRAND TOTAL', grandTotals.accounts, 1, grandTotals.reported, grandTotals.collected, grandTotals.balance],
+            ]
+            : [
+                ['Collector', 'Aging Category', 'Accounts', 'Reported Amount', 'Collected Amount', 'Ending Balance', 'Collection Rate'],
+                ...collectors.flatMap(collector => [
+                    ...AGING_BUCKETS.map(bucket => {
+                        const data = collector.buckets[bucket];
+                        return [collector.collector, bucket, data.accounts, data.reported, data.collected, data.balance, collector.efficiency / 100];
+                    }),
+                    [collector.collector, 'COLLECTOR TOTAL', collector.total.accounts, collector.total.reported, collector.total.collected, collector.total.balance, collector.efficiency / 100],
+                ]),
+                ['GRAND TOTAL', '', grandTotals.accounts, grandTotals.reported, grandTotals.collected, grandTotals.balance, grandTotals.reported > 0 ? grandTotals.collected / grandTotals.reported : 0],
+            ];
+
+        const summarySheet = XLSX.utils.aoa_to_sheet([...metadataRows, ...summaryRows]);
+        summarySheet['!cols'] = activeAgingTab === 'overall'
+            ? [{ wch: 24 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 20 }, { wch: 20 }]
+            : [{ wch: 24 }, { wch: 24 }, { wch: 12 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 18 }];
+
+        const details = getExportDetails();
+        const detailRows: (string | number)[][] = [
+            ...metadataRows,
+            ['Aging Category', 'Client Code', 'Client Name', 'Area', 'Collector', 'Due Date', 'Reported Amount', 'Collected Amount', 'Ending Balance'],
+            ...details.map(detail => [
+                detail.bucket,
+                detail.clientCode,
+                detail.clientName,
+                detail.area,
+                detail.collector,
+                detail.dueDate,
+                detail.reportedAmount,
+                detail.collectedAmount,
+                detail.endingBalance,
+            ]),
+        ];
+        const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
+        detailSheet['!cols'] = [
+            { wch: 20 }, { wch: 16 }, { wch: 30 }, { wch: 24 }, { wch: 24 },
+            { wch: 14 }, { wch: 20 }, { wch: 20 }, { wch: 20 },
+        ];
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, summarySheet, exportViewLabel.substring(0, 31));
+        XLSX.utils.book_append_sheet(workbook, detailSheet, 'Account Details');
+        XLSX.writeFile(workbook, `${getExportFileBaseName()}.xlsx`);
+    };
+
+    const openPrintableReport = (intent: 'pdf' | 'print') => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+            window.alert('Please allow pop-ups to export or print this report.');
+            return;
+        }
+        printWindow.opener = null;
+
+        const money = (value: number) => `&#8369;${value.toLocaleString('en-PH')}`;
+        const summaryHeader = activeAgingTab === 'overall'
+            ? '<th>Aging Category</th><th>Accounts</th><th>% Share</th><th>Reported</th><th>Collected</th><th>Ending Balance</th>'
+            : '<th>Collector</th><th>Aging Category</th><th>Accounts</th><th>Reported</th><th>Collected</th><th>Ending Balance</th>';
+        const summaryBody = activeAgingTab === 'overall'
+            ? AGING_BUCKETS.map(bucket => {
+                const data = overallBuckets[bucket];
+                const share = grandTotals.accounts > 0 ? (data.accounts / grandTotals.accounts) * 100 : 0;
+                return `<tr><td>${escapeHtml(bucket)}</td><td>${data.accounts}</td><td>${share.toFixed(1)}%</td><td>${money(data.reported)}</td><td>${money(data.collected)}</td><td>${money(data.balance)}</td></tr>`;
+            }).join('')
+            : collectors.map(collector => AGING_BUCKETS.map(bucket => {
+                const data = collector.buckets[bucket];
+                return `<tr><td>${escapeHtml(collector.collector)}</td><td>${escapeHtml(bucket)}</td><td>${data.accounts}</td><td>${money(data.reported)}</td><td>${money(data.collected)}</td><td>${money(data.balance)}</td></tr>`;
+            }).join('')).join('');
+
+        const detailsBody = getExportDetails().map(detail => `
+            <tr>
+                <td>${escapeHtml(detail.bucket)}</td>
+                <td>${escapeHtml(detail.clientCode)}</td>
+                <td>${escapeHtml(detail.clientName)}</td>
+                <td>${escapeHtml(detail.area)}</td>
+                <td>${escapeHtml(detail.collector)}</td>
+                <td>${escapeHtml(formatExportDate(detail.dueDate))}</td>
+                <td>${money(detail.reportedAmount)}</td>
+                <td>${money(detail.collectedAmount)}</td>
+                <td>${money(detail.endingBalance)}</td>
+            </tr>`).join('');
+
+        printWindow.document.write(`<!doctype html>
+            <html><head><title>${escapeHtml(getExportFileBaseName())}</title>
+            <style>
+                @page { size: landscape; margin: 12mm; }
+                * { box-sizing: border-box; }
+                body { margin: 0; color: #0f172a; font-family: Arial, sans-serif; font-size: 10px; }
+                .header { border-bottom: 3px solid #047857; margin-bottom: 16px; padding-bottom: 12px; }
+                h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 14px; margin: 22px 0 8px; }
+                .meta { color: #475569; line-height: 1.6; }
+                .totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+                .total { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; }
+                .total span { display: block; color: #64748b; font-size: 8px; font-weight: bold; text-transform: uppercase; }
+                .total strong { display: block; font-size: 14px; margin-top: 3px; }
+                table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+                th { background: #064e3b; color: white; font-size: 9px; text-transform: uppercase; }
+                th, td { border: 1px solid #cbd5e1; padding: 6px; text-align: right; }
+                th:first-child, td:first-child, .details th:nth-child(-n+6), .details td:nth-child(-n+6) { text-align: left; }
+                tr:nth-child(even) td { background: #f8fafc; }
+                .pdf-note { margin-bottom: 10px; padding: 7px 9px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1e40af; }
+                @media print { .pdf-note { display: none; } thead { display: table-header-group; } tr { break-inside: avoid; } }
+            </style></head><body>
+            ${intent === 'pdf' ? '<div class="pdf-note">In the print dialog, choose <strong>Save as PDF</strong> as the destination.</div>' : ''}
+            <div class="header"><h1>Aging of Receivables — ${escapeHtml(exportViewLabel)}</h1>
+                <div class="meta"><strong>${escapeHtml(selectedBranch)}</strong> Branch &nbsp;|&nbsp; ${escapeHtml(dateFilterLabel)} &nbsp;|&nbsp; Generated ${escapeHtml(new Date().toLocaleString('en-PH'))}</div>
+            </div>
+            <div class="totals">
+                <div class="total"><span>Total Accounts</span><strong>${grandTotals.accounts}</strong></div>
+                <div class="total"><span>Reported Amount</span><strong>${money(grandTotals.reported)}</strong></div>
+                <div class="total"><span>Total Collected</span><strong>${money(grandTotals.collected)}</strong></div>
+                <div class="total"><span>Total Outstanding</span><strong>${money(grandTotals.balance)}</strong></div>
+            </div>
+            <h2>${escapeHtml(exportViewLabel)} Summary</h2>
+            <table><thead><tr>${summaryHeader}</tr></thead><tbody>${summaryBody}</tbody></table>
+            <h2>Account Details</h2>
+            <table class="details"><thead><tr><th>Aging Category</th><th>Client Code</th><th>Client Name</th><th>Area</th><th>Collector</th><th>Due Date</th><th>Reported</th><th>Collected</th><th>Ending Balance</th></tr></thead><tbody>${detailsBody}</tbody></table>
+            <script>window.addEventListener('load', () => { window.focus(); window.print(); });<\/script>
+            </body></html>`);
+        printWindow.document.close();
+    };
+
     if (false && collectors.length === 0) {
         return (
             <div className="py-20 flex flex-col items-center justify-center bg-white dark:bg-slate-800 rounded-[2.5rem] border-2 border-dashed border-slate-100 dark:border-slate-700 animate-fadeIn">
@@ -288,25 +474,58 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
                 </div>
 
                 {/* SUB-TABS: Overall / By Collector */}
-                <div className="flex items-center gap-1 rounded-2xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-700 w-fit">
-                    {([
-                        { value: 'overall' as AgingTab, label: 'Overall', icon: '📊' },
-                        { value: 'by-collector' as AgingTab, label: 'By Collector', icon: '👤' },
-                    ]).map(tab => (
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex items-center gap-1 rounded-2xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-700 w-fit">
+                        {([
+                            { value: 'overall' as AgingTab, label: 'Overall', icon: '📊' },
+                            { value: 'by-collector' as AgingTab, label: 'By Collector', icon: '👤' },
+                        ]).map(tab => (
+                            <button
+                                key={tab.value}
+                                type="button"
+                                onClick={() => setActiveAgingTab(tab.value)}
+                                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all duration-300 ${
+                                    activeAgingTab === tab.value
+                                        ? 'bg-[#064e3b] text-white shadow-lg shadow-emerald-900/20'
+                                        : 'text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'
+                                }`}
+                            >
+                                <span className="text-sm">{tab.icon}</span>
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2" data-testid="aging-export-actions">
+                        <span className="mr-1 text-[9px] font-black uppercase tracking-widest text-slate-400">{exportViewLabel} report</span>
                         <button
-                            key={tab.value}
                             type="button"
-                            onClick={() => setActiveAgingTab(tab.value)}
-                            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all duration-300 ${
-                                activeAgingTab === tab.value
-                                    ? 'bg-[#064e3b] text-white shadow-lg shadow-emerald-900/20'
-                                    : 'text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'
-                            }`}
+                            onClick={handleExportExcel}
+                            disabled={grandTotals.accounts === 0}
+                            className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-sm transition-all hover:border-emerald-600 hover:bg-emerald-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
+                            title={`Export ${exportViewLabel} report to Excel`}
                         >
-                            <span className="text-sm">{tab.icon}</span>
-                            {tab.label}
+                            <span aria-hidden="true">▣</span> Excel
                         </button>
-                    ))}
+                        <button
+                            type="button"
+                            onClick={() => openPrintableReport('pdf')}
+                            disabled={grandTotals.accounts === 0}
+                            className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-[10px] font-black uppercase tracking-widest text-red-700 shadow-sm transition-all hover:border-red-600 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300"
+                            title={`Export ${exportViewLabel} report to PDF`}
+                        >
+                            <span aria-hidden="true">▤</span> PDF
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => openPrintableReport('print')}
+                            disabled={grandTotals.accounts === 0}
+                            className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-900 px-4 text-[10px] font-black uppercase tracking-widest text-white shadow-sm transition-all hover:bg-[#064e3b] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
+                            title={`Print ${exportViewLabel} report`}
+                        >
+                            <span aria-hidden="true">⎙</span> Print
+                        </button>
+                    </div>
                 </div>
             </div>
 

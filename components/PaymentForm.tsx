@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { store } from '../services/dataStore.ts';
-import { Loan, User, Branch, Payment, PaymentStatus, DispositionType } from '../types.ts';
+import { Loan, User, Branch, Payment, PaymentStatus, DispositionType, MovingStatus } from '../types.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
 interface PaymentFormProps {
@@ -244,7 +244,23 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
 
     const duplicatePayment = loan.payments.find(p => p.date === paymentDate && p.status !== 'REVERSED');
 
-    if (duplicatePayment) {
+    const requestFinalConfirmation = () => {
+      if (!duplicatePayment) {
+        const confirmText = selectedOption
+          ? `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName} tagged as [${selectedOption}]? This account will be routed to the ${
+            selectedOption === 'Reconstruct' ? 'Reconstructed Report' : selectedOption === 'Deceased' ? 'Deceased Clients Report' : 'Write-Off Module'
+          }.`
+          : `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName}?`;
+
+        askConfirm(
+          "Confirm Payment Posting",
+          confirmText,
+          confirmSubmit,
+          'info'
+        );
+        return;
+      }
+
       const historyMatch = loan.history.slice().reverse().find(
         h => h.type === 'Payment Received' && h.description.includes(duplicatePayment.orNumber)
       );
@@ -280,20 +296,45 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
         '✅ Proceed Anyway',
         '❌ Cancel'
       );
-    } else {
-      const confirmText = selectedOption
-        ? `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName} tagged as [${selectedOption}]? This account will be routed to the ${
-            selectedOption === 'Reconstruct' ? 'Reconstructed Report' : selectedOption === 'Deceased' ? 'Deceased Clients Report' : 'Write-Off Module'
-          }.`
-        : `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName}?`;
+    };
+
+    const accountIsFullyPaid = loan.status === MovingStatus.PAID || Number(loan.runningBalance) <= 0;
+    if (accountIsFullyPaid) {
+      const warningMessage = (
+        <div className="mt-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left">
+          <p className="font-bold text-amber-900">
+            This client is already fully paid. Posting another payment may create an overpayment or incorrect account balance.
+          </p>
+          <div className="space-y-1.5 rounded-lg border border-amber-100 bg-white/70 px-3 py-2 text-amber-800">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-700/70">Client</span>
+              <span className="text-right font-bold">{loan.borrowerName}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-700/70">Current Balance</span>
+              <span className="font-black">₱{Math.max(0, Number(loan.runningBalance) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-700/70">Payment to Post</span>
+              <span className="font-black text-red-600">₱{paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+          <p className="text-xs font-semibold text-amber-800">Do you still want to proceed with posting this payment?</p>
+        </div>
+      );
 
       askConfirm(
-        "Confirm Payment Posting",
-        confirmText,
-        confirmSubmit,
-        'info'
+        "⚠️ Fully Paid Account Warning",
+        warningMessage,
+        duplicatePayment ? requestFinalConfirmation : confirmSubmit,
+        'warning',
+        'Proceed to Post',
+        'Cancel Posting'
       );
+      return;
     }
+
+    requestFinalConfirmation();
   };
 
   const handleVerifyOR = () => {
