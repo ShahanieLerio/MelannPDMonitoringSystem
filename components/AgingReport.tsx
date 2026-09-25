@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { store } from '../services/dataStore';
-import { isReportableCollectionPayment } from '../services/loanUtils';
+import { hasActiveReceivableBalance } from '../services/loanUtils';
 import { Branch } from '../types';
 
 interface AgingReportProps {
@@ -97,14 +97,17 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
         });
 
         loans.forEach(loan => {
+            // Aging is a current receivables view. Keep fully paid, deceased, and
+            // reconstructed records in their source modules, but do not include
+            // accounts that no longer have a collectible balance.
+            if (!hasActiveReceivableBalance(loan)) return;
+
             const reportedAmt = loan.totalLoan != null && loan.totalLoan > 0 ? loan.totalLoan : loan.outstandingBalance;
             if (reportedAmt <= 0) return;
             if (!loan.dueDate) return;
             if (!isWithinDateFilter(loan.dueDate, dateFilterMode, fromDate, toDate)) return;
-            const reportableCollected = (loan.payments || [])
-                .filter(isReportableCollectionPayment)
-                .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-            const reportableEndingBalance = Math.max(0, reportedAmt - reportableCollected);
+            const currentEndingBalance = Math.max(0, Number(loan.runningBalance || 0));
+            const currentCollected = Math.max(0, reportedAmt - currentEndingBalance);
 
             const dueDate = new Date(loan.dueDate);
             const diffTime = today.getTime() - dueDate.getTime();
@@ -126,8 +129,8 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
             const entry = collectorData[loan.collector][bucket];
             entry.accounts++;
             entry.reported += reportedAmt;
-            entry.collected += reportableCollected;
-            entry.balance += reportableEndingBalance;
+            entry.collected += currentCollected;
+            entry.balance += currentEndingBalance;
 
             const detail: AgingBucketDetail = {
                 loanId: loan.id,
@@ -137,8 +140,8 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
                 collector: loan.collector,
                 dueDate: (loan.dueDate || '').substring(0, 10),
                 reportedAmount: reportedAmt,
-                collectedAmount: reportableCollected,
-                endingBalance: reportableEndingBalance
+                collectedAmount: currentCollected,
+                endingBalance: currentEndingBalance
             };
 
             entry.details.push(detail);
@@ -146,14 +149,14 @@ const AgingReport: React.FC<AgingReportProps> = ({ selectedBranch }) => {
             // Aggregate into overall buckets
             bucketTotals[bucket].accounts++;
             bucketTotals[bucket].reported += reportedAmt;
-            bucketTotals[bucket].collected += reportableCollected;
-            bucketTotals[bucket].balance += reportableEndingBalance;
+            bucketTotals[bucket].collected += currentCollected;
+            bucketTotals[bucket].balance += currentEndingBalance;
             bucketTotals[bucket].details.push(detail);
 
             totals.accounts++;
             totals.reported += reportedAmt;
-            totals.collected += reportableCollected;
-            totals.balance += reportableEndingBalance;
+            totals.collected += currentCollected;
+            totals.balance += currentEndingBalance;
         });
 
         const processedCollectors = Object.entries(collectorData)

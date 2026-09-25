@@ -127,7 +127,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, activeTab, setActi
       ]
     },
     { id: 'reports-reconstructed', label: 'Reconstructed', icon: () => <span className="text-xl">🔄</span>, roles: fieldViewRoles },
-    { id: 'reports-dead', label: 'Deceased Clients', icon: () => <span className="text-xl">🕊️</span>, roles: fieldViewRoles },
+    { id: 'maturity-checker', label: 'Loans Maturity Checker', icon: () => <span className="text-xl">📅</span>, roles: fieldViewRoles },
     { id: 'demand-letters', label: 'Demand Letters', icon: () => <span className="text-xl">✉️</span>, roles: fieldViewRoles },
     { id: 'action-tracker', label: 'Action Tracker', icon: () => <span className="text-xl">🎯</span>, roles: fieldViewRoles },
     { id: 'write-off', label: 'Write-Off', icon: () => <span className="text-[10px] font-black tracking-tight">WO</span>, roles: fieldViewRoles },
@@ -145,7 +145,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, activeTab, setActi
     { label: 'Client & Loan Management', itemIds: ['loans'] },
     { label: 'Monitoring & Follow-Up', itemIds: ['client-update', 'ptp-escalation', 'action-tracker', 'demand-letters'] },
     { label: 'Payment & Collection', itemIds: ['receive-payment', 'dcr', 'collection-sheet', 'collectors'] },
-    { label: 'Reports', itemIds: ['reports', 'reports-reconstructed', 'reports-dead'] },
+    { label: 'Reports', itemIds: ['reports', 'reports-reconstructed', 'maturity-checker'] },
     { label: 'Administration', itemIds: ['write-off', 'migration', 'documentation', 'users', 'database', 'recycle-bin'] },
   ];
 

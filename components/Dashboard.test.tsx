@@ -10,6 +10,9 @@ vi.mock('../services/dataStore', () => ({
   store: {
     getLoans: vi.fn(),
     getCollectors: vi.fn(),
+    getAllDispositions: vi.fn(() => []),
+    getDeadWriteOffs: vi.fn(() => []),
+    isDeadWriteOff: vi.fn(() => false),
     subscribe: vi.fn()
   }
 }));
@@ -398,5 +401,35 @@ describe('Dashboard', () => {
     expect(screen.getByText(/no data available/i)).toBeInTheDocument();
     expect(screen.getByText(/no clients assigned/i)).toBeInTheDocument();
     expect(screen.getByText(/no clients with/i)).toBeInTheDocument();
+  });
+
+  it('renders the Write-Off Module Reports section on the Dashboard', () => {
+    (store.getLoans as any).mockReturnValue([
+      makeLoan({
+        id: 'wo-1',
+        borrowerName: 'Located Client',
+        totalLoan: 15000,
+        amountCollected: 5000,
+        runningBalance: 10000
+      })
+    ]);
+    (store.getAllDispositions as any).mockReturnValue([
+      {
+        id: 'disp-1',
+        loanId: 'wo-1',
+        type: 'Prospect for Write-Off',
+        writeOffClassification: 'Located',
+        reason: 'Relocated within branch area'
+      }
+    ]);
+
+    render(<Dashboard selectedBranch={Branch.NAVAL} />);
+
+    expect(screen.getByText('Write-Off Module Reports')).toBeInTheDocument();
+    expect(screen.getByText('📍 Located Write-Off')).toBeInTheDocument();
+    expect(screen.getByText('🔍 Unlocated Write-Off')).toBeInTheDocument();
+    expect(screen.getByText('🕊️ Deceased Accounts')).toBeInTheDocument();
+    expect(screen.getAllByText('📊 Total Write-Off').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('₱10,000').length).toBeGreaterThan(0);
   });
 });

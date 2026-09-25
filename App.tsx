@@ -25,6 +25,7 @@ const Documentation = React.lazy(() => import('./components/Documentation.tsx'))
 const RecycleBin = React.lazy(() => import('./components/RecycleBin.tsx'));
 const MigrationCenter = React.lazy(() => import('./components/MigrationCenter.tsx'));
 const UserProfileSettings = React.lazy(() => import('./components/UserProfileSettings.tsx'));
+const LoansMaturityChecker = React.lazy(() => import('./components/LoansMaturityChecker.tsx'));
 
 type LegendItem = {
   term: string;
@@ -53,7 +54,7 @@ const getModuleLegend = (activeTab: string): LegendItem[] => {
     ];
   }
 
-  if (activeTab.startsWith('loans')) {
+  if (activeTab === 'loans' || activeTab === 'loans-import' || activeTab === 'loans-add') {
     return [
       ...commonLoanLegend,
       { term: 'Loc', meaning: 'Location status' },
@@ -129,6 +130,17 @@ const getModuleLegend = (activeTab: string): LegendItem[] => {
       { term: 'DWO', meaning: 'Dead Write-Off' },
       { term: 'Recon', meaning: 'Reconstructed account payment remark' },
       { term: 'RB', meaning: 'Running Balance' },
+      { term: 'CSV', meaning: 'Comma-Separated Values file' },
+    ];
+  }
+
+  if (activeTab === 'maturity-checker') {
+    return [
+      ...commonLoanLegend,
+      { term: 'Maturity', meaning: 'Loan due or maturity date' },
+      { term: 'RB', meaning: 'Running Balance' },
+      { term: 'Target', meaning: 'Total loan principal amount' },
+      { term: 'Coll', meaning: 'Assigned collector' },
       { term: 'CSV', meaning: 'Comma-Separated Values file' },
     ];
   }
@@ -445,7 +457,7 @@ const App: React.FC = () => {
             <div className="flex items-center gap-3 min-w-0">
               <span className="hidden sm:block h-8 w-1 rounded-full bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.45)]"></span>
               <h2 className="text-xs sm:text-sm font-black text-slate-800 dark:text-white uppercase tracking-widest transition-colors duration-300 truncate">
-                {activeTab === 'collectors' ? 'Personnel Management' : activeTab.replace(/-/g, ' ')}
+                {activeTab === 'collectors' ? 'Personnel Management' : activeTab === 'maturity-checker' ? 'Loans Maturity Checker' : activeTab.replace(/-/g, ' ')}
               </h2>
             </div>
 
@@ -537,13 +549,14 @@ const App: React.FC = () => {
           <ErrorBoundary>
             <Suspense fallback={<div className="p-8 text-center text-xs font-black uppercase tracking-widest text-slate-400">Loading module...</div>}>
               {activeTab.startsWith('dashboard') && <Dashboard selectedBranch={selectedBranch} />}
-              {activeTab.startsWith('loans') && <LoanGrid currentUser={currentUser} selectedBranch={selectedBranch} activeAction={activeTab === 'loans' ? null : activeTab.replace('loans-', '') as 'import' | 'add'} onActionComplete={() => setActiveTab('loans')} />}
+              {(activeTab === 'loans' || activeTab === 'loans-import' || activeTab === 'loans-add') && <LoanGrid currentUser={currentUser} selectedBranch={selectedBranch} activeAction={activeTab === 'loans' ? null : activeTab.replace('loans-', '') as 'import' | 'add'} onActionComplete={() => setActiveTab('loans')} />}
               {activeTab.startsWith('client-update') && <ClientUpdate currentUser={currentUser} selectedBranch={selectedBranch} activeView={activeTab === 'client-update' ? 'Updates Log' : activeTab === 'client-update-advance' ? 'Follow-up' : activeTab === 'client-update-critical' ? 'Priority' : activeTab === 'client-update-monitoring' ? 'Monitoring' : activeTab === 'client-update-no-activity' ? 'No Commitments' : 'Updates Log'} />}
               {activeTab === 'ptp-escalation' && <PTPEscalation currentUser={currentUser} selectedBranch={selectedBranch} />}
               {activeTab.startsWith('receive-payment') && canUsePayments && <PaymentForm currentUser={currentUser} selectedBranch={selectedBranch} activeView={activeTab === 'receive-payment-reverse' ? 'reverse' : 'post'} />}
               {activeTab === 'collection-sheet' && <CollectionSheet currentUser={currentUser} selectedBranch={selectedBranch} />}
               {activeTab === 'dcr' && <DailyCollectionReport selectedBranch={selectedBranch} />}
               {activeTab.startsWith('reports') && <Reports selectedBranch={selectedBranch} activeView={activeTab === 'reports-monthly' ? 'monthly-performance' : activeTab === 'reports-aging' ? 'aging' : activeTab === 'reports-dead' ? 'dead-write-off' : activeTab === 'reports-reconstructed' ? 'reconstructed' : 'performance'} />}
+              {activeTab === 'maturity-checker' && <LoansMaturityChecker currentUser={currentUser} selectedBranch={selectedBranch} />}
               {activeTab === 'demand-letters' && <DemandLetterComponent currentUser={currentUser} selectedBranch={selectedBranch} />}
               {activeTab === 'action-tracker' && <ClientActionTracker currentUser={currentUser} selectedBranch={selectedBranch} />}
               {activeTab === 'write-off' && <WriteOff currentUser={currentUser} selectedBranch={selectedBranch} />}

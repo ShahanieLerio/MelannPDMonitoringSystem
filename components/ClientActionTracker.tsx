@@ -785,9 +785,20 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                                             return dispositions.map((disp, idx) => (
                                                 <div key={idx} className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 shadow-sm">
                                                     <div className="flex justify-between items-start mb-2">
-                                                        <span className="px-2.5 py-1 rounded-md bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 text-[10px] font-black uppercase tracking-widest">
-                                                            {disp.type}
-                                                        </span>
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <span className="px-2.5 py-1 rounded-md bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 text-[10px] font-black uppercase tracking-widest">
+                                                                {disp.type}
+                                                            </span>
+                                                            {disp.writeOffClassification && (
+                                                                <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                                                                    disp.writeOffClassification === 'Located' 
+                                                                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' 
+                                                                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                                                                }`}>
+                                                                    {disp.writeOffClassification}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <span className="text-[10px] font-bold text-slate-400">
                                                             {new Date(disp.decisionDate).toLocaleDateString()}
                                                         </span>

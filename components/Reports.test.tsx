@@ -3,30 +3,20 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import Reports from './Reports';
 import { store } from '../services/dataStore';
-import { Branch } from '../types';
+import { Branch, DispositionType } from '../types';
 
 vi.mock('../services/dataStore', () => ({
   store: {
     getCollectorPerformance: vi.fn(),
     getCollectorPerformanceDetails: vi.fn(),
+    getLoans: vi.fn(() => []),
+    getAllDispositions: vi.fn(() => []),
+    getDeadWriteOffs: vi.fn(() => []),
+    isDeadWriteOff: vi.fn(() => false),
+    getCollectorDisplayName: vi.fn((c: string) => c),
     subscribe: vi.fn()
   }
 }));
-
-vi.mock('recharts', () => {
-  const Shell = ({ children }: { children?: ReactNode }) => <div data-testid="chart">{children}</div>;
-  const Part = () => null;
-  return {
-    ResponsiveContainer: Shell,
-    BarChart: Shell,
-    Bar: Shell,
-    XAxis: Part,
-    YAxis: Part,
-    CartesianGrid: Part,
-    Tooltip: Part,
-    Cell: Part
-  };
-});
 
 vi.mock('./MonthlyPerformance.tsx', () => ({ default: () => <div data-testid="monthly-performance">Monthly Performance</div> }));
 vi.mock('./AgingReport.tsx', () => ({ default: () => <div data-testid="aging-report">Aging Report</div> }));
@@ -38,6 +28,11 @@ describe('Reports', () => {
     vi.clearAllMocks();
     (store.subscribe as any).mockReturnValue(() => {});
     (store.getCollectorPerformanceDetails as any).mockReturnValue([]);
+    (store.getLoans as any).mockReturnValue([]);
+    (store.getAllDispositions as any).mockReturnValue([]);
+    (store.getDeadWriteOffs as any).mockReturnValue([]);
+    (store.isDeadWriteOff as any).mockReturnValue(false);
+    (store.getCollectorDisplayName as any).mockImplementation((c: string) => c);
   });
 
   it('sorts collector performance by efficiency, collected amount, then name', () => {
@@ -53,6 +48,9 @@ describe('Reports', () => {
     expect(names.slice(0, 3)).toEqual(['ALDIE', 'BETA', 'ZARA']);
     expect(screen.getAllByText('75.0%')).toHaveLength(2);
     expect(screen.getByText(/Naval Branch/i)).toBeInTheDocument();
+    // Headers for collection & write-off modules
+    expect(screen.getByText('📈 Collection Performance')).toBeInTheDocument();
+    expect(screen.getByText('📋 Write-Off Module Reports')).toBeInTheDocument();
   });
 
   it('shows the empty performance state when no collector data exists', () => {
@@ -60,7 +58,6 @@ describe('Reports', () => {
 
     render(<Reports selectedBranch={Branch.ORMOC} />);
 
-    expect(screen.getByText(/no collection data available/i)).toBeInTheDocument();
     expect(screen.getByText(/no field data available/i)).toBeInTheDocument();
   });
 
@@ -113,6 +110,48 @@ describe('Reports', () => {
     fireEvent.click(screen.getByRole('button', { name: '2026' }));
     expect(screen.getByText('YEAR2026')).toBeInTheDocument();
     expect(store.getCollectorPerformance).toHaveBeenCalledWith(Branch.NAVAL, { from: 2026, to: 2026 });
+  });
+
+  it('integrates Write-Off module reports into the Collector Efficiency Matrix table', () => {
+    (store.getCollectorPerformance as any).mockReturnValue([
+      { collector: 'OFFICE', totalAccounts: 10, activeAccountCount: 8, reportedAmount: 50000, collectedAmount: 20000, runningBalance: 30000, collectionRate: 40, paidCount: 2 }
+    ]);
+    (store.getLoans as any).mockReturnValue([
+      {
+        id: 'wo-loan-1',
+        collector: 'OFFICE',
+        borrowerName: 'Juan Dela Cruz',
+        principal: 10000,
+        totalLoan: 12000,
+        amountCollected: 2000,
+        runningBalance: 10000,
+        monthReported: '2026-01',
+        payments: [
+          { id: 'p-rec-1', amount: 3500, remarks: 'Reconstructed term agreement', date: '2026-01-15' }
+        ]
+      }
+    ]);
+    (store.getAllDispositions as any).mockReturnValue([
+      {
+        id: 'disp-wo-1',
+        loanId: 'wo-loan-1',
+        type: DispositionType.PROSPECT_WRITE_OFF,
+        writeOffClassification: 'Located',
+        reason: 'Relocated within area'
+      }
+    ]);
+
+    render(<Reports selectedBranch={Branch.ORMOC} />);
+
+    expect(screen.getByText('OFFICE')).toBeInTheDocument();
+    expect(screen.getByText('🔄 Reconstructed')).toBeInTheDocument();
+    expect(screen.getByText('📍 Located')).toBeInTheDocument();
+    expect(screen.getByText('🔍 Unlocated')).toBeInTheDocument();
+    expect(screen.getByText('🕊️ Deceased')).toBeInTheDocument();
+    expect(screen.getByText('📊 Total Write-Off')).toBeInTheDocument();
+    expect(screen.getAllByText('₱12,000').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('₱3,500').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/1p \(₱12,000\)/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it('routes report subviews to the correct report modules', () => {

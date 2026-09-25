@@ -307,7 +307,7 @@ describe('PaymentForm', () => {
     (store.addDisposition as any).mockResolvedValue({});
 
     fireEvent.change(screen.getByPlaceholderText('0'), { target: { value: '500' } });
-    fireEvent.click(screen.getByRole('button', { name: /write-off/i }));
+    fireEvent.click(screen.getByRole('button', { name: /write-off module/i }));
     fireEvent.click(screen.getByText(/post payment now/i));
     fireEvent.click(screen.getByText(/^yes$/i));
 

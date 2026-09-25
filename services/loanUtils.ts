@@ -94,3 +94,28 @@ export function isDeadWriteOffLoan(loan: Loan): boolean {
 
   return hasDeadIntelRemark || hasDeadPaymentRemark;
 }
+
+export function isReconstructedOutcomeLoan(loan: Loan): boolean {
+  return loan.payments.some(payment =>
+    payment.status !== PaymentStatus.REVERSED && isReconstructedPaymentRemark(payment.remarks)
+  ) || loan.remarks.some(remark => isReconstructedPaymentRemark(remark.text));
+}
+
+export function isWriteOffOutcomeLoan(loan: Loan): boolean {
+  const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
+  return hasWriteOffText(loan.actionStage) ||
+    hasWriteOffText(loan.actionNote) ||
+    loan.remarks.some(remark => hasWriteOffText(remark.text)) ||
+    loan.payments.some(payment => hasWriteOffText(payment.remarks));
+}
+
+/**
+ * Shared definition for a currently active receivable. Terminal outcomes remain
+ * in their dedicated modules and client history, but are not collectible aging.
+ */
+export function hasActiveReceivableBalance(loan: Loan): boolean {
+  return hasActiveClientBalance(loan) &&
+    !isDeadWriteOffLoan(loan) &&
+    !isReconstructedOutcomeLoan(loan) &&
+    !isWriteOffOutcomeLoan(loan);
+}

@@ -3,9 +3,32 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { store } from '../services/dataStore.ts';
 import { getLoanInsights } from '../services/geminiService.ts';
-import { MovingStatus, Branch, Loan, PaymentStatus } from '../types.ts';
-import { isDeadWriteOffLoan, isReconstructedPaymentRemark, isReportableCollectionPayment } from '../services/loanUtils.ts';
+import { MovingStatus, Branch, Loan, PaymentStatus, DispositionType, DispositionStatus, ManagementDisposition } from '../types.ts';
+import { hasActiveReceivableBalance, isDeadWriteOffLoan, isReconstructedOutcomeLoan, isReconstructedPaymentRemark, isReportableCollectionPayment, isWriteOffOutcomeLoan } from '../services/loanUtils.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
+
+const isWriteOffOrDeceasedPaymentRemark = (remarks?: string) =>
+  /\b(deceased|dead|write[-\s]?off)\b/i.test(remarks || '');
+
+const calculateWriteOffFinancials = (loan: Loan) => {
+  const totalLoan = Number(loan.totalLoan || loan.outstandingBalance || loan.runningBalance || 0);
+  const activePayments = (loan.payments || []).filter(payment => payment.status !== PaymentStatus.REVERSED);
+  const activePaymentTotal = activePayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const sourceCollectedAdjustment = Math.max(0, Number(loan.amountCollected || 0) - activePaymentTotal);
+  const cashPaymentTotal = activePayments
+    .filter(isReportableCollectionPayment)
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const amountCollected = sourceCollectedAdjustment + cashPaymentTotal;
+  const balanceBeforeWriteOff = Math.max(0, totalLoan - amountCollected);
+  const recordedOutcomeAmount = activePayments
+    .filter(payment => isWriteOffOrDeceasedPaymentRemark(payment.remarks))
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const amountWriteOffOrDeceased = recordedOutcomeAmount > 0
+    ? Math.min(balanceBeforeWriteOff, recordedOutcomeAmount)
+    : balanceBeforeWriteOff;
+
+  return { totalLoan, amountCollected, amountWriteOffOrDeceased };
+};
 
 interface DashboardProps {
   selectedBranch: Branch;
@@ -20,45 +43,82 @@ const KpiCard: React.FC<{ title: string; value: string | number; subValue?: stri
   };
 
   return (
-    <div className="bg-white dark:bg-slate-800 p-6 rounded-[1.5rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col justify-between h-full transition-colors duration-300 relative overflow-hidden group mt-2">
-        <div className="flex justify-between items-start mb-6 relative z-10">
-            <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-xl shadow-inner border border-slate-100 dark:border-slate-700 group-hover:scale-110 transition-transform duration-300">
+    <div className="bg-white dark:bg-slate-800 p-3.5 md:p-4 rounded-xl shadow-[0_2px_10px_-2px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 flex flex-col justify-between h-full transition-colors duration-300 relative overflow-hidden group">
+        <div className="flex justify-between items-start mb-2.5 relative z-10">
+            <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-sm shadow-inner border border-slate-100 dark:border-slate-700 group-hover:scale-105 transition-transform duration-300">
                     {icon}
                 </div>
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{title}</span>
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{title}</span>
             </div>
             {statusIndicator && (
-                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${statusStyles[statusIndicator.type]}`}>
+                <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${statusStyles[statusIndicator.type]}`}>
                     {statusIndicator.text}
                 </span>
             )}
         </div>
         <div className="flex justify-between items-end relative z-10">
             <div className="flex flex-col">
-                <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{value}</span>
+                <span className="text-xl sm:text-2xl font-black text-slate-800 dark:text-white tracking-tight">{value}</span>
                 {subValue && (
-                  <span className={`${subValueEmphasis ? 'text-xl font-black text-emerald-700 dark:text-emerald-300' : 'text-xs font-semibold text-slate-400 dark:text-slate-500'} mt-1`}>
+                  <span className={`${subValueEmphasis ? 'text-xs sm:text-sm font-bold text-emerald-700 dark:text-emerald-300' : 'text-[11px] font-semibold text-slate-400 dark:text-slate-500'} mt-0.5`}>
                     {subValue}
                   </span>
                 )}
             </div>
         </div>
-        <div className="absolute -bottom-6 -right-4 text-8xl opacity-[0.03] grayscale pointer-events-none group-hover:scale-110 transition-transform duration-500">{icon}</div>
+        <div className="absolute -bottom-4 -right-2 text-6xl opacity-[0.03] grayscale pointer-events-none group-hover:scale-105 transition-transform duration-500">{icon}</div>
     </div>
   );
 };
 
-const SecondaryMetricCard: React.FC<{ title: string; value: string | number; subline: string; color: string }> = ({ title, value, subline, color }) => (
-    <div className="bg-white dark:bg-slate-800 py-4 px-6 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between shadow-sm">
-        <div className="flex flex-col">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1">{title}</span>
-            <span className={`text-xl font-black ${color}`}>{value}</span>
-        </div>
-        <div className="text-right flex flex-col items-end">
-            <span className="text-xs font-bold text-slate-500 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-md">{subline}</span>
-        </div>
+const SecondaryMetricCard: React.FC<{
+  title: string;
+  count: number;
+  reportedAmount: number;
+  secondaryLabel: string;
+  secondaryAmount: number;
+  color?: string;
+  accentBar?: string;
+  footerNote?: string;
+}> = ({
+  title,
+  count,
+  reportedAmount,
+  secondaryLabel,
+  secondaryAmount,
+  color = 'text-slate-800 dark:text-white',
+  accentBar,
+  footerNote
+}) => (
+  <div className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col justify-between shadow-xs relative overflow-hidden transition-colors duration-300">
+    <div className="flex items-center justify-between gap-1 mb-2 z-10">
+      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider truncate">
+        {title}
+      </span>
+      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200/50 dark:border-slate-700 whitespace-nowrap">
+        {count} {count === 1 ? 'Client' : 'Clients'}
+      </span>
     </div>
+
+    <div className="space-y-1 z-10">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="text-slate-500 dark:text-slate-400 font-medium">Amt. Reported:</span>
+        <span className="font-bold text-slate-700 dark:text-slate-300 tabular-nums">₱{reportedAmount.toLocaleString()}</span>
+      </div>
+      <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 dark:border-slate-700/60">
+        <span className="text-slate-500 dark:text-slate-400 font-medium">{secondaryLabel}:</span>
+        <span className={`font-black tabular-nums ${color}`}>₱{secondaryAmount.toLocaleString()}</span>
+      </div>
+      {footerNote && (
+        <div className="text-[8px] font-medium text-slate-400 italic text-right pt-0.5">
+          {footerNote}
+        </div>
+      )}
+    </div>
+
+    {accentBar && <div className={`absolute top-0 right-0 w-1 h-full ${accentBar}`}></div>}
+  </div>
 );
 
 const getRecordedLoanAmount = (loan: Loan) =>
@@ -84,27 +144,6 @@ const getReportableCollectedAmount = (loan: Loan) =>
   Math.max(Number(loan.amountCollected || 0), (loan.payments || [])
     .filter(isReportableCollectionPayment)
     .reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
-
-const hasReconstructedOutcome = (loan: Loan) =>
-  (loan.payments || []).some(payment =>
-    payment.status !== PaymentStatus.REVERSED && isReconstructedPaymentRemark(payment.remarks)
-  ) ||
-  (loan.remarks || []).some(remark => isReconstructedPaymentRemark(remark.text));
-
-const hasWriteOffOutcome = (loan: Loan) => {
-  const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
-  return hasWriteOffText(loan.actionStage) ||
-    hasWriteOffText(loan.actionNote) ||
-    (loan.remarks || []).some(remark => hasWriteOffText(remark.text)) ||
-    (loan.payments || []).some(payment => hasWriteOffText(payment.remarks));
-};
-
-const hasDashboardActiveBalance = (loan: Loan) =>
-  Number(loan.runningBalance || 0) > 0 &&
-  loan.status !== MovingStatus.PAID &&
-  !isDeadWriteOffLoan(loan) &&
-  !hasReconstructedOutcome(loan) &&
-  !hasWriteOffOutcome(loan);
 
 const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   const [allLoans, setAllLoans] = useState(store.getLoans(selectedBranch));
@@ -157,7 +196,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
         dead.push(l);
         return;
       }
-      if (hasReconstructedOutcome(l) || hasWriteOffOutcome(l)) return;
+      if (isReconstructedOutcomeLoan(l) || isWriteOffOutcomeLoan(l)) return;
       perf.push(l);
     });
     return { performanceLoans: perf, deadWriteOffLoans: dead };
@@ -165,18 +204,18 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
 
   const stats = useMemo(() => {
     const totalAccounts = loans.length;
-    const activeAccounts = loans.filter(hasDashboardActiveBalance);
+    const activeAccounts = loans.filter(hasActiveReceivableBalance);
     const activeAccountCount = activeAccounts.length;
     
     const totalCollected = performanceLoans.reduce((sum, l) => sum + getReportableCollectedAmount(l), 0);
     const totalLoanAmount = performanceLoans.reduce((sum, l) => sum + getLedgerLoanAmount(l), 0);
     const totalReportedAmount = performanceLoans.reduce((sum, l) => sum + l.outstandingBalance, 0);
     const totalRunning = performanceLoans.reduce((sum, l) => sum + l.runningBalance, 0);
-    const statusData: Record<string, { count: number; amount: number }> = {
-      Paid: { count: 0, amount: 0 },
-      Moving: { count: 0, amount: 0 },
-      NM: { count: 0, amount: 0 },
-      NMSR: { count: 0, amount: 0 },
+    const statusData: Record<string, { count: number; amount: number; reported: number; balance: number; collected: number }> = {
+      Paid: { count: 0, amount: 0, reported: 0, balance: 0, collected: 0 },
+      Moving: { count: 0, amount: 0, reported: 0, balance: 0, collected: 0 },
+      NM: { count: 0, amount: 0, reported: 0, balance: 0, collected: 0 },
+      NMSR: { count: 0, amount: 0, reported: 0, balance: 0, collected: 0 },
     };
     const statusKeyMap: Record<string, string> = {
       [MovingStatus.PAID]: 'Paid',
@@ -187,28 +226,148 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     performanceLoans.forEach(l => {
       const key = statusKeyMap[l.status];
       if (key && statusData[key]) {
+        const collected = getReportableCollectedAmount(l);
         statusData[key].count++;
-        statusData[key].amount += (l.status === MovingStatus.PAID ? getReportableCollectedAmount(l) : l.runningBalance);
+        statusData[key].reported += Number(l.outstandingBalance || 0);
+        statusData[key].balance += Number(l.runningBalance || 0);
+        statusData[key].collected += collected;
+        statusData[key].amount += (l.status === MovingStatus.PAID ? collected : l.runningBalance);
       }
     });
     const deadWriteOff = {
       count: deadWriteOffLoans.length,
-      amount: deadWriteOffLoans.reduce((sum, l) => sum + getLedgerLoanAmount(l), 0)
+      amount: deadWriteOffLoans.reduce((sum, l) => sum + getLedgerLoanAmount(l), 0),
+      reported: deadWriteOffLoans.reduce((sum, l) => sum + Number(l.outstandingBalance || 0), 0)
     };
     let reconAmount = 0;
+    let reconReportedAmount = 0;
     const uniqueReconLoans = new Set<string>();
     allLoans.forEach(loan => {
+      let isRecon = false;
       (loan.payments || []).forEach(payment => {
         if (payment.status !== PaymentStatus.REVERSED && isReconstructedPaymentRemark(payment.remarks)) {
-          uniqueReconLoans.add(loan.id);
+          isRecon = true;
           reconAmount += Number(payment.amount || 0);
         }
       });
+      if (loan.remarks?.some(r => isReconstructedPaymentRemark(r.text))) {
+        isRecon = true;
+      }
+      if (isRecon) {
+        uniqueReconLoans.add(loan.id);
+        reconReportedAmount += Number(loan.outstandingBalance || 0);
+      }
     });
-    const reconstructedStats = { count: uniqueReconLoans.size, amount: reconAmount };
+    const reconstructedStats = { count: uniqueReconLoans.size, amount: reconAmount, reported: reconReportedAmount };
 
     return { totalAccounts, activeAccountCount, totalCollected, totalLoanAmount, totalReportedAmount, totalRunning, statusData, deadWriteOff, reconstructedStats };
   }, [loans, performanceLoans, deadWriteOffLoans, allLoans]);
+
+  // --- Compute Write-Off Module Reports stats ---
+  const writeOffStats = useMemo(() => {
+    const loansById = new Map<string, Loan>(allLoans.map(l => [l.id, l]));
+    const dispositions = store.getAllDispositions ? store.getAllDispositions() : [];
+    const deadLoans = store.getDeadWriteOffs ? store.getDeadWriteOffs(selectedBranch) : [];
+
+    const latestProspectByLoan = new Map<string, ManagementDisposition>();
+
+    dispositions
+      .filter(d => d.type === DispositionType.PROSPECT_WRITE_OFF || d.type === DispositionType.DEAD_ACCOUNT)
+      .forEach(d => {
+        if (!latestProspectByLoan.has(d.loanId)) {
+          latestProspectByLoan.set(d.loanId, d);
+        }
+      });
+
+    deadLoans.forEach(deadLoan => {
+      if (!latestProspectByLoan.has(deadLoan.id)) {
+        const deadIntel = deadLoan.remarks?.find(r => /\b(dead|deceased)\b/i.test(r.text));
+        const deadPayment = deadLoan.payments?.find(p => p.remarks && /\b(dead|deceased)\b/i.test(p.remarks));
+        let reason = 'Deceased borrower (Full Settlement)';
+        if (deadPayment?.remarks) reason = `[Payment] ${deadPayment.remarks}`;
+        else if (deadIntel?.text) reason = deadIntel.text;
+        else if (deadLoan.remarks?.length) reason = deadLoan.remarks[deadLoan.remarks.length - 1].text;
+
+        const date = deadLoan.lastPaidDate ||
+          (deadLoan.payments?.length ? deadLoan.payments[deadLoan.payments.length - 1].date : null) ||
+          (deadIntel ? deadIntel.timestamp : new Date().toISOString());
+
+        const syntheticDisp: ManagementDisposition = {
+          id: `dead-auto-${deadLoan.id}`,
+          loanId: deadLoan.id,
+          type: DispositionType.DEAD_ACCOUNT,
+          reason,
+          evidence: ['Deceased borrower'],
+          writeOffClassification: undefined,
+          status: DispositionStatus.PENDING_REVIEW,
+          decidedBy: 'System / Field Intel',
+          decisionDate: date || new Date().toISOString()
+        };
+        latestProspectByLoan.set(deadLoan.id, syntheticDisp);
+        loansById.set(deadLoan.id, deadLoan);
+      }
+    });
+
+    const summary = {
+      located: { count: 0, amount: 0, pending: { count: 0, amount: 0 }, official: { count: 0, amount: 0 } },
+      unlocated: { count: 0, amount: 0, pending: { count: 0, amount: 0 }, official: { count: 0, amount: 0 } },
+      deceased: { count: 0, amount: 0 },
+      total: { count: 0, amount: 0 }
+    };
+
+    latestProspectByLoan.forEach((disposition, loanId) => {
+      const loan = loansById.get(loanId);
+      if (!loan) return;
+
+      const isDeceased =
+        disposition.type === DispositionType.DEAD_ACCOUNT ||
+        (disposition.evidence || []).includes('Deceased borrower') ||
+        /\b(dead|deceased)\b/i.test(disposition.reason || '') ||
+        loan.remarks?.some(r => /\b(dead|deceased)\b/i.test(r.text)) ||
+        loan.payments?.some(p => p.remarks && /\b(dead|deceased)\b/i.test(p.remarks)) ||
+        (store.isDeadWriteOff && store.isDeadWriteOff(loan));
+
+      const isUnlocated = !isDeceased && (
+        disposition.writeOffClassification === 'Unlocated' ||
+        (disposition.evidence || []).includes('Relocated/Not located')
+      );
+
+      const isLocated = !isDeceased && !isUnlocated;
+      const isOfficial = disposition.status === DispositionStatus.APPROVED || disposition.status === DispositionStatus.EXECUTED;
+
+      const fin = calculateWriteOffFinancials(loan);
+
+      if (isDeceased) {
+        summary.deceased.count += 1;
+        summary.deceased.amount += fin.amountWriteOffOrDeceased;
+      } else if (isUnlocated) {
+        summary.unlocated.count += 1;
+        summary.unlocated.amount += fin.amountWriteOffOrDeceased;
+        if (isOfficial) {
+          summary.unlocated.official.count += 1;
+          summary.unlocated.official.amount += fin.amountWriteOffOrDeceased;
+        } else {
+          summary.unlocated.pending.count += 1;
+          summary.unlocated.pending.amount += fin.amountWriteOffOrDeceased;
+        }
+      } else if (isLocated) {
+        summary.located.count += 1;
+        summary.located.amount += fin.amountWriteOffOrDeceased;
+        if (isOfficial) {
+          summary.located.official.count += 1;
+          summary.located.official.amount += fin.amountWriteOffOrDeceased;
+        } else {
+          summary.located.pending.count += 1;
+          summary.located.pending.amount += fin.amountWriteOffOrDeceased;
+        }
+      }
+
+      summary.total.count += 1;
+      summary.total.amount += fin.amountWriteOffOrDeceased;
+    });
+
+    return summary;
+  }, [allLoans, selectedBranch]);
 
   // --- Compute collector performance from filtered loans ---
   const collectorData = useMemo(() => {
@@ -376,6 +535,12 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       ['Paid', stats.statusData.Paid.amount, stats.statusData.Paid.count],
       ['NM Since Release', stats.statusData.NMSR.amount, stats.statusData.NMSR.count],
       [],
+      ['WRITE-OFF MODULE REPORTS', 'Amount', 'Accounts', 'Pending Review', 'Approved'],
+      ['Located Write-Off', writeOffStats.located.amount, writeOffStats.located.count, `₱${writeOffStats.located.pending.amount.toLocaleString()} (${writeOffStats.located.pending.count})`, `₱${writeOffStats.located.official.amount.toLocaleString()} (${writeOffStats.located.official.count})`],
+      ['Unlocated Write-Off', writeOffStats.unlocated.amount, writeOffStats.unlocated.count, `₱${writeOffStats.unlocated.pending.amount.toLocaleString()} (${writeOffStats.unlocated.pending.count})`, `₱${writeOffStats.unlocated.official.amount.toLocaleString()} (${writeOffStats.unlocated.official.count})`],
+      ['Deceased Accounts', writeOffStats.deceased.amount, writeOffStats.deceased.count, '—', '—'],
+      ['Total Write-Off Portfolio', writeOffStats.total.amount, writeOffStats.total.count, '—', '—'],
+      [],
       ['COLLECTOR PERFORMANCE MATRIX'],
       ['Collector', 'Total Accounts', 'Reported Amount', 'Collected Amount', 'Running Balance', 'Collection Rate (%)', 'Paid Count'],
       ...sortedCollectorData.map(cd => [
@@ -518,38 +683,38 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn max-w-[1600px] mx-auto pb-10">
+    <div className="space-y-3.5 animate-fadeIn max-w-[1600px] mx-auto pb-10">
       
       {/* Header SECTION */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2rem] shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl shadow-[0_2px_12px_-3px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700">
         <div>
-           <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Institutional Performance Matrix</h1>
-           <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1.5 flex items-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+           <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Institutional Performance Matrix</h1>
+           <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
               Daily Settlement & Portfolio Overview — As of {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
            </p>
         </div>
-        <div className="flex items-center gap-3 w-full md:w-auto">
+        <div className="flex items-center gap-2.5 w-full md:w-auto">
            <button
               onClick={() => setDateFilter(f => f === 'all' ? 'last30' : 'all')}
-              className={`flex-1 md:flex-none px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-sm ${
+              className={`flex-1 md:flex-none px-4 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all shadow-xs ${
                 dateFilter === 'last30'
                   ? 'bg-emerald-600 text-white border border-emerald-600 hover:bg-emerald-700'
                   : 'border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300'
               }`}
            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
               {dateFilter === 'last30' ? '✓ Last 30 Days' : 'Last 30 Days'}
            </button>
-           <button onClick={handleExportExcel} className="flex-1 md:flex-none bg-[#064e3b] hover:bg-[#043326] text-white px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+           <button onClick={handleExportExcel} className="flex-1 md:flex-none bg-[#064e3b] hover:bg-[#043326] text-white px-4 py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-95">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
               Export Excel
            </button>
         </div>
       </div>
 
       {/* KPI Cards (Top Summary) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
         <KpiCard
           title="Total Accounts"
           value={stats.totalAccounts}
@@ -565,34 +730,189 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       </div>
 
       {/* Secondary Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mt-6">
-        <SecondaryMetricCard title="Moving" value={`₱${stats.statusData.Moving.amount.toLocaleString()}`} subline={`${stats.statusData.Moving.count} Clients`} color="text-slate-800 dark:text-white" />
-        <SecondaryMetricCard title="Not Moving" value={`₱${stats.statusData.NM.amount.toLocaleString()}`} subline={`${stats.statusData.NM.count} Clients`} color="text-slate-800 dark:text-white" />
-        <SecondaryMetricCard title="NM Since Release" value={`₱${stats.statusData.NMSR.amount.toLocaleString()}`} subline={`${stats.statusData.NMSR.count} Clients`} color="text-red-500 dark:text-red-400" />
-        
-        <div className="bg-white dark:bg-slate-800 py-4 px-6 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between shadow-sm relative overflow-hidden">
-          <div className="flex flex-col z-10">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1">Reconstructed</span>
-            <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">₱{stats.reconstructedStats.amount.toLocaleString()}</span>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2.5">
+        <SecondaryMetricCard
+          title="Moving"
+          count={stats.statusData.Moving.count}
+          reportedAmount={stats.statusData.Moving.reported}
+          secondaryLabel="Total Balance"
+          secondaryAmount={stats.statusData.Moving.balance}
+          color="text-slate-800 dark:text-white"
+        />
+        <SecondaryMetricCard
+          title="Not Moving"
+          count={stats.statusData.NM.count}
+          reportedAmount={stats.statusData.NM.reported}
+          secondaryLabel="Total Balance"
+          secondaryAmount={stats.statusData.NM.balance}
+          color="text-slate-800 dark:text-white"
+        />
+        <SecondaryMetricCard
+          title="NM Since Release"
+          count={stats.statusData.NMSR.count}
+          reportedAmount={stats.statusData.NMSR.reported}
+          secondaryLabel="Total Balance"
+          secondaryAmount={stats.statusData.NMSR.balance}
+          color="text-red-500 dark:text-red-400"
+        />
+        <SecondaryMetricCard
+          title="Reconstructed"
+          count={stats.reconstructedStats.count}
+          reportedAmount={stats.reconstructedStats.reported}
+          secondaryLabel="Amt. Reconstructed"
+          secondaryAmount={stats.reconstructedStats.amount}
+          color="text-emerald-600 dark:text-emerald-400"
+          accentBar="bg-emerald-400 dark:bg-emerald-600"
+        />
+        <SecondaryMetricCard
+          title="Paid"
+          count={stats.statusData.Paid.count}
+          reportedAmount={stats.statusData.Paid.reported}
+          secondaryLabel="Amt. Paid"
+          secondaryAmount={stats.statusData.Paid.collected}
+          color="text-emerald-600 dark:text-emerald-400"
+          accentBar="bg-emerald-500"
+        />
+        <SecondaryMetricCard
+          title="Deceased Clients"
+          count={stats.deadWriteOff.count}
+          reportedAmount={stats.deadWriteOff.reported}
+          secondaryLabel="Total Loan"
+          secondaryAmount={stats.deadWriteOff.amount}
+          color="text-slate-400 dark:text-slate-500"
+          accentBar="bg-slate-300 dark:bg-slate-600"
+          footerNote="Excluded from stats"
+        />
+      </div>
+
+      {/* Write-Off Module Reports Overview Panel */}
+      <div className="bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl shadow-[0_2px_12px_-3px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3.5 gap-2.5 border-b border-slate-100 dark:border-slate-700/50 pb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 flex items-center justify-center font-bold text-sm shadow-xs">
+                📋
+              </div>
+              <h2 className="text-lg font-bold text-slate-800 dark:text-white">Write-Off Module Reports</h2>
+            </div>
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+              Terminal accounts & write-off portfolio summary for {selectedBranch}
+            </p>
           </div>
-          <div className="text-right flex flex-col items-end z-10">
-            <span className="text-xs font-bold text-slate-500 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-md">{stats.reconstructedStats.count} Client{stats.reconstructedStats.count !== 1 ? 's' : ''}</span>
+          <div className="flex items-center gap-2 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/60 dark:border-purple-800/40 px-3 py-1 rounded-lg">
+            <span className="text-xs font-black text-purple-700 dark:text-purple-300">
+              📊 Total Write-Off: ₱{writeOffStats.total.amount.toLocaleString()}
+            </span>
+            <span className="text-[10px] font-bold text-purple-600/80 dark:text-purple-400/80 bg-purple-100 dark:bg-purple-900/50 px-1.5 py-0.5 rounded">
+              {writeOffStats.total.count} Accounts
+            </span>
           </div>
-          <div className="absolute top-0 right-0 w-1 h-full bg-emerald-400 dark:bg-emerald-600"></div>
         </div>
 
-        <SecondaryMetricCard title="Paid" value={`₱${stats.statusData.Paid.amount.toLocaleString()}`} subline={`${stats.statusData.Paid.count} Clients`} color="text-emerald-600 dark:text-emerald-400" />
-        
-        <div className="bg-white dark:bg-slate-800 py-4 px-6 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between shadow-sm relative overflow-hidden">
-          <div className="flex flex-col z-10">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1">Deceased Clients</span>
-            <span className="text-xl font-black text-slate-400 dark:text-slate-500">₱{stats.deadWriteOff.amount.toLocaleString()}</span>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Located Write-Off */}
+          <div className="bg-slate-50/70 dark:bg-slate-900/50 p-3.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-blue-200 dark:hover:border-blue-900/50 transition-all shadow-xs">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1">
+                  📍 Located Write-Off
+                </span>
+                <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
+                  {writeOffStats.located.count} Acct{writeOffStats.located.count !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="text-xl font-black text-slate-900 dark:text-white tabular-nums">
+                ₱{writeOffStats.located.amount.toLocaleString()}
+              </div>
+            </div>
+            
+            <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1 text-[9px] font-bold">
+              <div className="flex items-center justify-between text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-200/40 dark:border-amber-800/40">
+                <span className="flex items-center gap-1">⏳ Pending Review</span>
+                <span>{writeOffStats.located.pending.count} (₱{writeOffStats.located.pending.amount.toLocaleString()})</span>
+              </div>
+              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200/40 dark:border-emerald-800/40">
+                <span className="flex items-center gap-1">✓ Officially Approved</span>
+                <span>{writeOffStats.located.official.count} (₱{writeOffStats.located.official.amount.toLocaleString()})</span>
+              </div>
+            </div>
+            <div className="absolute top-0 right-0 w-1 h-full bg-blue-500"></div>
           </div>
-          <div className="text-right flex flex-col items-end z-10">
-            <span className="text-xs font-bold text-slate-500 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-md">{stats.deadWriteOff.count} Client{stats.deadWriteOff.count !== 1 ? 's' : ''}</span>
-            <span className="text-[9px] font-semibold text-slate-400 mt-1 italic">Excluded from stats</span>
+
+          {/* Unlocated Write-Off */}
+          <div className="bg-slate-50/70 dark:bg-slate-900/50 p-3.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-amber-200 dark:hover:border-amber-900/50 transition-all shadow-xs">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-black text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                  🔍 Unlocated Write-Off
+                </span>
+                <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
+                  {writeOffStats.unlocated.count} Acct{writeOffStats.unlocated.count !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="text-xl font-black text-slate-900 dark:text-white tabular-nums">
+                ₱{writeOffStats.unlocated.amount.toLocaleString()}
+              </div>
+            </div>
+            
+            <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1 text-[9px] font-bold">
+              <div className="flex items-center justify-between text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-200/40 dark:border-amber-800/40">
+                <span className="flex items-center gap-1">⏳ Pending Review</span>
+                <span>{writeOffStats.unlocated.pending.count} (₱{writeOffStats.unlocated.pending.amount.toLocaleString()})</span>
+              </div>
+              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200/40 dark:border-emerald-800/40">
+                <span className="flex items-center gap-1">✓ Officially Approved</span>
+                <span>{writeOffStats.unlocated.official.count} (₱{writeOffStats.unlocated.official.amount.toLocaleString()})</span>
+              </div>
+            </div>
+            <div className="absolute top-0 right-0 w-1 h-full bg-amber-500"></div>
           </div>
-          <div className="absolute top-0 right-0 w-1 h-full bg-slate-300 dark:bg-slate-600"></div>
+
+          {/* Deceased Clients */}
+          <div className="bg-slate-50/70 dark:bg-slate-900/50 p-3.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-purple-200 dark:hover:border-purple-900/50 transition-all shadow-xs">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-black text-purple-700 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1">
+                  🕊️ Deceased Accounts
+                </span>
+                <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
+                  {writeOffStats.deceased.count} Acct{writeOffStats.deceased.count !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="text-xl font-black text-slate-900 dark:text-white tabular-nums">
+                ₱{writeOffStats.deceased.amount.toLocaleString()}
+              </div>
+            </div>
+            
+            <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-purple-50/50 dark:bg-purple-950/30 px-1.5 py-1 rounded">
+              <span>Direct Settlement Filing</span>
+              <span className="font-bold text-purple-700 dark:text-purple-300">Terminal status</span>
+            </div>
+            <div className="absolute top-0 right-0 w-1 h-full bg-purple-500"></div>
+          </div>
+
+          {/* Total Write-Off Portfolio */}
+          <div className="bg-purple-50/60 dark:bg-purple-950/30 p-3.5 rounded-xl border border-purple-200/70 dark:border-purple-800/60 flex flex-col justify-between relative overflow-hidden group shadow-xs">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-black text-purple-900 dark:text-purple-200 uppercase tracking-wider flex items-center gap-1">
+                  📊 Total Write-Off
+                </span>
+                <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-purple-200 dark:border-purple-700">
+                  {writeOffStats.total.count} Total Accts
+                </span>
+              </div>
+              <div className="text-xl font-black text-purple-950 dark:text-purple-100 tabular-nums">
+                ₱{writeOffStats.total.amount.toLocaleString()}
+              </div>
+            </div>
+            
+            <div className="mt-3 pt-2 border-t border-purple-200/70 dark:border-purple-800/60 flex items-center justify-between text-[9px] font-bold text-purple-800 dark:text-purple-300">
+              <span>Full Portfolio Write-Off</span>
+              <span>Located + Unlocated + Deceased</span>
+            </div>
+            <div className="absolute top-0 right-0 w-1 h-full bg-purple-600"></div>
+          </div>
         </div>
       </div>
 

@@ -380,6 +380,7 @@ export interface ManagementDisposition {
   type: DispositionType;
   reason: string;
   evidence: string[];
+  writeOffClassification?: 'Located' | 'Unlocated';
   status: DispositionStatus;
   decidedBy: string;
   decisionDate: string;

@@ -394,6 +394,7 @@ class DataStore {
         type: d.type as DispositionType,
         reason: d.reason,
         evidence: typeof d.evidence === 'string' ? JSON.parse(d.evidence) : d.evidence,
+        writeOffClassification: d.write_off_classification || d.writeOffClassification,
         status: d.status as DispositionStatus,
         decidedBy: d.decided_by,
         decisionDate: d.decision_date
@@ -1950,11 +1951,10 @@ class DataStore {
       const terminalOutcome = isTerminalOutcome(loan);
       const isActiveAccount = Number(loan.runningBalance || 0) > 0 && loan.status !== MovingStatus.PAID && !terminalOutcome;
       if (isActiveAccount) p.activeAccountCount = (p.activeAccountCount || 0) + 1;
-      if (terminalOutcome) return;
 
-      p.reportedAmount += loan.outstandingBalance;
-
-      // Only count payments made on or after the month the loan was reported
+      // Only count genuine cash payments made on or after the month the loan was reported.
+      // This is evaluated before terminal outcomes so genuine cash from a Deceased,
+      // Reconstructed, or officially Written-Off account remains credited.
       const reportedStart = loan.monthReported ? new Date(loan.monthReported + '-01').getTime() : 0;
       const activePayments = (loan.payments || []).filter(isReportableCollectionPayment);
       const collectedSinceReported = activePayments
@@ -1962,7 +1962,10 @@ class DataStore {
         .reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
 
       p.collectedAmount += collectedSinceReported;
-      // Balance = Target - Collected (so Target = Collected + Balance always)
+      if (terminalOutcome) return;
+
+      p.reportedAmount += loan.outstandingBalance;
+      // Eligible account balance after genuine post-reported collections.
       p.runningBalance += Math.max(0, loan.outstandingBalance - collectedSinceReported);
       if (loan.status === MovingStatus.PAID) p.paidCount++;
     });
@@ -1995,6 +1998,12 @@ class DataStore {
         return this.getCollectorDisplayName(loan.collector) === collector;
       })
       .map(loan => {
+        const reportedStart = loan.monthReported ? new Date(loan.monthReported + '-01').getTime() : 0;
+        const collectedSinceReported = (loan.payments || [])
+          .filter(isReportableCollectionPayment)
+          .filter(pay => new Date(pay.date).getTime() >= reportedStart)
+          .reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
+
         if (isTerminalOutcome(loan)) {
           return {
             loanId: loan.id,
@@ -2003,16 +2012,10 @@ class DataStore {
             monthReported: loan.monthReported,
             status: loan.status,
             reportedAmount: 0,
-            collectedAmount: 0,
+            collectedAmount: collectedSinceReported,
             runningBalance: 0
           };
         }
-
-        const reportedStart = loan.monthReported ? new Date(loan.monthReported + '-01').getTime() : 0;
-        const collectedSinceReported = (loan.payments || [])
-          .filter(isReportableCollectionPayment)
-          .filter(pay => new Date(pay.date).getTime() >= reportedStart)
-          .reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
 
         return {
           loanId: loan.id,
@@ -2361,7 +2364,15 @@ class DataStore {
     return [...this.managementDispositions].sort((a, b) => new Date(b.decisionDate).getTime() - new Date(a.decisionDate).getTime());
   }
 
-  async addDisposition(loanId: string, type: DispositionType, reason: string, evidence: string[], decidedBy: string, role: string): Promise<ManagementDisposition> {
+  async addDisposition(
+    loanId: string, 
+    type: DispositionType, 
+    reason: string, 
+    evidence: string[], 
+    decidedBy: string, 
+    role: string,
+    writeOffClassification?: 'Located' | 'Unlocated'
+  ): Promise<ManagementDisposition> {
     const loan = this.loans.find(l => l.id === loanId);
     if (!loan) throw new Error('Loan not found');
 
@@ -2371,6 +2382,7 @@ class DataStore {
       type,
       reason,
       evidence,
+      writeOffClassification: writeOffClassification || undefined,
       status: DispositionStatus.PENDING_REVIEW,
       decidedBy,
       decisionDate: new Date().toISOString()
@@ -2390,7 +2402,8 @@ class DataStore {
 
       this.managementDispositions.push(newDisposition);
 
-      await this.recordHistory(loanId, 'Management Disposition', `Decided: ${type} - ${reason}. Status: Pending Review`, decidedBy, role, 'Management Disposition');
+      const classificationInfo = writeOffClassification ? ` [Classification: ${writeOffClassification}]` : '';
+      await this.recordHistory(loanId, 'Management Disposition', `Decided: ${type}${classificationInfo} - ${reason}. Status: Pending Review`, decidedBy, role, 'Management Disposition');
       this.notify();
       return newDisposition;
     } catch (e) {

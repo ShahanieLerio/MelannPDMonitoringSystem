@@ -248,7 +248,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
       if (!duplicatePayment) {
         const confirmText = selectedOption
           ? `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName} tagged as [${selectedOption}]? This account will be routed to the ${
-            selectedOption === 'Reconstruct' ? 'Reconstructed Report' : selectedOption === 'Deceased' ? 'Deceased Clients Report' : 'Write-Off Module'
+            selectedOption === 'Reconstruct' ? 'Reconstructed Report' : selectedOption === 'Deceased' ? 'Write-Off Module (Deceased)' : 'Write-Off Module'
           }.`
           : `Are you sure you want to post a payment of ₱${paymentAmount.toLocaleString()} for ${loan.borrowerName}?`;
 
@@ -677,7 +677,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ currentUser, selectedBranch, 
                               <div>
                                 <div className="font-black text-xs leading-tight">Deceased</div>
                                 <div className={`text-[9px] ${selectedOption === 'Deceased' ? 'text-purple-100' : 'text-slate-400 dark:text-slate-500'}`}>
-                                  Deceased Module
+                                  Write-Off (Deceased)
                                 </div>
                               </div>
                             </div>

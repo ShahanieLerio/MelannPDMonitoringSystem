@@ -22,6 +22,7 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
   const [type, setType] = useState<DispositionType | ''>('');
   const [reason, setReason] = useState('');
   const [evidence, setEvidence] = useState<string[]>([]);
+  const [writeOffClassification, setWriteOffClassification] = useState<'Located' | 'Unlocated' | ''>('');
   const [managementName, setManagementName] = useState(currentUser.fullName || currentUser.username);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
@@ -30,6 +31,10 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
 
   const toggleEvidence = (ev: string) => {
     setEvidence(prev => prev.includes(ev) ? prev.filter(e => e !== ev) : [...prev, ev]);
+  };
+
+  const handleClassificationSelect = (option: 'Located' | 'Unlocated') => {
+    setWriteOffClassification(prev => prev === option ? '' : option);
   };
 
   const handleSubmit = async () => {
@@ -51,7 +56,15 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
     setErrorFeedback(null);
 
     try {
-      await store.addDisposition(loan.id, type as DispositionType, reason, evidence, managementName.trim(), currentUser.role);
+      await store.addDisposition(
+        loan.id, 
+        type as DispositionType, 
+        reason, 
+        evidence, 
+        managementName.trim(), 
+        currentUser.role,
+        writeOffClassification ? (writeOffClassification as 'Located' | 'Unlocated') : undefined
+      );
       
       // Auto-update Lifecycle Stage if applicable
       const stageMap: Record<DispositionType, string> = {
@@ -64,11 +77,12 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
       };
 
       const mappedStage = stageMap[type as DispositionType];
+      const classificationText = writeOffClassification ? ` [${writeOffClassification}]` : '';
       
       const updatedLoan = { 
           ...loan, 
           actionStage: mappedStage, 
-          actionNote: `Management Disposition: ${type} - ${reason}`
+          actionNote: `Management Disposition: ${type}${classificationText} - ${reason}`
       };
       await store.updateLoan(loan.id, updatedLoan, currentUser.username, currentUser.role);
 
@@ -177,6 +191,36 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
                     className="w-4 h-4 text-rose-500 rounded focus:ring-rose-500 border-slate-300"
                   />
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{ev}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Write-off Classification</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(['Located', 'Unlocated'] as const).map(option => (
+                <label 
+                  key={option} 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleClassificationSelect(option);
+                  }}
+                  className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                    writeOffClassification === option 
+                      ? 'border-rose-500 bg-rose-50/60 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500/20' 
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                  }`}
+                >
+                  <input 
+                    type="radio" 
+                    name="writeOffClassification"
+                    value={option}
+                    checked={writeOffClassification === option} 
+                    onChange={() => {}}
+                    className="w-4 h-4 text-rose-600 focus:ring-rose-500 border-slate-300 dark:border-slate-600 cursor-pointer"
+                  />
+                  <span className="text-xs font-bold">{option}</span>
                 </label>
               ))}
             </div>

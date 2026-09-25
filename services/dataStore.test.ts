@@ -264,7 +264,7 @@ describe('DataStore Service', () => {
     });
 
     describe('Collector Performance', () => {
-        it('keeps total accounts historical while active accounts exclude paid and terminal outcomes', async () => {
+        it('removes terminal accounts from target and balance while retaining valid collections', async () => {
             const { store } = await import('./dataStore');
             const baseLoan = {
                 id: 'collector-base',
@@ -333,7 +333,33 @@ describe('DataStore Service', () => {
                 {
                     ...baseLoan,
                     id: 'collector-deceased',
-                    remarks: [{ id: 'dead-remark', text: 'Client deceased', timestamp: '2026-06-20T00:00:00.000Z', collector: 'OFFICE' }]
+                    remarks: [{ id: 'dead-remark', text: 'Client deceased', timestamp: '2026-06-20T00:00:00.000Z', collector: 'OFFICE' }],
+                    payments: [
+                        {
+                            id: 'pay-deceased-cash',
+                            loanId: 'collector-deceased',
+                            date: '2026-06-20',
+                            orNumber: 'OR-DECEASED-CASH',
+                            amount: 300,
+                            balanceAfter: 700,
+                            recorder: 'Admin',
+                            remarks: '',
+                            status: PaymentStatus.GOOD,
+                            createdAt: '2026-06-20T08:00:00.000Z'
+                        },
+                        {
+                            id: 'pay-deceased-outcome',
+                            loanId: 'collector-deceased',
+                            date: '2026-06-21',
+                            orNumber: 'OR-DECEASED-OUTCOME',
+                            amount: 700,
+                            balanceAfter: 0,
+                            recorder: 'Admin',
+                            remarks: 'Deceased settlement',
+                            status: PaymentStatus.GOOD,
+                            createdAt: '2026-06-21T08:00:00.000Z'
+                        }
+                    ]
                 },
                 {
                     ...baseLoan,
@@ -352,9 +378,16 @@ describe('DataStore Service', () => {
             expect(performance.totalAccounts).toBe(5);
             expect(performance.activeAccountCount).toBe(1);
             expect(performance.reportedAmount).toBe(2000);
-            expect(performance.collectedAmount).toBe(1200);
+            expect(performance.collectedAmount).toBe(1500);
             expect(performance.runningBalance).toBe(800);
-            expect(performance.collectionRate).toBe(60);
+            expect(performance.collectionRate).toBe(75);
+
+            const details = store.getCollectorPerformanceDetails(Branch.ORMOC, 'OFFICE', { from: 2026, to: 2026 });
+            expect(details.find(detail => detail.loanId === 'collector-deceased')).toMatchObject({
+                reportedAmount: 0,
+                collectedAmount: 300,
+                runningBalance: 0
+            });
         });
 
         it('filters collector performance by reported year range when requested', async () => {

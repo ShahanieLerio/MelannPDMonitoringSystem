@@ -168,8 +168,12 @@ const ensureDatabaseCompatibility = async () => {
                 evidence JSONB DEFAULT '[]'::jsonb,
                 status TEXT NOT NULL DEFAULT 'Pending Review',
                 decided_by TEXT NOT NULL,
-                decision_date TEXT NOT NULL
+                decision_date TEXT NOT NULL,
+                write_off_classification TEXT
             )
+        `);
+        await client.query(`
+            ALTER TABLE management_dispositions ADD COLUMN IF NOT EXISTS write_off_classification TEXT;
         `);
         await client.query('COMMIT');
     } catch (error) {
@@ -1475,11 +1479,11 @@ app.get('/api/management_dispositions/:loanId', async (req, res) => {
 });
 
 app.post('/api/management_dispositions', async (req, res) => {
-    const { id, loanId, type, reason, evidence, status, decidedBy, decisionDate } = req.body;
+    const { id, loanId, type, reason, evidence, status, decidedBy, decisionDate, writeOffClassification } = req.body;
     try {
         await query(
-            'INSERT INTO management_dispositions (id, loan_id, type, reason, evidence, status, decided_by, decision_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-            [id, loanId, type, reason, JSON.stringify(evidence || []), status, decidedBy, decisionDate]
+            'INSERT INTO management_dispositions (id, loan_id, type, reason, evidence, status, decided_by, decision_date, write_off_classification) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+            [id, loanId, type, reason, JSON.stringify(evidence || []), status, decidedBy, decisionDate, writeOffClassification || null]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }

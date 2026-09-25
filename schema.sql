@@ -212,5 +212,6 @@ CREATE TABLE IF NOT EXISTS management_dispositions (
     evidence JSONB DEFAULT '[]'::jsonb,
     status TEXT NOT NULL DEFAULT 'Pending Review',
     decided_by TEXT NOT NULL,
-    decision_date TEXT NOT NULL
+    decision_date TEXT NOT NULL,
+    write_off_classification TEXT
 );
