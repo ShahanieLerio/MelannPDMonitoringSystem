@@ -42,6 +42,7 @@ const requiredSchemaFragments = [
     /activity_logs\s*\([\s\S]*?\btype\s+TEXT/i,
     /demand_letters\s*\([\s\S]*?\bcourrier\s+TEXT/i,
     /visit_logs\s*\([\s\S]*?\bpersonnel_assigned\s+TEXT/i,
+    /visit_logs\s*\([\s\S]*?\baccompanying_personnel\s+TEXT/i,
     /contact_logs\s*\([\s\S]*?\bpersonnel_assigned\s+TEXT/i,
     /migration_batches_source_cycle_unique/i
 ];

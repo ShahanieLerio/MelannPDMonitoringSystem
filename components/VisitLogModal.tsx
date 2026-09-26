@@ -17,6 +17,7 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
   const [collectorNotes, setCollectorNotes] = useState('');
   const [clientComment, setClientComment] = useState('');
   const [personnelAssigned, setPersonnelAssigned] = useState('');
+  const [accompanyingPersonnel, setAccompanyingPersonnel] = useState('');
   const [visitedByCollector, setVisitedByCollector] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
@@ -84,7 +85,8 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
         action,
         currentUser.username,
         currentUser.role,
-        personnelAssigned.trim()
+        personnelAssigned.trim(),
+        accompanyingPersonnel.trim()
       );
 
       const successTitle = action === VisitLogAction.RETURN_TO_UPDATE
@@ -103,6 +105,7 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
       setCollectorNotes('');
       setClientComment('');
       setPersonnelAssigned('');
+      setAccompanyingPersonnel('');
       setVisitedByCollector(false);
       setShowConfirmAction(null);
 
@@ -228,6 +231,15 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
                             </span>
                           </>
                         )}
+                        {log.accompanyingPersonnel && (
+                          <>
+                            <span>•</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-violet-50 text-violet-600 rounded border border-violet-200">
+                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                              With: {log.accompanyingPersonnel}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -285,7 +297,12 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
                 </div>
                 <select
                   value={personnelAssigned}
-                  onChange={e => setPersonnelAssigned(e.target.value)}
+                  onChange={e => {
+                    setPersonnelAssigned(e.target.value);
+                    if (e.target.value.toUpperCase() === accompanyingPersonnel.toUpperCase()) {
+                      setAccompanyingPersonnel('');
+                    }
+                  }}
                   className="w-full pl-10 pr-10 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all appearance-none cursor-pointer"
                   disabled={isSubmitting}
                 >
@@ -298,6 +315,34 @@ const VisitLogModal: React.FC<VisitLogModalProps> = ({ loan, currentUser, onClos
                   {personnelAssigned && !availablePersonnel.some(p => p.value.toUpperCase() === personnelAssigned.toUpperCase()) && (
                     <option value={personnelAssigned}>{personnelAssigned}</option>
                   )}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Optional companion for joint field visits */}
+            <div className="mb-5">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 block">Accompanying Personnel <span className="text-slate-400">(Optional)</span></label>
+              <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                </div>
+                <select
+                  value={accompanyingPersonnel}
+                  onChange={e => setAccompanyingPersonnel(e.target.value)}
+                  className="w-full pl-10 pr-10 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all appearance-none cursor-pointer"
+                  disabled={isSubmitting}
+                >
+                  <option value="">-- No Accompanying Personnel --</option>
+                  {availablePersonnel
+                    .filter(p => p.value.toUpperCase() !== personnelAssigned.toUpperCase())
+                    .map((p, idx) => (
+                      <option key={idx} value={p.value}>
+                        {p.display}
+                      </option>
+                    ))}
                 </select>
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>

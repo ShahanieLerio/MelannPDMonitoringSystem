@@ -181,6 +181,8 @@ Fields:
 - `clientComment`
 - `visitedByCollector`
 - `action`
+- `personnelAssigned`
+- `accompanyingPersonnel` (optional companion on a joint field visit)
 - `loggedBy`
 - `timestamp`
 
@@ -340,6 +342,8 @@ Columns:
 - `client_comment`
 - `visited_by_collector`
 - `action`
+- `personnel_assigned`
+- `accompanying_personnel`
 - `logged_by`
 - `timestamp`
 
@@ -557,4 +561,3 @@ Important public methods in `services/dataStore.ts`:
 - `updateDemandLetter(id, updates, user, role)`
 - `exportData(user, branch)`
 - `importData(jsonData, user, currentBranch)`
-

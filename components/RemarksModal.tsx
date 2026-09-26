@@ -3,6 +3,18 @@ import React, { useEffect, useState } from 'react';
 import { Loan, PriorityLevel, User, Remark, RecurringSchedule } from '../types.ts';
 import { store } from '../services/dataStore.ts';
 import { analyzeRemarkPriority } from '../services/geminiService.ts';
+
+export const resolveRecurringScheduleNote = (
+  existing: RecurringSchedule | null | undefined,
+  scheduleIsSame: boolean,
+  remarkText: string,
+  ptpDate?: string | null,
+  followUpDate?: string | null
+) => {
+  if (scheduleIsSame) return existing?.note;
+  if (ptpDate || followUpDate) return existing?.note;
+  return remarkText.trim() || existing?.note;
+};
 import SuccessModal from './SuccessModal.tsx';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
@@ -162,6 +174,13 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
         const scheduleStartDate = isSameSchedule(loan.recurringSchedule)
           ? (loan.recurringSchedule?.startDate || today)
           : today;
+        const recurringNote = resolveRecurringScheduleNote(
+          loan.recurringSchedule,
+          isSameSchedule(loan.recurringSchedule),
+          newRemark,
+          ptpDate,
+          followUpDate
+        );
         const schedule: RecurringSchedule = {
           enabled: true,
           type: scheduleType,
@@ -169,7 +188,8 @@ const RemarksModal: React.FC<RemarksModalProps> = ({ loan, currentUser, onClose 
           weekDays: scheduleType === 'everyday' ? [1, 2, 3, 4, 5, 6] : selectedWeekDays,
           nextDueDate: nextDue,
           startDate: scheduleStartDate,
-          lastPaidDate: loan.recurringSchedule?.lastPaidDate
+          lastPaidDate: loan.recurringSchedule?.lastPaidDate,
+          note: recurringNote
         };
         await store.updateLoan(loan.id, { recurringSchedule: schedule, promiseToPayDate: nextDue }, currentUser.username, currentUser.role);
       } else if (!recurringEnabled && loan.recurringSchedule?.enabled) {

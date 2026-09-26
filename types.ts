@@ -195,6 +195,7 @@ export interface RecurringSchedule {
   nextDueDate: string;     // ISO date string, auto-calculated
   startDate?: string;      // ISO date when this recurring schedule started being tracked
   lastPaidDate?: string;   // ISO date of last satisfying payment
+  note?: string;           // Note specifically associated with the recurring schedule
 }
 
 export interface Loan {
@@ -295,6 +296,7 @@ export interface VisitLog {
   visitedByCollector: boolean;
   action: VisitLogAction;
   personnelAssigned: string;
+  accompanyingPersonnel?: string;
   loggedBy: string;
   timestamp: string;
 }

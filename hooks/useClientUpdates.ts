@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { store } from '../services/dataStore';
-import { Branch, PriorityLevel, Loan } from '../types';
+import { Branch, PriorityLevel, Loan, Remark } from '../types';
 import { hasActiveClientBalance } from '../services/loanUtils';
 
 export interface ReminderItem {
@@ -9,6 +9,64 @@ export interface ReminderItem {
   type: 'Payment' | 'Visit' | 'Callback' | 'Follow-up';
   context: string;
 }
+
+const normalizeRemarkDate = (value?: string | null) => value?.slice(0, 10) || '';
+
+export const isRecurringDueOnDate = (loan: Loan, dateStr: string) => {
+  const schedule = loan.recurringSchedule;
+  if (!schedule?.enabled) return false;
+
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const targetDate = new Date(year, month - 1, day);
+  if (Number.isNaN(targetDate.getTime())) return false;
+
+  if (schedule.type === 'everyday') return targetDate.getDay() !== 0;
+  if (schedule.type === 'weekly') return !!schedule.weekDays?.includes(targetDate.getDay());
+  return !!schedule.days?.includes(targetDate.getDate());
+};
+
+export const getScheduledRemarkForDate = (loan: Loan, dateStr: string): Remark | null => {
+  const matches = (loan.remarks || []).filter(remark =>
+    normalizeRemarkDate(remark.followUpDate) === dateStr ||
+    normalizeRemarkDate(remark.ptpDate) === dateStr
+  );
+
+  return matches.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] || null;
+};
+
+const getRecurringScheduleRemark = (loan: Loan): Remark | null => {
+  const schedule = loan.recurringSchedule;
+  if (!schedule?.enabled) return null;
+
+  if (schedule.note?.trim()) {
+    return {
+      id: `recurring-${loan.id}`,
+      text: schedule.note.trim(),
+      timestamp: schedule.startDate ? `${schedule.startDate}T00:00:00` : new Date(0).toISOString(),
+      collector: loan.collector
+    };
+  }
+
+  const scheduleStartDate = normalizeRemarkDate(schedule.startDate);
+  const undatedRemarks = (loan.remarks || [])
+    .filter(remark => !remark.ptpDate && !remark.followUpDate)
+    .filter(remark => !scheduleStartDate || normalizeRemarkDate(remark.timestamp) <= scheduleStartDate)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  return undatedRemarks[0] || null;
+};
+
+export const getActionRemarkForDate = (loan: Loan, dateStr: string): Remark | null => {
+  const scheduledRemark = getScheduledRemarkForDate(loan, dateStr);
+  if (scheduledRemark) return scheduledRemark;
+
+  if (isRecurringDueOnDate(loan, dateStr)) {
+    const recurringRemark = getRecurringScheduleRemark(loan);
+    if (recurringRemark) return recurringRemark;
+  }
+
+  return loan.remarks?.[loan.remarks.length - 1] || null;
+};
 
 export const useClientUpdates = (selectedBranch: Branch) => {
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -28,10 +86,11 @@ export const useClientUpdates = (selectedBranch: Branch) => {
   const updateList = useMemo(() => {
     return loans
       .filter(l => hasActiveClientBalance(l) && l.remarks && l.remarks.length > 0)
-      .map(l => ({
-        ...l,
-        latestRemark: l.remarks[l.remarks.length - 1]
-      }))
+      .map(l => {
+        const latestRemark = [...l.remarks]
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+        return { ...l, latestRemark };
+      })
       .sort((a, b) => new Date(b.latestRemark.timestamp).getTime() - new Date(a.latestRemark.timestamp).getTime());
   }, [loans]);
 
@@ -57,29 +116,23 @@ export const useClientUpdates = (selectedBranch: Branch) => {
     const isUnpaid = l.runningBalance > 0 && l.status !== 'Paid';
     const isDueToday = !!l.promiseToPayDate && l.promiseToPayDate === todayStr && isUnpaid;
     const isFollowUpToday = !!l.followUpDate && l.followUpDate === todayStr && isUnpaid;
-    const latestRemark = l.remarks?.length > 0 ? l.remarks[l.remarks.length - 1] : null;
-    const remarkPtpToday = !!latestRemark?.ptpDate && latestRemark.ptpDate === todayStr && isUnpaid;
-    const remarkFuToday = !!latestRemark?.followUpDate && latestRemark.followUpDate === todayStr && isUnpaid;
+    const scheduledRemarkToday = getScheduledRemarkForDate(l, todayStr);
+    const remarkScheduledToday = !!scheduledRemarkToday && isUnpaid;
 
     // Recurring Schedule: Check if TODAY is a scheduled due day
     // This prevents loans from falling into Close Monitoring on their actual due day
-    let isRecurringDueToday = false;
-    if (l.recurringSchedule?.enabled && isUnpaid) {
-      const today = new Date();
-      if (l.recurringSchedule.type === 'everyday') {
-        isRecurringDueToday = today.getDay() !== 0;
-      } else if (l.recurringSchedule.type === 'weekly' && l.recurringSchedule.weekDays?.length > 0) {
-        isRecurringDueToday = l.recurringSchedule.weekDays.includes(today.getDay());
-      } else if (l.recurringSchedule.type === 'monthly' && l.recurringSchedule.days?.length > 0) {
-        isRecurringDueToday = l.recurringSchedule.days.includes(today.getDate());
-      }
-    }
+    const isRecurringDueToday = isUnpaid && isRecurringDueOnDate(l, todayStr);
 
-    return isTopAi || isDueToday || isFollowUpToday || remarkPtpToday || remarkFuToday || isRecurringDueToday;
+    return isTopAi || isDueToday || isFollowUpToday || remarkScheduledToday || isRecurringDueToday;
   };
 
   const topPriorityList = useMemo(() => {
-    return updateList.filter(l => checkIsPriority(l));
+    return updateList
+      .filter(l => checkIsPriority(l))
+      .map(l => ({
+        ...l,
+        latestRemark: getActionRemarkForDate(l, todayStr) || l.latestRemark
+      }));
   }, [updateList, todayStr]);
 
   const reminderList = useMemo(() => {
@@ -89,8 +142,9 @@ export const useClientUpdates = (selectedBranch: Branch) => {
       if (l.status === 'Paid') return;
       if (checkIsPriority(l)) return;
 
-      const isTomorrowPTP = !!l.promiseToPayDate && l.promiseToPayDate === tomorrowStr;
-      const isTomorrowFU = !!l.followUpDate && l.followUpDate === tomorrowStr;
+      const scheduledRemark = getScheduledRemarkForDate(l, tomorrowStr);
+      const isTomorrowPTP = (!!l.promiseToPayDate && l.promiseToPayDate === tomorrowStr) || normalizeRemarkDate(scheduledRemark?.ptpDate) === tomorrowStr;
+      const isTomorrowFU = (!!l.followUpDate && l.followUpDate === tomorrowStr) || normalizeRemarkDate(scheduledRemark?.followUpDate) === tomorrowStr;
 
       if (isTomorrowPTP || isTomorrowFU) {
         const type = isTomorrowPTP ? 'Payment' : 'Follow-up';
@@ -100,7 +154,7 @@ export const useClientUpdates = (selectedBranch: Branch) => {
           loan: l as unknown as Loan,
           date: new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' }),
           type: type as any,
-          context: l.latestRemark.text
+          context: (scheduledRemark || getActionRemarkForDate(l, tomorrowStr) || l.latestRemark).text
         });
       }
     });

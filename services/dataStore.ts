@@ -4,6 +4,21 @@ import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityI
 const API_URL = `http://${window.location.hostname}:5000/api`;
 const AUTO_SYNC_INTERVAL_MS = 60000;
 
+const createRecordId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  // randomUUID is restricted to secure contexts in some browsers. Client PCs
+  // often open this app over plain HTTP from the LAN, so retain a UUID-shaped
+  // fallback for those sessions.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+};
+
 const INITIAL_USERS: User[] = [
   {
     id: '1',
@@ -369,6 +384,7 @@ class DataStore {
         visitedByCollector: v.visited_by_collector || false,
         action: v.action || VisitLogAction.LOG_ONLY,
         personnelAssigned: v.personnel_assigned || v.personnelAssigned || '',
+        accompanyingPersonnel: v.accompanying_personnel || v.accompanyingPersonnel || '',
         loggedBy: v.logged_by,
         timestamp: v.timestamp
       })) as VisitLog[];
@@ -2061,7 +2077,7 @@ class DataStore {
     return this.visitLogs.filter(v => v.loanId === loanId).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
-  async addVisitLog(loanId: string, visitDate: string, collectorNotes: string, clientComment: string, visitedByCollector: boolean, action: VisitLogAction, loggedBy: string, role: string, personnelAssigned: string = ''): Promise<VisitLog> {
+  async addVisitLog(loanId: string, visitDate: string, collectorNotes: string, clientComment: string, visitedByCollector: boolean, action: VisitLogAction, loggedBy: string, role: string, personnelAssigned: string = '', accompanyingPersonnel: string = ''): Promise<VisitLog> {
     const id = Math.random().toString(36).substring(2, 9);
     const now = new Date().toISOString();
     const newLog: VisitLog = {
@@ -2073,6 +2089,7 @@ class DataStore {
       visitedByCollector,
       action,
       personnelAssigned,
+      accompanyingPersonnel,
       loggedBy,
       timestamp: now
     };
@@ -2377,7 +2394,7 @@ class DataStore {
     if (!loan) throw new Error('Loan not found');
 
     const newDisposition: ManagementDisposition = {
-      id: crypto.randomUUID(),
+      id: createRecordId(),
       loanId,
       type,
       reason,
@@ -2410,6 +2427,84 @@ class DataStore {
       console.error('Failed to save disposition to API', e);
       throw e;
     }
+  }
+
+  async updateDisposition(
+    id: string,
+    changes: Pick<ManagementDisposition, 'type' | 'reason' | 'evidence' | 'writeOffClassification'>,
+    updatedBy: string,
+    role: string
+  ): Promise<void> {
+    const disposition = this.managementDispositions.find(item => item.id === id);
+    if (!disposition) throw new Error('Disposition not found');
+
+    const res = await fetch(`${API_URL}/management_dispositions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...changes, updatedBy, role })
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `Server error: ${res.status}`);
+    }
+
+    Object.assign(disposition, changes);
+    await this.recordHistory(
+      disposition.loanId,
+      'Management Disposition Edited',
+      `Decision updated to ${changes.type} by ${updatedBy}`,
+      updatedBy,
+      role,
+      'Management Disposition'
+    );
+    this.notify();
+  }
+
+  async deleteDisposition(id: string, deletedBy: string, role: string): Promise<void> {
+    const disposition = this.managementDispositions.find(item => item.id === id);
+    if (!disposition) throw new Error('Disposition not found');
+
+    const res = await fetch(`${API_URL}/management_dispositions/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `Server error: ${res.status}`);
+    }
+
+    this.managementDispositions = this.managementDispositions.filter(item => item.id !== id);
+
+    const loan = this.loans.find(item => item.id === disposition.loanId);
+    if (loan?.actionNote?.startsWith('Management Disposition:')) {
+      const latestDisposition = this.getDispositions(disposition.loanId)[0];
+      const stageByDispositionType: Record<DispositionType, string> = {
+        [DispositionType.PROSPECT_WRITE_OFF]: 'For Write-Off',
+        [DispositionType.RECOMMEND_LEGAL]: 'For Legal Action',
+        [DispositionType.FOR_RESTRUCTURING]: 'Active / Cooperative',
+        [DispositionType.SETTLEMENT_NEGOTIATION]: 'Non-Cooperative',
+        [DispositionType.RETAIN_COLLECTION]: 'Needs Follow-Up',
+        [DispositionType.DEAD_ACCOUNT]: 'For Write-Off'
+      };
+      const nextActionStage = latestDisposition
+        ? stageByDispositionType[latestDisposition.type]
+        : null;
+      const nextActionNote = latestDisposition
+        ? `Management Disposition: ${latestDisposition.type}${latestDisposition.writeOffClassification ? ` [${latestDisposition.writeOffClassification}]` : ''} - ${latestDisposition.reason}`
+        : null;
+
+      await this.updateLoan(disposition.loanId, {
+        actionStage: nextActionStage,
+        actionNote: nextActionNote
+      }, deletedBy, role);
+    }
+
+    await this.recordHistory(
+      disposition.loanId,
+      'Management Disposition Deleted',
+      `Deleted decision: ${disposition.type} - ${disposition.reason}`,
+      deletedBy,
+      role,
+      'Management Disposition'
+    );
+    this.notify();
   }
 
   async updateDispositionStatus(id: string, newStatus: DispositionStatus, updatedBy: string, role: string): Promise<void> {

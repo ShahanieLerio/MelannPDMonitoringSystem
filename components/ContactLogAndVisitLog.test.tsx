@@ -120,11 +120,63 @@ describe('Personnel Assigned Dropdown and Action Tracker Personnel Management', 
     render(<VisitLogModal loan={mockLoan} currentUser={mockUser} onClose={vi.fn()} />);
 
     const selectElements = screen.getAllByRole('combobox');
-    const personnelSelect = selectElements.find(s => s.querySelector('option[value="ALDIE"]'));
+    const personnelSelect = selectElements.find(s => s.querySelector('option')?.textContent?.includes('Select Personnel Assigned'));
+    const accompanyingSelect = selectElements.find(s => s.querySelector('option')?.textContent?.includes('No Accompanying Personnel'));
     expect(personnelSelect).toBeDefined();
+    expect(accompanyingSelect).toBeDefined();
 
-    expect(screen.getByText(/aldie remedial \(@aldie\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/john collector \(@john\)/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/aldie remedial \(@aldie\)/i)).toHaveLength(2);
+    expect(screen.getAllByText(/john collector \(@john\)/i)).toHaveLength(2);
+    expect(screen.getAllByText(/accompanying personnel/i)).toHaveLength(2);
+  });
+
+  it('submits an optional accompanying personnel with the visit log', async () => {
+    (store.addVisitLog as any).mockResolvedValue({});
+    render(<VisitLogModal loan={mockLoan} currentUser={mockUser} onClose={vi.fn()} />);
+
+    const selectElements = screen.getAllByRole('combobox');
+    const personnelSelect = selectElements.find(s => s.querySelector('option')?.textContent?.includes('Select Personnel Assigned'))!;
+    const accompanyingSelect = selectElements.find(s => s.querySelector('option')?.textContent?.includes('No Accompanying Personnel'))!;
+
+    fireEvent.change(personnelSelect, { target: { value: 'ALDIE' } });
+    fireEvent.change(accompanyingSelect, { target: { value: 'JOHN' } });
+    fireEvent.change(screen.getByPlaceholderText(/describe findings from the visit/i), { target: { value: 'Visited the client residence' } });
+    fireEvent.click(screen.getByText(/log visit entry/i));
+
+    await waitFor(() => {
+      expect(store.addVisitLog).toHaveBeenCalledWith(
+        'l1',
+        expect.any(String),
+        'Visited the client residence',
+        '',
+        false,
+        VisitLogAction.LOG_ONLY,
+        'admin',
+        UserRole.SUPER_ADMIN,
+        'ALDIE',
+        'JOHN'
+      );
+    });
+  });
+
+  it('shows accompanying personnel in visit history', () => {
+    (store.getVisitLogs as any).mockReturnValue([{
+      id: 'visit-1',
+      loanId: 'l1',
+      visitDate: '2026-09-26',
+      collectorNotes: 'Visited the client residence',
+      clientComment: '',
+      visitedByCollector: true,
+      action: VisitLogAction.LOG_ONLY,
+      personnelAssigned: 'ALDIE',
+      accompanyingPersonnel: 'JOHN',
+      loggedBy: 'admin',
+      timestamp: '2026-09-26T08:00:00Z'
+    }]);
+
+    render(<VisitLogModal loan={mockLoan} currentUser={mockUser} onClose={vi.fn()} />);
+
+    expect(screen.getByText('With: JOHN')).toBeInTheDocument();
   });
 
   it('allows adding new personnel in ActionTrackerPersonnelModal', async () => {

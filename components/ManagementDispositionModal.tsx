@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loan, User, DispositionType, DispositionStatus } from '../types.ts';
+import { Loan, User, DispositionType, DispositionStatus, ManagementDisposition } from '../types.ts';
 import { store } from '../services/dataStore.ts';
 import SuccessModal from './SuccessModal.tsx';
 
@@ -7,23 +7,48 @@ interface ManagementDispositionModalProps {
   loan: Loan;
   currentUser: User;
   onClose: () => void;
+  disposition?: ManagementDisposition;
 }
 
 const EVIDENCE_OPTIONS = [
-  'Collector visit confirms no activity',
-  'Client unreachable',
-  'Claims already paid',
-  'Deceased borrower',
-  'Business closed',
-  'Relocated/Not located'
+  {
+    label: 'Collector visit confirms no activity',
+    description: 'Field visit found no collection or business activity.'
+  },
+  {
+    label: 'Client unreachable',
+    description: 'No contact details or known whereabouts despite field visits and checks with neighbors, calls, messages, and social media.'
+  },
+  {
+    label: 'Claims already paid',
+    description: 'Borrower claims payment, but it is not yet verified.'
+  },
+  {
+    label: 'Insolvent',
+    description: 'Borrower has no current capacity to repay.'
+  },
+  {
+    label: 'Business closed',
+    description: 'Business has permanently ceased operations.'
+  },
+  {
+    label: 'Relocated/Not located',
+    description: 'Borrower moved; new location is unknown.'
+  }
 ];
 
-const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({ loan, currentUser, onClose }) => {
-  const [type, setType] = useState<DispositionType | ''>('');
-  const [reason, setReason] = useState('');
-  const [evidence, setEvidence] = useState<string[]>([]);
-  const [writeOffClassification, setWriteOffClassification] = useState<'Located' | 'Unlocated' | ''>('');
-  const [managementName, setManagementName] = useState(currentUser.fullName || currentUser.username);
+const MANAGEMENT_OFFICERS = [
+  'Victorio Reloba Jr.',
+  'Marilyn Reloba',
+  'Anna Liza Rodriguez'
+];
+
+const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({ loan, currentUser, onClose, disposition }) => {
+  const [type, setType] = useState<DispositionType | ''>(disposition?.type || '');
+  const [reason, setReason] = useState(disposition?.reason || '');
+  const [evidence, setEvidence] = useState<string[]>(disposition?.evidence || []);
+  const [writeOffClassification, setWriteOffClassification] = useState<'Located' | 'Unlocated' | ''>(disposition?.writeOffClassification || '');
+  const [managementName, setManagementName] = useState(disposition?.decidedBy || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -56,15 +81,24 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
     setErrorFeedback(null);
 
     try {
-      await store.addDisposition(
-        loan.id, 
-        type as DispositionType, 
-        reason, 
-        evidence, 
-        managementName.trim(), 
-        currentUser.role,
-        writeOffClassification ? (writeOffClassification as 'Located' | 'Unlocated') : undefined
-      );
+      if (disposition) {
+        await store.updateDisposition(disposition.id, {
+          type: type as DispositionType,
+          reason: reason.trim(),
+          evidence,
+          writeOffClassification: writeOffClassification || undefined
+        }, currentUser.username, currentUser.role);
+      } else {
+        await store.addDisposition(
+          loan.id,
+          type as DispositionType,
+          reason,
+          evidence,
+          managementName.trim(),
+          currentUser.role,
+          writeOffClassification ? (writeOffClassification as 'Located' | 'Unlocated') : undefined
+        );
+      }
       
       // Auto-update Lifecycle Stage if applicable
       const stageMap: Record<DispositionType, string> = {
@@ -99,8 +133,8 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
     return (
       <SuccessModal
         isOpen={true}
-        title="Decision Recorded"
-        message={`The account has been tagged for "${type}". Status is Pending Review.`}
+        title={disposition ? 'Decision Updated' : 'Decision Recorded'}
+        message={disposition ? 'The management decision has been updated.' : `The account has been tagged for "${type}". Status is Pending Review.`}
         onConfirm={onClose}
       />
     );
@@ -127,7 +161,7 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
           <div>
             <h3 className="text-xl font-black text-white flex items-center gap-2">
               <svg className="w-5 h-5 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>
-              Management Disposition
+              {disposition ? 'Edit Management Decision' : 'Management Disposition'}
             </h3>
             <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-widest">{loan.borrowerName}</p>
           </div>
@@ -146,13 +180,17 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
 
           <div>
             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Deciding Management Officer</label>
-            <input 
-              type="text"
+            <select
               value={managementName} 
               onChange={e => setManagementName(e.target.value)}
-              placeholder="e.g., Sir Alvin, Ma'am Melann, Board of Directors"
+              disabled={Boolean(disposition)}
               className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-800 dark:text-slate-200 outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
-            />
+            >
+              <option value="">-- Select Management Officer --</option>
+              {MANAGEMENT_OFFICERS.map(officer => (
+                <option key={officer} value={officer}>{officer}</option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -182,15 +220,18 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
           <div>
             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Supporting Evidence</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {EVIDENCE_OPTIONS.map(ev => (
-                <label key={ev} className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+              {EVIDENCE_OPTIONS.map(({ label, description }) => (
+                <label key={label} className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                   <input 
                     type="checkbox" 
-                    checked={evidence.includes(ev)} 
-                    onChange={() => toggleEvidence(ev)}
-                    className="w-4 h-4 text-rose-500 rounded focus:ring-rose-500 border-slate-300"
+                    checked={evidence.includes(label)}
+                    onChange={() => toggleEvidence(label)}
+                    className="w-4 h-4 mt-0.5 shrink-0 text-rose-500 rounded focus:ring-rose-500 border-slate-300"
                   />
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{ev}</span>
+                  <span>
+                    <span className="block text-xs font-bold text-slate-700 dark:text-slate-300">{label}</span>
+                    <span className="block mt-1 text-[10px] leading-relaxed font-medium normal-case tracking-normal text-slate-500 dark:text-slate-400">{description}</span>
+                  </span>
                 </label>
               ))}
             </div>
@@ -235,7 +276,7 @@ const ManagementDispositionModal: React.FC<ManagementDispositionModalProps> = ({
             disabled={isSubmitting}
             className="px-6 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-rose-900/20 transition-colors disabled:opacity-50 flex items-center gap-2"
           >
-            {isSubmitting ? 'Saving...' : 'Submit Decision'}
+            {isSubmitting ? 'Saving...' : disposition ? 'Save Changes' : 'Submit Decision'}
           </button>
         </div>
 

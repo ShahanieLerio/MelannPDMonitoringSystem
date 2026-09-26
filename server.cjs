@@ -96,6 +96,7 @@ const ensureDatabaseCompatibility = async () => {
         await client.query('ALTER TABLE demand_letters ADD COLUMN IF NOT EXISTS courrier TEXT');
         await client.query('ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS type TEXT');
         await client.query('ALTER TABLE IF EXISTS visit_logs ADD COLUMN IF NOT EXISTS personnel_assigned TEXT DEFAULT \'\'');
+        await client.query('ALTER TABLE IF EXISTS visit_logs ADD COLUMN IF NOT EXISTS accompanying_personnel TEXT DEFAULT \'\'');
         await client.query('ALTER TABLE IF EXISTS contact_logs ADD COLUMN IF NOT EXISTS personnel_assigned TEXT DEFAULT \'\'');
         await client.query(`
             CREATE TABLE IF NOT EXISTS supervisors (
@@ -131,6 +132,7 @@ const ensureDatabaseCompatibility = async () => {
                 visited_by_collector BOOLEAN DEFAULT FALSE,
                 action TEXT NOT NULL DEFAULT 'Log Only',
                 personnel_assigned TEXT DEFAULT '',
+                accompanying_personnel TEXT DEFAULT '',
                 logged_by TEXT NOT NULL,
                 timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
@@ -1413,11 +1415,11 @@ app.get('/api/visit_logs/:loanId', async (req, res) => {
 });
 
 app.post('/api/visit_logs', async (req, res) => {
-    const { id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, personnelAssigned, loggedBy, timestamp } = req.body;
+    const { id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, personnelAssigned, accompanyingPersonnel, loggedBy, timestamp } = req.body;
     try {
         await query(
-            'INSERT INTO visit_logs (id, loan_id, visit_date, collector_notes, client_comment, visited_by_collector, action, personnel_assigned, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-            [id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, personnelAssigned || '', loggedBy, timestamp]
+            'INSERT INTO visit_logs (id, loan_id, visit_date, collector_notes, client_comment, visited_by_collector, action, personnel_assigned, accompanying_personnel, logged_by, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+            [id, loanId, visitDate, collectorNotes, clientComment, visitedByCollector, action, personnelAssigned || '', accompanyingPersonnel || '', loggedBy, timestamp]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1485,6 +1487,29 @@ app.post('/api/management_dispositions', async (req, res) => {
             'INSERT INTO management_dispositions (id, loan_id, type, reason, evidence, status, decided_by, decision_date, write_off_classification) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
             [id, loanId, type, reason, JSON.stringify(evidence || []), status, decidedBy, decisionDate, writeOffClassification || null]
         );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/management_dispositions/:id', async (req, res) => {
+    const { type, reason, evidence, writeOffClassification } = req.body || {};
+    if (!type || !String(reason || '').trim()) {
+        return res.status(400).json({ error: 'Decision type and reason are required.' });
+    }
+    try {
+        const result = await query(
+            'UPDATE management_dispositions SET type = $1, reason = $2, evidence = $3, write_off_classification = $4 WHERE id = $5 RETURNING id',
+            [type, reason, JSON.stringify(evidence || []), writeOffClassification || null, req.params.id]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Disposition not found.' });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/management_dispositions/:id', async (req, res) => {
+    try {
+        const result = await query('DELETE FROM management_dispositions WHERE id = $1 RETURNING id', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Disposition not found.' });
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

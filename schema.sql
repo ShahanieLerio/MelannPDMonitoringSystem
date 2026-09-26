@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS visit_logs (
     visited_by_collector BOOLEAN DEFAULT FALSE,
     action TEXT NOT NULL DEFAULT 'Log Only',
     personnel_assigned TEXT DEFAULT '',
+    accompanying_personnel TEXT DEFAULT '',
     logged_by TEXT NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

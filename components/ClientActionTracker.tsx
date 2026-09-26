@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
-import { User, Branch, Loan, MovingStatus, LocationStatus, DemandLetterType, ContactLog, VisitLog, ManagementDisposition, DispositionStatus, DispositionType } from '../types.ts';
+import { User, Branch, Loan, MovingStatus, LocationStatus, DemandLetterType, ContactLog, VisitLog, ManagementDisposition, DispositionStatus, DispositionType, Payment, PaymentStatus } from '../types.ts';
 import ClientModal from './ClientModal.tsx';
 import RemarksModal from './RemarksModal.tsx';
 import ContactLogModal from './ContactLogModal.tsx';
 import VisitLogModal from './VisitLogModal.tsx';
 import ManagementDispositionModal from './ManagementDispositionModal.tsx';
 import ActionTrackerPersonnelModal from './ActionTrackerPersonnelModal.tsx';
+import ConfirmationModal from './ConfirmationModal.tsx';
 
 // Helper to get days diff
 const getDifferenceInDays = (date1: Date, date2: Date) => {
@@ -63,6 +64,42 @@ interface ContactFollowThrough {
     action: string;
 }
 
+interface TimelineItem {
+    date: Date;
+    type: string;
+    user: string;
+    desc: string;
+    visitLog?: VisitLog;
+    payment?: Payment;
+}
+
+const formatCurrency = (amount: number) => `₱${Number(amount || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+})}`;
+
+export const buildPartialPaymentTimelineItems = (payments: Payment[] = []): TimelineItem[] => {
+    return payments
+        .filter(payment => payment.status === PaymentStatus.GOOD && Number(payment.balanceAfter) > 0)
+        .map(payment => {
+            const createdAt = new Date(payment.createdAt);
+            const paymentDate = new Date(`${payment.date}T00:00:00`);
+            const timelineDate = !isNaN(createdAt.getTime()) ? createdAt : paymentDate;
+            const paymentDateLabel = !isNaN(paymentDate.getTime())
+                ? paymentDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                : payment.date;
+            const remarks = payment.remarks?.trim() ? ` Remarks: ${payment.remarks.trim()}` : '';
+
+            return {
+                date: timelineDate,
+                type: 'Partial Payment',
+                user: payment.recorder || 'System',
+                desc: `${formatCurrency(payment.amount)} received on ${paymentDateLabel}. OR: ${payment.orNumber}. Remaining balance: ${formatCurrency(payment.balanceAfter)}.${remarks}`,
+                payment
+            };
+        });
+};
+
 const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, selectedBranch }) => {
     const [loans, setLoans] = useState<Loan[]>([]);
     const [demandLetters, setDemandLetters] = useState<any[]>([]);
@@ -77,6 +114,8 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
     const [selectedLoanForContactLog, setSelectedLoanForContactLog] = useState<Loan | null>(null);
     const [selectedLoanForVisitLog, setSelectedLoanForVisitLog] = useState<Loan | null>(null);
     const [selectedLoanForDisposition, setSelectedLoanForDisposition] = useState<Loan | null>(null);
+    const [dispositionToEdit, setDispositionToEdit] = useState<ManagementDisposition | undefined>();
+    const [dispositionToDelete, setDispositionToDelete] = useState<ManagementDisposition | null>(null);
 
     // Sidebar UI
     const [activeSidebarTab, setActiveSidebarTab] = useState<'activity' | 'decisions'>('activity');
@@ -294,7 +333,7 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
 
     const combinedHistory = useMemo(() => {
         if (!selectedRow) return [];
-        const items: { date: Date, type: string, user: string, desc: string, visitLog?: VisitLog }[] = [];
+        const items: TimelineItem[] = [];
         
         // Add remarks
         selectedRow.remarks?.forEach(r => {
@@ -319,6 +358,11 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                 items.push({ date: new Date(h.timestamp), type: h.type, user: h.user, desc: h.description });
             }
         });
+
+        // Payment history rows are excluded above to prevent duplicates. Use the
+        // authoritative payment stream so reversals disappear automatically and
+        // partial payments remain visible even when made outside the promised date.
+        items.push(...buildPartialPaymentTimelineItems(selectedRow.payments));
 
         // Add Demand Letters
         const clientDLs = demandLetters.filter(dl => dl.loanId === selectedRow.id);
@@ -707,14 +751,14 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                                 <div className="max-h-[calc(100vh-360px)] min-h-[300px] overflow-y-auto px-2 space-y-4">
                                     {combinedHistory.length > 0 ? combinedHistory.map((item, idx) => (
                                         <div key={idx} className="relative pl-6">
-                                            <div className="absolute w-2 h-2 rounded-full bg-indigo-500 left-[3px] top-[6px] ring-4 ring-indigo-50 dark:ring-slate-800 z-10" />
+                                            <div className={`absolute w-2 h-2 rounded-full left-[3px] top-[6px] ring-4 dark:ring-slate-800 z-10 ${item.payment ? 'bg-emerald-500 ring-emerald-50' : 'bg-indigo-500 ring-indigo-50'}`} />
                                             {idx < combinedHistory.length - 1 && (
                                                 <div className="absolute w-0.5 bg-slate-100 dark:bg-slate-700 left-[6px] top-[14px] bottom-[-24px]" />
                                             )}
                                             
-                                            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-3.5 border border-slate-100 dark:border-slate-800 hover:border-indigo-200 transition-colors">
+                                            <div className={`rounded-2xl p-3.5 border transition-colors ${item.payment ? 'bg-emerald-50/70 border-emerald-100 hover:border-emerald-300 dark:bg-emerald-950/20 dark:border-emerald-900/40' : 'bg-slate-50 border-slate-100 hover:border-indigo-200 dark:bg-slate-900/50 dark:border-slate-800'}`}>
                                                 <div className="flex justify-between items-start mb-1.5">
-                                                    <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                                                    <span className={`text-[10px] font-black uppercase tracking-widest ${item.payment ? 'text-emerald-700 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>
                                                         {item.type}
                                                     </span>
                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
@@ -737,6 +781,12 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                                                             <p className="text-xs text-slate-700 dark:text-slate-300 font-bold leading-relaxed mb-2">
                                                                 <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Personnel Assigned: </span>
                                                                 {item.visitLog.personnelAssigned}
+                                                            </p>
+                                                        )}
+                                                        {item.visitLog.accompanyingPersonnel && (
+                                                            <p className="text-xs text-slate-700 dark:text-slate-300 font-bold leading-relaxed mb-2">
+                                                                <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Accompanying Personnel: </span>
+                                                                {item.visitLog.accompanyingPersonnel}
                                                             </p>
                                                         )}
                                                         <div className="flex flex-wrap items-center gap-2 text-[9px] font-bold text-slate-400">
@@ -783,7 +833,7 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                                                 );
                                             }
                                             return dispositions.map((disp, idx) => (
-                                                <div key={idx} className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 shadow-sm">
+                                                <div key={disp.id} className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 shadow-sm">
                                                     <div className="flex justify-between items-start mb-2">
                                                         <div className="flex items-center gap-1.5 flex-wrap">
                                                             <span className="px-2.5 py-1 rounded-md bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 text-[10px] font-black uppercase tracking-widest">
@@ -820,6 +870,19 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                                                             <span className="text-xs font-bold text-slate-600 dark:text-slate-400">{disp.status}</span>
                                                         </div>
                                                         <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">By {disp.decidedBy}</span>
+                                                        <div className="flex items-center gap-3">
+                                                            <button
+                                                                onClick={() => {
+                                                                    setDispositionToEdit(disp);
+                                                                    setSelectedLoanForDisposition(selectedRow);
+                                                                }}
+                                                                className="text-[9px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-800 dark:text-indigo-400"
+                                                            >Edit</button>
+                                                            <button
+                                                                onClick={() => setDispositionToDelete(disp)}
+                                                                className="text-[9px] font-black uppercase tracking-widest text-rose-600 hover:text-rose-800 dark:text-rose-400"
+                                                            >Delete</button>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             ));
@@ -928,12 +991,34 @@ const ClientActionTracker: React.FC<ClientActionTrackerProps> = ({ currentUser, 
                 <ManagementDispositionModal
                     loan={selectedLoanForDisposition}
                     currentUser={currentUser}
+                    disposition={dispositionToEdit}
                     onClose={() => {
                         setSelectedLoanForDisposition(null);
+                        setDispositionToEdit(undefined);
                         refreshData();
                     }}
                 />
             )}
+
+            <ConfirmationModal
+                isOpen={Boolean(dispositionToDelete)}
+                title="Delete Management Decision?"
+                message="This decision will be permanently removed from this client’s management decision history."
+                confirmLabel="Delete Decision"
+                onCancel={() => setDispositionToDelete(null)}
+                onConfirm={async () => {
+                    if (!dispositionToDelete) return;
+                    try {
+                        await store.deleteDisposition(dispositionToDelete.id, currentUser.username, currentUser.role);
+                    } catch (error) {
+                        console.error('Failed to delete management decision:', error);
+                        window.alert(error instanceof Error ? error.message : 'Failed to delete management decision.');
+                    } finally {
+                        setDispositionToDelete(null);
+                    }
+                }}
+                type="danger"
+            />
 
             <ActionTrackerPersonnelModal
                 isOpen={isPersonnelModalOpen}

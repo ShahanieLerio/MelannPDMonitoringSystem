@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import RemarksModal from './RemarksModal';
+import RemarksModal, { resolveRecurringScheduleNote } from './RemarksModal';
 import { Branch, MovingStatus, LocationStatus, PriorityLevel, UserRole, UserStatus } from '../types';
 import { store } from '../services/dataStore';
 import { analyzeRemarkPriority } from '../services/geminiService';
@@ -172,5 +172,28 @@ describe('RemarksModal', () => {
     render(<RemarksModal loan={loanWithoutRemarks} currentUser={currentUser} onClose={onClose} />);
 
     expect(screen.getByText(/no field activity yet/i)).toBeInTheDocument();
+  });
+
+  it('associates an undated note with a newly configured recurring schedule', () => {
+    expect(resolveRecurringScheduleNote(undefined, false, 'Kada Sabado ang bayad')).toBe('Kada Sabado ang bayad');
+  });
+
+  it('does not overwrite the recurring note with a one-time scheduled follow-up', () => {
+    const existingSchedule = {
+      enabled: true,
+      type: 'weekly' as const,
+      days: [],
+      weekDays: [6],
+      nextDueDate: '2026-09-26',
+      note: 'Kada Sabado ang bayad'
+    };
+
+    expect(resolveRecurringScheduleNote(
+      existingSchedule,
+      true,
+      'Follow up kay nisaad by Monday',
+      null,
+      '2026-09-21'
+    )).toBe('Kada Sabado ang bayad');
   });
 });
