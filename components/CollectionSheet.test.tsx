@@ -4,6 +4,7 @@ import CollectionSheet from './CollectionSheet';
 import { store } from '../services/dataStore';
 import { Branch, LocationStatus, MovingStatus, PaymentStatus, UserRole, UserStatus } from '../types';
 import * as XLSX from 'xlsx';
+import * as routeOptimizer from '../services/collectionRouteOptimizer';
 
 vi.mock('../services/dataStore', () => ({
   store: {
@@ -162,6 +163,29 @@ describe('CollectionSheet', () => {
 
     expect(printSpy).toHaveBeenCalled();
     printSpy.mockRestore();
+  });
+
+  it('keeps alphabetical order by default and applies route order with one click', async () => {
+    vi.spyOn(routeOptimizer, 'buildCollectionRoutePlan').mockResolvedValue({
+      cityOrder: ['Naval'],
+      barangayOrderByCity: { naval: ['Poblacion', 'Caraycaray'] },
+      unresolvedStops: [],
+      originLabel: 'Lot 2 Block 3, Brgy. San Isidro, Ormoc City, Leyte',
+      resolvedOriginLabel: 'Lot 2 Block 3, Brgy. San Isidro, Ormoc City, Leyte',
+      routingMode: 'road',
+      routingWarning: null
+    });
+
+    render(<CollectionSheet currentUser={currentUser} selectedBranch={Branch.NAVAL} />);
+    fireEvent.click(screen.getByText('JOHN'));
+
+    expect(screen.getByText('Alphabetical').className).toContain('bg-slate-800');
+    expect(screen.getByLabelText('Route starting point')).toHaveValue('Lot 2 Block 3, Brgy. San Isidro, Ormoc City, Leyte');
+    fireEvent.click(screen.getByText('Auto Route'));
+    await screen.findByText(/Stops ordered by estimated driving distance/);
+
+    const barangayLabels = screen.getAllByText(/BARANGAY:/i).map(element => element.textContent?.trim());
+    expect(barangayLabels.slice(0, 2)).toEqual(['BARANGAY: Poblacion', 'BARANGAY: Caraycaray']);
   });
 
   it('prints the latest valid payment date with its amount below it', () => {

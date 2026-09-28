@@ -1,9 +1,15 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { store } from '../services/dataStore.ts';
 import { Loan, Collector, User, Branch, MovingStatus } from '../types.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 import { isReportableCollectionPayment } from '../services/loanUtils.ts';
+import {
+  buildCollectionRoutePlan,
+  cleanLocationLabel,
+  CollectionRoutePlan,
+  locationKey
+} from '../services/collectionRouteOptimizer.ts';
 import { formatMMDDYYYY } from '../constants.tsx';
 import * as XLSX from 'xlsx';
 
@@ -27,6 +33,87 @@ const getLastPayment = (loan: Loan) =>
       return String(payment.createdAt || '').localeCompare(String(latest.createdAt || '')) > 0 ? payment : latest;
     }, null);
 
+type CollectionOrderMode = 'alphabetical' | 'route';
+type GroupedLoans = Record<string, Record<string, Loan[]>>;
+
+const locationCollator = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
+
+const getDefaultRouteOrigin = (_branch?: Branch, _collectorArea?: string) =>
+  'Lot 2 Block 3, Brgy. San Isidro, Ormoc City, Leyte';
+
+const getOrderDescription = (orderMode: CollectionOrderMode, routePlan: CollectionRoutePlan | null, routeOrigin: string) => {
+  if (orderMode !== 'route') return 'Alphabetical by City and Barangay';
+  const method = routePlan?.routingMode === 'road' ? 'Approximate road-distance order' : 'Approximate straight-line order';
+  const caution = routePlan?.routingWarning ? ' (partial straight-line fallback)' : '';
+  return `${method}${caution} from ${routePlan?.resolvedOriginLabel || routePlan?.originLabel || routeOrigin}`;
+};
+
+const groupAndOrderLoans = (
+  loans: Loan[],
+  orderMode: CollectionOrderMode,
+  routePlan: CollectionRoutePlan | null
+): GroupedLoans => {
+  const cityNames = new Map<string, string>();
+  const barangayNames = new Map<string, Map<string, string>>();
+  const normalizedGroups = new Map<string, Map<string, Loan[]>>();
+
+  loans.forEach(loan => {
+    const city = cleanLocationLabel(loan.city, 'Unspecified City');
+    const barangay = cleanLocationLabel(loan.barangay, 'Unspecified Barangay');
+    const cityKey = locationKey(city);
+    const barangayKey = locationKey(barangay);
+
+    if (!cityNames.has(cityKey)) cityNames.set(cityKey, city);
+    if (!barangayNames.has(cityKey)) barangayNames.set(cityKey, new Map());
+    if (!barangayNames.get(cityKey)!.has(barangayKey)) barangayNames.get(cityKey)!.set(barangayKey, barangay);
+    if (!normalizedGroups.has(cityKey)) normalizedGroups.set(cityKey, new Map());
+    if (!normalizedGroups.get(cityKey)!.has(barangayKey)) normalizedGroups.get(cityKey)!.set(barangayKey, []);
+    normalizedGroups.get(cityKey)!.get(barangayKey)!.push(loan);
+  });
+
+  const cityRouteRanks = new Map(
+    (routePlan?.cityOrder || []).map((city, index) => [locationKey(city), index])
+  );
+  const cityKeys = [...normalizedGroups.keys()].sort((a, b) => {
+    if (orderMode === 'route' && routePlan) {
+      const aRank = cityRouteRanks.get(a) ?? Number.MAX_SAFE_INTEGER;
+      const bRank = cityRouteRanks.get(b) ?? Number.MAX_SAFE_INTEGER;
+      if (aRank !== bRank) return aRank - bRank;
+    }
+    return locationCollator.compare(cityNames.get(a) || a, cityNames.get(b) || b);
+  });
+
+  return cityKeys.reduce<GroupedLoans>((grouped, cityKey) => {
+    const city = cityNames.get(cityKey) || cityKey;
+    const barangays = normalizedGroups.get(cityKey)!;
+    const routeRanks = new Map(
+      (routePlan?.barangayOrderByCity[cityKey] || []).map((barangay, index) => [locationKey(barangay), index])
+    );
+    const barangayKeys = [...barangays.keys()].sort((a, b) => {
+      if (orderMode === 'route' && routePlan) {
+        const aRank = routeRanks.get(a) ?? Number.MAX_SAFE_INTEGER;
+        const bRank = routeRanks.get(b) ?? Number.MAX_SAFE_INTEGER;
+        if (aRank !== bRank) return aRank - bRank;
+      }
+      return locationCollator.compare(
+        barangayNames.get(cityKey)?.get(a) || a,
+        barangayNames.get(cityKey)?.get(b) || b
+      );
+    });
+
+    grouped[city] = barangayKeys.reduce<Record<string, Loan[]>>((cityGroup, barangayKey) => {
+      const barangay = barangayNames.get(cityKey)?.get(barangayKey) || barangayKey;
+      cityGroup[barangay] = [...(barangays.get(barangayKey) || [])].sort((a, b) =>
+        locationCollator.compare(a.fullAddress || '', b.fullAddress || '') ||
+        locationCollator.compare(a.lastName || '', b.lastName || '') ||
+        locationCollator.compare(a.firstName || '', b.firstName || '')
+      );
+      return cityGroup;
+    }, {});
+    return grouped;
+  }, {});
+};
+
 const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => {
   const [selectedCollector, setSelectedCollector] = useState<Collector | null>(null);
   const [loans, setLoans] = useState(store.getLoans(selectedBranch));
@@ -36,6 +123,12 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
   const [filterToDate, setFilterToDate] = useState<string>('');
   const [filterCity, setFilterCity] = useState<string>('');
   const [filterBarangay, setFilterBarangay] = useState<string>('');
+  const [orderMode, setOrderMode] = useState<CollectionOrderMode>('alphabetical');
+  const [routePlan, setRoutePlan] = useState<CollectionRoutePlan | null>(null);
+  const [routeOrigin, setRouteOrigin] = useState(getDefaultRouteOrigin(selectedBranch));
+  const [isOptimizingRoute, setIsOptimizingRoute] = useState(false);
+  const [routeFeedback, setRouteFeedback] = useState('');
+  const routeRequestIdRef = useRef(0);
 
   const formatDateForDisplay = (dateString: string) => {
     if (!dateString) return '';
@@ -59,6 +152,16 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
       refreshData();
     });
     return () => unsubscribe();
+  }, [selectedBranch]);
+
+  useEffect(() => {
+    routeRequestIdRef.current += 1;
+    setSelectedCollector(null);
+    setOrderMode('alphabetical');
+    setRoutePlan(null);
+    setRouteOrigin(getDefaultRouteOrigin(selectedBranch));
+    setRouteFeedback('');
+    setIsOptimizingRoute(false);
   }, [selectedBranch]);
 
   const collectorLoansBeforeLocationFilter = useMemo(() => {
@@ -95,13 +198,52 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
   );
 
   const groupedLoans = useMemo(() => {
-    return collectorLoans.reduce((acc, loan) => {
-      if (!acc[loan.city]) acc[loan.city] = {};
-      if (!acc[loan.city][loan.barangay]) acc[loan.city][loan.barangay] = [];
-      acc[loan.city][loan.barangay].push(loan);
-      return acc;
-    }, {} as Record<string, Record<string, Loan[]>>);
-  }, [collectorLoans]);
+    return groupAndOrderLoans(collectorLoans, orderMode, routePlan);
+  }, [collectorLoans, orderMode, routePlan]);
+
+  const resetRouteOrder = (branch = selectedBranch, collectorArea?: string) => {
+    routeRequestIdRef.current += 1;
+    setOrderMode('alphabetical');
+    setRoutePlan(null);
+    setRouteOrigin(getDefaultRouteOrigin(branch, collectorArea));
+    setRouteFeedback('');
+    setIsOptimizingRoute(false);
+  };
+
+  const handleArrangeRoute = async () => {
+    if (!selectedCollector || collectorLoans.length === 0 || isOptimizingRoute) return;
+    const requestId = routeRequestIdRef.current + 1;
+    routeRequestIdRef.current = requestId;
+    const routeLoans = collectorLoans;
+    const routeStart = routeOrigin.trim();
+    setIsOptimizingRoute(true);
+    setRouteFeedback('Locating cities and barangays. First use may take a moment; saved locations are faster next time.');
+    try {
+      const plan = await buildCollectionRoutePlan(routeLoans, routeStart);
+      if (routeRequestIdRef.current !== requestId) return;
+      setRoutePlan(plan);
+      setOrderMode('route');
+      const originNote = !plan.resolvedOriginLabel
+        ? 'Starting address could not be located; the order may not start near the office.'
+        : locationKey(plan.resolvedOriginLabel) !== locationKey(routeStart)
+          ? `Using ${plan.resolvedOriginLabel} as the approximate starting map point.`
+          : '';
+      const methodNote = plan.routingMode === 'road'
+        ? 'Stops ordered by estimated driving distance.'
+        : 'Road routing unavailable; stops ordered by straight-line distance.';
+      const unresolvedNote = plan.unresolvedStops.length
+        ? `${plan.unresolvedStops.length} location(s) could not be mapped and stayed alphabetically placed.`
+        : '';
+      setRouteFeedback([originNote, methodNote, unresolvedNote, plan.routingWarning].filter(Boolean).join(' '));
+    } catch (error) {
+      if (routeRequestIdRef.current !== requestId) return;
+      setOrderMode('alphabetical');
+      setRoutePlan(null);
+      setRouteFeedback(error instanceof Error ? `${error.message}. Alphabetical order was kept.` : 'Route lookup failed. Alphabetical order was kept.');
+    } finally {
+      if (routeRequestIdRef.current === requestId) setIsOptimizingRoute(false);
+    }
+  };
 
   const arrangedCollectors = useMemo(() => {
     return collectors
@@ -380,6 +522,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                   setFilterToDate('');
                   setFilterCity('');
                   setFilterBarangay('');
+                  resetRouteOrder(c.branch, c.address);
                 }}
                 className="group relative overflow-hidden rounded-lg border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/10 active:translate-y-0 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-emerald-700 dark:hover:shadow-emerald-950/30"
               >
@@ -449,6 +592,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
       ['Collector', (selectedCollector.nickname || selectedCollector.name).toUpperCase()],
       ['Branch', selectedBranch],
       ['Generated', new Date().toLocaleString('en-PH')],
+      ['Order', getOrderDescription(orderMode, routePlan, routeOrigin)],
       ['Due Date Range', `${filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} to ${filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}`],
       ['City', filterCity || 'All cities'],
       ['Barangay', filterBarangay || 'All barangays'],
@@ -505,6 +649,7 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                   setFilterToDate('');
                   setFilterCity('');
                   setFilterBarangay('');
+                  resetRouteOrder();
                 }}
                 className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition-all hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-emerald-800 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-300"
                 title="Back to Selection"
@@ -617,6 +762,64 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
             )}
           </div>
 
+          <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 dark:border-slate-800 xl:flex-row xl:items-center">
+            <span className="flex min-w-fit items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+              Sheet Order:
+            </span>
+            <input
+              aria-label="Route starting point"
+              value={routeOrigin}
+              disabled={isOptimizingRoute}
+              onChange={(event) => {
+                setRouteOrigin(event.target.value);
+                if (orderMode === 'route') {
+                  setOrderMode('alphabetical');
+                  setRoutePlan(null);
+                  setRouteFeedback('Starting point changed. Click Auto Route to recalculate.');
+                }
+              }}
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none transition-colors focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+              placeholder="Office starting point"
+            />
+            <span className="max-w-[220px] text-[9px] font-medium text-slate-400 dark:text-slate-500">Orders by estimated driving distance between locality points. Edit for another start address.</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  routeRequestIdRef.current += 1;
+                  setIsOptimizingRoute(false);
+                  setOrderMode('alphabetical');
+                  setRoutePlan(null);
+                  setRouteFeedback('Alphabetical City and Barangay order restored.');
+                }}
+                className={`rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-wider transition-all ${orderMode === 'alphabetical' ? 'border-slate-700 bg-slate-800 text-white dark:border-slate-200 dark:bg-slate-100 dark:text-slate-950' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'}`}
+              >
+                Alphabetical
+              </button>
+              <button
+                type="button"
+                onClick={handleArrangeRoute}
+                disabled={collectorLoans.length === 0 || isOptimizingRoute || !routeOrigin.trim()}
+                className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-[10px] font-black uppercase tracking-wider shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50 ${orderMode === 'route' ? 'border-sky-600 bg-sky-600 text-white' : 'border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white dark:border-sky-800 dark:bg-sky-900/20 dark:text-sky-300'}`}
+              >
+                {isOptimizingRoute ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true"></span>
+                ) : (
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                )}
+                {isOptimizingRoute ? 'Arranging…' : 'Auto Route'}
+              </button>
+            </div>
+          </div>
+
+          {(routeFeedback || orderMode === 'route') && (
+            <div className={`rounded-lg border px-4 py-2 text-[10px] font-bold ${orderMode === 'route' ? 'border-sky-100 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-900/20 dark:text-sky-300' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400'}`}>
+              {routeFeedback || 'Route order is active.'}
+              {orderMode === 'route' && <span className="ml-1">Map data © OpenStreetMap contributors.</span>}
+            </div>
+          )}
+
           {(filterFromDate || filterToDate || filterCity || filterBarangay) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
             <div className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-900/20 dark:text-emerald-300">
                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
@@ -695,6 +898,12 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
             }}>
               FIELD COLLECTION FORM
             </div>
+            <div style={{ fontSize: '8pt', fontWeight: '700', marginTop: '4px', color: '#444' }}>
+              Order: {getOrderDescription(orderMode, routePlan, routeOrigin)}
+            </div>
+            {orderMode === 'route' && (
+              <div style={{ fontSize: '6.5pt', marginTop: '2px', color: '#666' }}>Map data © OpenStreetMap contributors</div>
+            )}
             {(filterFromDate || filterToDate) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
               <div style={{ fontSize: '10pt', fontWeight: '800', marginTop: '6px' }}>
                 Due Date Range: {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
