@@ -355,4 +355,40 @@ describe('WriteOff', () => {
     expect(screen.getByText('PHP 10,000.00')).toBeInTheDocument();
     expect(screen.queryByText('PHP 36,000.00')).not.toBeInTheDocument();
   });
+
+  it('renders Export Excel, Export PDF, and Print buttons and handles exports', () => {
+    (store.getLoans as any).mockReturnValue([loan]);
+    (store.getAllDispositions as any).mockReturnValue([disposition]);
+    (store.getDeadWriteOffs as any).mockReturnValue([]);
+    (store.isDeadWriteOff as any).mockReturnValue(false);
+
+    const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => ({
+      document: {
+        write: vi.fn(),
+        close: vi.fn()
+      },
+      focus: vi.fn(),
+      print: vi.fn()
+    } as any));
+
+    render(<WriteOff currentUser={makeUser(UserRole.EXECUTIVE_VICE_PRESIDENT)} selectedBranch={Branch.ORMOC} />);
+
+    const excelBtn = screen.getByRole('button', { name: /excel/i });
+    const pdfBtn = screen.getByRole('button', { name: /pdf/i });
+    const printBtn = screen.getByRole('button', { name: /print/i });
+
+    expect(excelBtn).toBeInTheDocument();
+    expect(pdfBtn).toBeInTheDocument();
+    expect(printBtn).toBeInTheDocument();
+
+    fireEvent.click(pdfBtn);
+    expect(windowOpenSpy).toHaveBeenCalledWith('', '_blank');
+
+    fireEvent.click(printBtn);
+    expect(windowOpenSpy).toHaveBeenCalledTimes(2);
+
+    windowOpenSpy.mockRestore();
+  });
 });
+
+

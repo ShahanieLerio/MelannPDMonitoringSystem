@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { store } from '../services/dataStore.ts';
-import { Loan, Collector, User, Branch, MovingStatus, LocationStatus } from '../types.ts';
+import { Loan, Collector, User, Branch, MovingStatus, LocationStatus, DispositionStatus, DispositionType } from '../types.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 import { STATUS_COLORS, formatMMDDYYYY } from '../constants.tsx';
 import logo from '../assets/no bg.png';
@@ -18,12 +18,33 @@ interface CollectorMaturitySummary {
   totalPrincipal: number;
   totalCollected: number;
   totalRunningBalance: number;
+  writeOffPendingBalance: number;
+  writeOffPendingClients: number;
+  balanceExcludingWriteOffPending: number;
   collectionRate: number;
 }
 
 const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBranch }) => {
   const [loans, setLoans] = useState<Loan[]>(store.getLoans(selectedBranch));
   const [collectors, setCollectors] = useState<Collector[]>(store.getCollectors(selectedBranch));
+
+  const pendingWriteOffLoanIds = useMemo(() => {
+    const pendingIds = new Set<string>();
+    loans.forEach(loan => {
+      const latestWriteOffDisposition = store.getDispositions(loan.id).find(disposition =>
+        disposition.type === DispositionType.PROSPECT_WRITE_OFF || disposition.type === DispositionType.DEAD_ACCOUNT
+      );
+      if (latestWriteOffDisposition?.status === DispositionStatus.PENDING_REVIEW) {
+        pendingIds.add(loan.id);
+      }
+    });
+    store.getDeadWriteOffs(selectedBranch).forEach(loan => {
+      if (!store.getDispositions(loan.id).some(disposition =>
+        disposition.type === DispositionType.PROSPECT_WRITE_OFF || disposition.type === DispositionType.DEAD_ACCOUNT
+      )) pendingIds.add(loan.id);
+    });
+    return pendingIds;
+  }, [loans, selectedBranch]);
 
   // Filter States
   const [filterPreset, setFilterPreset] = useState<string>('all');
@@ -142,6 +163,8 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
       totalPrincipal: number;
       totalCollected: number;
       totalRunningBalance: number;
+      writeOffPendingBalance: number;
+      writeOffPendingClients: number;
     }>();
 
     dateFilteredLoans.forEach(loan => {
@@ -158,6 +181,8 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
         totalPrincipal: 0,
         totalCollected: 0,
         totalRunningBalance: 0,
+        writeOffPendingBalance: 0,
+        writeOffPendingClients: 0,
       };
 
       current.totalAccounts += 1;
@@ -169,6 +194,10 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
       current.totalPrincipal += principal;
       current.totalCollected += collected;
       current.totalRunningBalance += balance;
+      if (pendingWriteOffLoanIds.has(loan.id)) {
+        current.writeOffPendingBalance += balance;
+        current.writeOffPendingClients += 1;
+      }
 
       map.set(coll, current);
     });
@@ -179,13 +208,14 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
       result.push({
         collector: coll,
         ...data,
+        balanceExcludingWriteOffPending: data.totalRunningBalance - data.writeOffPendingBalance,
         collectionRate,
       });
     });
 
     // Sort by Total Running Balance descending by default, then collector name
     return result.sort((a, b) => b.totalRunningBalance - a.totalRunningBalance || a.collector.localeCompare(b.collector));
-  }, [dateFilteredLoans, collectors]);
+  }, [dateFilteredLoans, collectors, pendingWriteOffLoanIds]);
 
   // Grand Totals for summary cards and table footers
   const grandTotals = useMemo(() => {
@@ -201,6 +231,10 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
       acc.totalPrincipal += principal;
       acc.totalCollected += collected;
       acc.totalRunningBalance += balance;
+      if (pendingWriteOffLoanIds.has(l.id)) {
+        acc.writeOffPendingBalance += balance;
+        acc.writeOffPendingClients += 1;
+      }
       return acc;
     }, {
       totalAccounts: 0,
@@ -209,8 +243,12 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
       totalPrincipal: 0,
       totalCollected: 0,
       totalRunningBalance: 0,
+      writeOffPendingBalance: 0,
+      writeOffPendingClients: 0,
     });
-  }, [dateFilteredLoans]);
+  }, [dateFilteredLoans, pendingWriteOffLoanIds]);
+
+  const grandBalanceExcludingWriteOffPending = grandTotals.totalRunningBalance - grandTotals.writeOffPendingBalance;
 
   const grandCollectionRate = grandTotals.totalPrincipal > 0
     ? (grandTotals.totalCollected / grandTotals.totalPrincipal) * 100
@@ -738,6 +776,8 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
                 <th className="py-3 px-4 text-right">Total Principal</th>
                 <th className="py-3 px-4 text-right">Collected Amount</th>
                 <th className="py-3 px-4 text-right">Running Balance</th>
+                <th className="py-3 px-4 text-right">Write-Off Pending Balance</th>
+                <th className="py-3 px-4 text-right">Running Balance Excl. Pending</th>
                 <th className="py-3 px-4 text-center">Efficiency</th>
                 <th className="py-3 px-4 text-center no-print">Action</th>
               </tr>
@@ -745,7 +785,7 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 text-xs">
               {collectorSummaries.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-slate-400 italic">
+                  <td colSpan={11} className="py-8 text-center text-slate-400 italic">
                     No accounts found for the specified maturity date range and filters.
                   </td>
                 </tr>
@@ -783,6 +823,13 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
                       </td>
                       <td className="py-3 px-4 text-right font-black text-red-600 dark:text-red-400">
                         ₱{summary.totalRunningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-4 text-right font-black text-amber-700 dark:text-amber-300">
+                        <div>₱{summary.writeOffPendingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        <div className="text-[10px] font-bold text-slate-400">{summary.writeOffPendingClients} clients</div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-black text-slate-700 dark:text-slate-200">
+                        ₱{summary.balanceExcludingWriteOffPending.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className="py-3 px-4 text-center font-black">
                         <span className={`px-2 py-0.5 rounded text-[10px] ${
@@ -831,6 +878,13 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
                   </td>
                   <td className="py-3.5 px-4 text-right text-red-600 dark:text-red-400">
                     ₱{grandTotals.totalRunningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-3.5 px-4 text-right text-amber-700 dark:text-amber-300">
+                    <div>₱{grandTotals.writeOffPendingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="text-[10px] font-bold text-slate-400">{grandTotals.writeOffPendingClients} clients</div>
+                  </td>
+                  <td className="py-3.5 px-4 text-right">
+                    ₱{grandBalanceExcludingWriteOffPending.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className="py-3.5 px-4 text-center text-emerald-600 dark:text-emerald-400">
                     {grandCollectionRate.toFixed(1)}%
@@ -965,6 +1019,11 @@ const LoansMaturityChecker: React.FC<LoansMaturityCheckerProps> = ({ selectedBra
                       <td className="py-2.5 px-4 font-black text-slate-800 dark:text-slate-100">
                         <div>
                           <span>{loan.borrowerName}</span>
+                          {pendingWriteOffLoanIds.has(loan.id) && (
+                            <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                              Pending Write-Off
+                            </span>
+                          )}
                           {loan.contactNumber && (
                             <span className="block text-[10px] font-normal text-slate-400">
                               📞 {loan.contactNumber}

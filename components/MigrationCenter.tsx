@@ -51,7 +51,7 @@ const MigrationCenter: React.FC<MigrationCenterProps> = ({ currentUser, onMigrat
         heading: 'Modern Migration',
         scanLabel: 'Modern database',
         noAccountsLabel: 'active accounts',
-        sourcePath: 'C:\\Users\\Admin\\OneDrive\\Documents\\PRD\\ModernizationMelannSystem\\server\\melann.db',
+        sourcePath: 'F:\\SystemProjects\\PastDueModernMigration_Reader\\melann.db',
         batchPrefix: 'modern'
       }
     : {

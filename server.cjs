@@ -28,8 +28,8 @@ const PAYMENT_DUPLICATE_DATE_INDEX = 'payments_loan_id_date_unique';
 const JCASHDB_PATH = process.env.JCASHDB_PATH || '\\\\SERVERPC\\LendingV2Melan\\db\\jcashdb.mdb';
 const JCASHDB_PASSWORD = process.env.JCASHDB_PASSWORD || '';
 const JCASHDB_BRANCH = process.env.JCASHDB_BRANCH || 'Ormoc Branch';
-const MODERN_MIGRATION_DB_PATH = process.env.MODERN_MIGRATION_DB_PATH || 'C:\\Users\\Admin\\OneDrive\\Documents\\PRD\\ModernizationMelannSystem\\server\\melann.db';
-const MODERN_MIGRATION_SQLITE3_MODULE = process.env.MODERN_MIGRATION_SQLITE3_MODULE || path.join(path.dirname(MODERN_MIGRATION_DB_PATH), 'node_modules', 'sqlite3');
+const MODERN_MIGRATION_DB_PATH = process.env.MODERN_MIGRATION_DB_PATH || 'F:\\SystemProjects\\PastDueModernMigration_Reader\\melann.db';
+const MODERN_MIGRATION_SQLITE3_MODULE = process.env.MODERN_MIGRATION_SQLITE3_MODULE || 'sqlite3';
 const MIGRATION_ANCHOR_START = process.env.JCASHDB_CYCLE_ANCHOR_START || '2016-01-01';
 const MIGRATION_FIRST_CYCLE_END = process.env.JCASHDB_FIRST_CYCLE_END || '2026-03-31';
 const MIGRATION_TEMP_DIR = process.env.JCASHDB_SCAN_TEMP_DIR || 'C:\\tmp';
@@ -537,13 +537,27 @@ const getModernSqlite3 = () => {
     return modernSqlite3;
 };
 
-const openModernMigrationDb = () => new Promise((resolve, reject) => {
+const openModernMigrationDb = async () => {
+    try {
+        await fs.promises.access(MODERN_MIGRATION_DB_PATH, fs.constants.R_OK);
+        const stats = await fs.promises.stat(MODERN_MIGRATION_DB_PATH);
+        if (!stats.isFile()) throw new Error('Configured path is not a file.');
+    } catch (err) {
+        throw new Error(
+            `Cannot read the Modern migration database at ${MODERN_MIGRATION_DB_PATH}. ` +
+            'Check that the file exists and that the Windows account running this backend has read access to its folder/share. ' +
+            `You can set MODERN_MIGRATION_DB_PATH in .env.local to an accessible .db file. (${err.code || err.message})`
+        );
+    }
+
     const sqlite3 = getModernSqlite3();
-    const db = new sqlite3.Database(MODERN_MIGRATION_DB_PATH, sqlite3.OPEN_READONLY, (err) => {
-        if (err) reject(new Error(`Unable to open read-only Modern migration database ${MODERN_MIGRATION_DB_PATH}: ${err.message}`));
-        else resolve(db);
+    return new Promise((resolve, reject) => {
+        const db = new sqlite3.Database(MODERN_MIGRATION_DB_PATH, sqlite3.OPEN_READONLY, (err) => {
+            if (err) reject(new Error(`Unable to open read-only Modern migration database ${MODERN_MIGRATION_DB_PATH}: ${err.message}`));
+            else resolve(db);
+        });
     });
-});
+};
 
 const sqliteAll = (db, sql, params = []) => new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || []));
