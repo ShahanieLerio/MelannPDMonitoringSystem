@@ -1,76 +1,85 @@
+const fs = require('fs');
+const path = require('path');
 const { Pool } = require('pg');
+const { getReportedDateForDueDate } = require('./reportingCycle.cjs');
+const { calculateReportedAmount } = require('./reportedAmount.cjs');
 require('dotenv').config({ path: '.env.local' });
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const apply = process.argv.includes('--apply');
 
-function getReportedMonth(dueDateStr) {
-    const d = new Date(dueDateStr);
-    const year = d.getFullYear();
-    const month = d.getMonth() + 1; // 1-12
-    const day = d.getDate();
-
-    let cycleNum;
-    if (month === 1) cycleNum = 1;
-    else if (month === 2 && day <= 15) cycleNum = 1;
-    else if (month === 2 && day > 15) cycleNum = 2;
-    else if (month === 3) cycleNum = 2;
-    else if (month === 4) cycleNum = 3;
-    else if (month === 5 && day <= 15) cycleNum = 3;
-    else if (month === 5 && day > 15) cycleNum = 4;
-    else if (month === 6) cycleNum = 4;
-    else if (month === 7) cycleNum = 5;
-    else if (month === 8 && day <= 15) cycleNum = 5;
-    else if (month === 8 && day > 15) cycleNum = 6;
-    else if (month === 9) cycleNum = 6;
-    else if (month === 10) cycleNum = 7;
-    else if (month === 11 && day <= 15) cycleNum = 7;
-    else if (month === 11 && day > 15) cycleNum = 8;
-    else if (month === 12) cycleNum = 8;
-
-    let reportedMonthNum = 0;
-    let reportedYear = year;
-
-    if (cycleNum === 1) reportedMonthNum = 4;
-    else if (cycleNum === 2) reportedMonthNum = 5;
-    else if (cycleNum === 3) reportedMonthNum = 7;
-    else if (cycleNum === 4) reportedMonthNum = 8;
-    else if (cycleNum === 5) reportedMonthNum = 10;
-    else if (cycleNum === 6) reportedMonthNum = 11;
-    else if (cycleNum === 7) { reportedMonthNum = 1; reportedYear++; }
-    else if (cycleNum === 8) { reportedMonthNum = 2; reportedYear++; }
-
-    return `${reportedYear}-${String(reportedMonthNum).padStart(2, '0')}`;
-}
-
-async function updateMonthReported2025() {
+async function main() {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        
-        console.log('Fetching loans with due_date >= 2025-01-01...');
-        const res = await client.query(`SELECT id, due_date FROM loans WHERE due_date >= '2025-01-01'`);
-        
-        console.log(`Found ${res.rowCount} records to update.`);
-        
-        let updateCount = 0;
-        for (const row of res.rows) {
-            const newReported = getReportedMonth(row.due_date);
-            await client.query(
-                `UPDATE loans SET month_reported = $1 WHERE id = $2`,
-                [newReported, row.id]
-            );
-            updateCount++;
+        const result = await client.query(
+            "SELECT id, code, borrower_name, branch, due_date, month_reported, total_loan, amount_collected, outstanding_balance FROM loans WHERE due_date >= '2025-01-01' ORDER BY id FOR UPDATE"
+        );
+        const paymentsResult = await client.query(
+            "SELECT p.loan_id, p.amount, p.date, p.status, p.remarks FROM payments p JOIN loans l ON l.id = p.loan_id WHERE l.due_date >= '2025-01-01'"
+        );
+        const paymentsByLoan = new Map();
+        for (const payment of paymentsResult.rows) {
+            if (!paymentsByLoan.has(payment.loan_id)) paymentsByLoan.set(payment.loan_id, []);
+            paymentsByLoan.get(payment.loan_id).push(payment);
         }
-        
+        const changes = result.rows.map(row => {
+            const afterDate = getReportedDateForDueDate(row.due_date);
+            const financials = calculateReportedAmount(row, paymentsByLoan.get(row.id) || [], afterDate);
+            return {
+                id: row.id,
+                code: row.code,
+                borrowerName: row.borrower_name,
+                dueDate: row.due_date,
+                beforeDate: row.month_reported,
+                afterDate,
+                beforeReportedAmount: Number(row.outstanding_balance),
+                afterReportedAmount: financials.reportedAmount,
+                sourceAdjustment: financials.sourceAdjustment,
+                cashBeforeReport: financials.cashBeforeReport
+            };
+        }).filter(row => row.beforeDate !== row.afterDate || row.beforeReportedAmount !== row.afterReportedAmount);
+
+        if (!apply) {
+            const monthChanges = changes.filter(row => row.beforeDate?.slice(0, 7) !== row.afterDate.slice(0, 7));
+            const amountChanges = changes.filter(row => row.beforeReportedAmount !== row.afterReportedAmount);
+            const reportedAmountDelta = Math.round(amountChanges.reduce((sum, row) => sum + row.afterReportedAmount - row.beforeReportedAmount, 0) * 100) / 100;
+            console.log(JSON.stringify({ mode: 'dry-run', inspected: result.rowCount, changes: changes.length, differentMonthCount: monthChanges.length, reportedAmountChanges: amountChanges.length, reportedAmountDelta, differentMonthSample: monthChanges.slice(0, 8), amountChangeSample: amountChanges.slice(0, 12), adaro: changes.find(row => row.id === '41062') }, null, 2));
+            await client.query('ROLLBACK');
+            return;
+        }
+
+        if (changes.length === 0) {
+            await client.query('ROLLBACK');
+            console.log('No reporting dates or reported amounts need updating.');
+            return;
+        }
+
+        const backupDir = path.join(__dirname, 'generated-reports');
+        fs.mkdirSync(backupDir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupPath = path.join(backupDir, `reported-cycle-and-amount-backup-${stamp}.json`);
+        fs.writeFileSync(backupPath, JSON.stringify({ createdAt: new Date().toISOString(), changes }, null, 2));
+
+        for (const row of changes) {
+            const updated = await client.query(
+                'UPDATE loans SET month_reported = $1, outstanding_balance = $2 WHERE id = $3 AND month_reported = $4 AND outstanding_balance = $5',
+                [row.afterDate, row.afterReportedAmount, row.id, row.beforeDate, row.beforeReportedAmount]
+            );
+            if (updated.rowCount !== 1) throw new Error(`Reporting date changed during update for loan ${row.id}.`);
+        }
         await client.query('COMMIT');
-        console.log(`Successfully updated ${updateCount} records with the new 45-day cycle logic.`);
-    } catch (err) {
+        console.log(JSON.stringify({ mode: 'applied', updated: changes.length, backupPath }, null, 2));
+    } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Error during update, transaction rolled back.', err);
+        throw error;
     } finally {
         client.release();
-        pool.end();
+        await pool.end();
     }
 }
 
-updateMonthReported2025();
+main().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});

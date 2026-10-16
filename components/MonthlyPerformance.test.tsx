@@ -72,8 +72,8 @@ describe('MonthlyPerformance', () => {
         collector: 'TORRETA',
         code: 'C-001',
         borrowerName: 'SANTOS, MARIA',
-        monthReported: '2026-05',
-        dueDate: '2026-05-15',
+        monthReported: '2026-05-16',
+        dueDate: '2026-02-16',
         totalLoan: 40000,
         outstandingBalance: 40000,
         area: 'ISABEL - PALOMPON'
@@ -83,8 +83,8 @@ describe('MonthlyPerformance', () => {
         collector: 'TORRETA',
         code: 'C-002',
         borrowerName: 'CRUZ, ANA',
-        monthReported: '2026-05',
-        dueDate: '2026-05-20',
+        monthReported: '2026-05-16',
+        dueDate: '2026-03-20',
         totalLoan: 29996,
         outstandingBalance: 29996,
         area: 'ISABEL - PALOMPON'
@@ -118,9 +118,9 @@ describe('MonthlyPerformance', () => {
     expect(screen.getAllByText('TORRETA').length).toBeGreaterThan(1);
     expect(screen.getByText('SANTOS, MARIA')).toBeInTheDocument();
     expect(screen.getByText('CRUZ, ANA')).toBeInTheDocument();
-    expect(screen.getAllByText('May 2026').length).toBeGreaterThan(1);
-    expect(screen.getByText('May 15, 2026')).toBeInTheDocument();
-    expect(screen.getByText('May 20, 2026')).toBeInTheDocument();
+    expect(screen.getAllByText('May 16, 2026').length).toBeGreaterThan(1);
+    expect(screen.getByText('Feb 16, 2026')).toBeInTheDocument();
+    expect(screen.getByText('Mar 20, 2026')).toBeInTheDocument();
     expect(screen.getByText(/40,000/)).toBeInTheDocument();
     expect(screen.getByText(/29,996/)).toBeInTheDocument();
     expect(screen.getAllByText(/69,996/).length).toBeGreaterThan(1);

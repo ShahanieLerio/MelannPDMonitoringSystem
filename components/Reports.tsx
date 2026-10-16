@@ -33,7 +33,10 @@ interface CombinedCollectorEfficiencyRow {
   activeAccountCount: number;
   reportedAmount: number;
   collectedAmount: number;
+  actualCollectedAmount: number;
   runningBalance: number;
+  excessCollection: number;
+  writeOffValidCollections: number;
   collectionRate: number;
   reconstructed: { count: number; amount: number };
   located: CategoryStatusBreakdown;
@@ -67,7 +70,8 @@ const calculateWriteOffFinancials = (loan: Loan) => {
 
 const getCollectorModuleStats = (
   branch: Branch,
-  yearRange?: { from: number; to: number }
+  yearRange?: { from: number; to: number },
+  maturityRange?: { from?: string; to?: string }
 ): Record<string, CollectorModuleStats> => {
   const loans = store.getLoans ? store.getLoans(branch) : [];
   const dispositions = store.getAllDispositions ? store.getAllDispositions() : [];
@@ -129,8 +133,11 @@ const getCollectorModuleStats = (
 
   // 1. Write-off statistics
   latestProspectByLoan.forEach((disposition, loanId) => {
+    if (disposition.status === DispositionStatus.REJECTED) return;
     const loan = loansById.get(loanId);
     if (!loan) return;
+    if (maturityRange?.from && (!loan.dueDate || loan.dueDate < maturityRange.from)) return;
+    if (maturityRange?.to && (!loan.dueDate || loan.dueDate > maturityRange.to)) return;
 
     if (yearRange) {
       const reportedYear = Number((loan.monthReported || '').slice(0, 4));
@@ -192,6 +199,8 @@ const getCollectorModuleStats = (
 
   // 2. Reconstructed statistics from loans
   loans.forEach(loan => {
+    if (maturityRange?.from && (!loan.dueDate || loan.dueDate < maturityRange.from)) return;
+    if (maturityRange?.to && (!loan.dueDate || loan.dueDate > maturityRange.to)) return;
     if (yearRange) {
       const reportedYear = Number((loan.monthReported || '').slice(0, 4));
       if (!reportedYear || reportedYear < yearRange.from || reportedYear > yearRange.to) return;
@@ -227,48 +236,68 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
     { id: '2025', label: '2025', from: 2025, to: 2025 },
     { id: '2026', label: '2026', from: 2026, to: 2026 }
   ];
-  const [performanceScope, setPerformanceScope] = useState<'overall' | 'yearly'>('overall');
-  const [selectedYearlyPeriod, setSelectedYearlyPeriod] = useState(yearlyPeriods[0].id);
+  const [reportBasis, setReportBasis] = useState<'reported' | 'maturity'>('reported');
+  const [reportedPeriod, setReportedPeriod] = useState('overall');
+  const [maturityPeriod, setMaturityPeriod] = useState('overall');
+  const [asOfDate, setAsOfDate] = useState('');
   const [selectedYearlyCollector, setSelectedYearlyCollector] = useState<string | null>(null);
-  const [collectorData, setCollectorData] = useState(store.getCollectorPerformance(selectedBranch));
+  const [activeCollectorData, setActiveCollectorData] = useState(store.getCollectorPerformance(selectedBranch));
   const activeReport = activeView || 'performance';
-  const activeYearlyPeriod = yearlyPeriods.find(period => period.id === selectedYearlyPeriod) || yearlyPeriods[0];
-  const [yearlyCollectorData, setYearlyCollectorData] = useState(
-    store.getCollectorPerformance(selectedBranch, { from: activeYearlyPeriod.from, to: activeYearlyPeriod.to })
-  );
+  const selectedPeriod = reportBasis === 'reported' ? reportedPeriod : maturityPeriod;
+  const activeYearlyPeriod = yearlyPeriods.find(period => period.id === selectedPeriod);
+  const reportedYearRange = reportBasis === 'reported' && activeYearlyPeriod
+    ? { from: activeYearlyPeriod.from, to: activeYearlyPeriod.to } : undefined;
+  const maturityRange = reportBasis === 'maturity' && activeYearlyPeriod
+    ? { from: `${activeYearlyPeriod.from}-01-01`, to: `${activeYearlyPeriod.to}-12-31` } : undefined;
   const getActiveAccountCount = (p: { totalAccounts: number; activeAccountCount?: number; paidCount?: number }) =>
     p.activeAccountCount ?? Math.max(0, p.totalAccounts - (p.paidCount || 0));
+  const today = new Date();
+  const todayLocal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
   useEffect(() => {
-    setCollectorData(store.getCollectorPerformance(selectedBranch));
-    setYearlyCollectorData(store.getCollectorPerformance(selectedBranch, { from: activeYearlyPeriod.from, to: activeYearlyPeriod.to }));
+    const refresh = () => {
+      if (reportBasis === 'maturity') {
+        setActiveCollectorData(store.getCollectorPerformance(selectedBranch, undefined, asOfDate || undefined, maturityRange));
+      } else if (reportedYearRange) {
+        setActiveCollectorData(asOfDate
+          ? store.getCollectorPerformance(selectedBranch, reportedYearRange, asOfDate)
+          : store.getCollectorPerformance(selectedBranch, reportedYearRange));
+      } else if (asOfDate) {
+        setActiveCollectorData(store.getCollectorPerformance(selectedBranch, undefined, asOfDate));
+      } else {
+        setActiveCollectorData(store.getCollectorPerformance(selectedBranch));
+      }
+    };
+    refresh();
     // Subscribe to store updates for real-time sync
-    const unsubscribe = store.subscribe(() => {
-      setCollectorData(store.getCollectorPerformance(selectedBranch));
-      setYearlyCollectorData(store.getCollectorPerformance(selectedBranch, { from: activeYearlyPeriod.from, to: activeYearlyPeriod.to }));
-    });
+    const unsubscribe = store.subscribe(refresh);
     return () => unsubscribe();
-  }, [selectedBranch, activeYearlyPeriod.from, activeYearlyPeriod.to]);
+  }, [selectedBranch, reportBasis, selectedPeriod, asOfDate]);
 
-  const activeCollectorData = performanceScope === 'yearly' ? yearlyCollectorData : collectorData;
-  const matrixTitle = performanceScope === 'yearly' ? 'Yearly Collector Efficiency Matrix' : 'Collector Efficiency Matrix';
-  const matrixSubtitle = performanceScope === 'yearly'
-    ? `Reported accounts for ${activeYearlyPeriod.label}: ${selectedBranch}`
-    : `Real-time stats for: ${selectedBranch}`;
-  const exportScopeLabel = performanceScope === 'yearly' ? activeYearlyPeriod.label : 'Overall';
+  const basisLabel = reportBasis === 'reported' ? 'Monthly Reported' : 'Maturity Date';
+  const matrixTitle = `${basisLabel} Collector Efficiency Matrix`;
+  const matrixSubtitle = `Based on ${basisLabel.toLowerCase()} · ${activeYearlyPeriod?.label || 'Overall'} · ${selectedBranch}${asOfDate ? ` · Collections as of ${asOfDate}` : ''}`;
+  const exportScopeLabel = `${reportBasis === 'reported' ? 'Month_Reported' : 'Maturity_Date'}_${activeYearlyPeriod?.label || 'Overall'}`;
   const selectedCollectorSummary = selectedYearlyCollector
-    ? yearlyCollectorData.find(p => p.collector === selectedYearlyCollector) || null
+    ? activeCollectorData.find(p => p.collector === selectedYearlyCollector) || null
     : null;
   const selectedCollectorClients: CollectorPerformanceClientDetail[] = selectedYearlyCollector
-    ? store.getCollectorPerformanceDetails(selectedBranch, selectedYearlyCollector, { from: activeYearlyPeriod.from, to: activeYearlyPeriod.to })
+    ? (reportBasis === 'maturity'
+      ? store.getCollectorPerformanceDetails(selectedBranch, selectedYearlyCollector, undefined, asOfDate || undefined, maturityRange)
+      : reportedYearRange
+        ? asOfDate
+          ? store.getCollectorPerformanceDetails(selectedBranch, selectedYearlyCollector, reportedYearRange, asOfDate)
+          : store.getCollectorPerformanceDetails(selectedBranch, selectedYearlyCollector, reportedYearRange)
+        : store.getCollectorPerformanceDetails(selectedBranch, selectedYearlyCollector, undefined, asOfDate || undefined))
     : [];
 
   const activeModuleStats = useMemo(() => {
     return getCollectorModuleStats(
       selectedBranch,
-      performanceScope === 'yearly' ? { from: activeYearlyPeriod.from, to: activeYearlyPeriod.to } : undefined
+      reportedYearRange,
+      maturityRange
     );
-  }, [selectedBranch, performanceScope, activeYearlyPeriod.from, activeYearlyPeriod.to]);
+  }, [selectedBranch, reportBasis, selectedPeriod]);
 
   const combinedData = useMemo<CombinedCollectorEfficiencyRow[]>(() => {
     const map = new Map<string, CombinedCollectorEfficiencyRow>();
@@ -292,7 +321,10 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
         activeAccountCount: getActiveAccountCount(p),
         reportedAmount: p.reportedAmount,
         collectedAmount: p.collectedAmount,
+        actualCollectedAmount: p.actualCollectedAmount ?? Math.max(0, p.collectedAmount - (p.excessCollection ?? 0) - (p.writeOffValidCollections ?? 0)),
         runningBalance: p.runningBalance,
+        excessCollection: p.excessCollection ?? 0,
+        writeOffValidCollections: p.writeOffValidCollections ?? 0,
         collectionRate: p.collectionRate,
         reconstructed: mod.reconstructed,
         located: mod.located,
@@ -303,7 +335,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
     });
 
     // 2. Add collectors that might only have module entries
-    Object.keys(activeModuleStats).forEach(key => {
+    if (!asOfDate) Object.keys(activeModuleStats).forEach(key => {
       if (!map.has(key)) {
         const mod = activeModuleStats[key];
         map.set(key, {
@@ -312,7 +344,10 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
           activeAccountCount: 0,
           reportedAmount: 0,
           collectedAmount: 0,
+          actualCollectedAmount: 0,
           runningBalance: 0,
+          excessCollection: 0,
+          writeOffValidCollections: 0,
           collectionRate: 0,
           reconstructed: mod.reconstructed,
           located: mod.located,
@@ -328,9 +363,9 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
       if (b.collectionRate !== a.collectionRate) {
         return b.collectionRate - a.collectionRate;
       }
-      // 2. Actual Collected (Descending)
-      if (b.collectedAmount !== a.collectedAmount) {
-        return b.collectedAmount - a.collectedAmount;
+      // 2. Actual Collection (Descending)
+      if (b.actualCollectedAmount !== a.actualCollectedAmount) {
+        return b.actualCollectedAmount - a.actualCollectedAmount;
       }
       // 3. Reconstructed Amount (Descending)
       if (b.reconstructed.amount !== a.reconstructed.amount) {
@@ -343,7 +378,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
       // 5. Collector Name (Ascending)
       return a.collector.localeCompare(b.collector);
     });
-  }, [activeCollectorData, activeModuleStats]);
+  }, [activeCollectorData, activeModuleStats, asOfDate]);
 
   const grandTotals = useMemo(() => {
     return combinedData.reduce(
@@ -352,7 +387,10 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
         activeAccounts: acc.activeAccounts + row.activeAccountCount,
         reportedAmount: acc.reportedAmount + row.reportedAmount,
         collectedAmount: acc.collectedAmount + row.collectedAmount,
+        actualCollectedAmount: acc.actualCollectedAmount + row.actualCollectedAmount,
         runningBalance: acc.runningBalance + row.runningBalance,
+        excessCollection: acc.excessCollection + row.excessCollection,
+        writeOffValidCollections: acc.writeOffValidCollections + row.writeOffValidCollections,
         reconstructed: {
           count: acc.reconstructed.count + row.reconstructed.count,
           amount: acc.reconstructed.amount + row.reconstructed.amount
@@ -395,7 +433,10 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
         activeAccounts: 0,
         reportedAmount: 0,
         collectedAmount: 0,
+        actualCollectedAmount: 0,
         runningBalance: 0,
+        excessCollection: 0,
+        writeOffValidCollections: 0,
         reconstructed: { count: 0, amount: 0 },
         located: { count: 0, amount: 0, pending: { count: 0, amount: 0 }, official: { count: 0, amount: 0 } },
         unlocated: { count: 0, amount: 0, pending: { count: 0, amount: 0 }, official: { count: 0, amount: 0 } },
@@ -406,7 +447,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
   }, [combinedData]);
 
   const grandTotalEfficiency = grandTotals.reportedAmount > 0
-    ? (grandTotals.collectedAmount / grandTotals.reportedAmount) * 100
+    ? (grandTotals.actualCollectedAmount / grandTotals.reportedAmount) * 100
     : 0;
 
   const handleExport = () => {
@@ -415,8 +456,11 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
       'Total Accounts',
       'Active Accounts',
       'Target',
-      'Collected',
+      'Actual Collection',
+      'Excess Collection',
+      'Write-off Valid Collections',
       'Balance',
+      'Total Collected',
       'Efficiency Rate (%)',
       'Reconstructed Accts',
       'Reconstructed Amt',
@@ -437,14 +481,21 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
       'Total Write-Off Accts',
       'Total Write-Off Amt'
     ];
+    if (asOfDate) headers.unshift('Collection As Of');
+    if (asOfDate) headers.forEach((header, index) => {
+      if (index >= 11) headers[index] = `${header} (Current)`;
+    });
     
     const rows = combinedData.map(p => [
       `"${p.collector}"`,
       p.totalAccounts,
       p.activeAccountCount,
       p.reportedAmount,
-      p.collectedAmount,
+      p.actualCollectedAmount,
+      p.excessCollection,
+      p.writeOffValidCollections,
       p.runningBalance,
+      p.collectedAmount,
       p.collectionRate.toFixed(1),
       p.reconstructed.count,
       p.reconstructed.amount,
@@ -465,14 +516,18 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
       p.totalWriteOff.count,
       p.totalWriteOff.amount
     ]);
+    if (asOfDate) rows.forEach(row => row.unshift(asOfDate));
 
     const grandTotalRow = [
       '"GRAND TOTAL"',
       grandTotals.totalAccounts,
       grandTotals.activeAccounts,
       grandTotals.reportedAmount,
-      grandTotals.collectedAmount,
+      grandTotals.actualCollectedAmount,
+      grandTotals.excessCollection,
+      grandTotals.writeOffValidCollections,
       grandTotals.runningBalance,
+      grandTotals.collectedAmount,
       grandTotalEfficiency.toFixed(1),
       grandTotals.reconstructed.count,
       grandTotals.reconstructed.amount,
@@ -493,6 +548,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
       grandTotals.totalWriteOff.count,
       grandTotals.totalWriteOff.amount
     ];
+    if (asOfDate) grandTotalRow.unshift(asOfDate);
 
     const csvContent = [
       headers.join(','),
@@ -504,7 +560,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Collector_Efficiency_${exportScopeLabel.replace(/\s+/g, '_')}_${selectedBranch.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `Collector_Efficiency_${exportScopeLabel.replace(/\s+/g, '_')}_${selectedBranch.replace(/\s+/g, '_')}_${asOfDate ? `AsOf_${asOfDate}` : new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -532,20 +588,22 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-0.5 shadow-xs">
+              <div role="tablist" aria-label="Report date basis" className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-0.5 shadow-xs">
                 {[
-                  { id: 'overall', label: 'Overall Report' },
-                  { id: 'yearly', label: 'Yearly Report' }
+                  { id: 'reported', label: 'Monthly Reported' },
+                  { id: 'maturity', label: 'Maturity Date' }
                 ].map(tab => (
                   <button
                     key={tab.id}
                     type="button"
+                    role="tab"
+                    aria-selected={reportBasis === tab.id}
                     onClick={() => {
-                      setPerformanceScope(tab.id as 'overall' | 'yearly');
+                      setReportBasis(tab.id as 'reported' | 'maturity');
                       setSelectedYearlyCollector(null);
                     }}
                     className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-colors ${
-                      performanceScope === tab.id
+                      reportBasis === tab.id
                         ? 'bg-emerald-600 text-white shadow-xs shadow-emerald-900/20'
                         : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
@@ -555,18 +613,20 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                 ))}
               </div>
 
-              {performanceScope === 'yearly' && (
-                <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-0.5 shadow-xs">
-                  {yearlyPeriods.map(period => (
+              <div role="tablist" aria-label={`${basisLabel} period`} className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-0.5 shadow-xs">
+                  {[{ id: 'overall', label: 'Overall Report' }, ...yearlyPeriods].map(period => (
                     <button
                       key={period.id}
                       type="button"
+                      role="tab"
+                      aria-selected={selectedPeriod === period.id}
                       onClick={() => {
-                        setSelectedYearlyPeriod(period.id);
+                        if (reportBasis === 'reported') setReportedPeriod(period.id);
+                        else setMaturityPeriod(period.id);
                         setSelectedYearlyCollector(null);
                       }}
                       className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-colors ${
-                        selectedYearlyPeriod === period.id
+                        selectedPeriod === period.id
                           ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
                           : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                       }`}
@@ -574,7 +634,26 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                       {period.label}
                     </button>
                   ))}
-                </div>
+              </div>
+
+              <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                As of
+                <input
+                  aria-label="Collection performance as of date"
+                  type="date"
+                  value={asOfDate}
+                  max={todayLocal}
+                  onChange={event => {
+                    setAsOfDate(event.target.value);
+                    setSelectedYearlyCollector(null);
+                  }}
+                  className="px-2 py-1 rounded-lg border border-slate-300 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                />
+              </label>
+              {asOfDate && (
+                <button type="button" onClick={() => setAsOfDate('')} className="text-[11px] font-semibold text-emerald-700 hover:underline dark:text-emerald-400">
+                  Live view
+                </button>
               )}
 
               <button 
@@ -588,6 +667,17 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
               </button>
             </div>
           </div>
+          <p className="px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-700">
+            {reportBasis === 'reported'
+              ? `Date basis: Monthly Reported. ${activeYearlyPeriod ? `Includes accounts reported in ${activeYearlyPeriod.label}.` : 'Includes all reported periods.'}`
+              : `Date basis: Maturity Date. ${activeYearlyPeriod ? `Includes loans maturing in ${activeYearlyPeriod.label}, regardless of month reported.` : 'Includes all maturity dates.'}`}
+            {' '}Collection performance uses the same calculations in both views. Click a collector to see its accounts.
+          </p>
+          {asOfDate && (
+            <p className="px-2.5 py-1.5 text-[10px] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700">
+              Collection columns include reported accounts and payments through {asOfDate}. Reconstructed and write-off columns show current records. Restored accounts use their current loan amount because earlier amounts were not saved.
+            </p>
+          )}
           
           <div className="overflow-x-auto overflow-y-auto flex-1">
             <table className="w-full text-left whitespace-nowrap">
@@ -597,7 +687,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                   <th rowSpan={2} className="px-2.5 py-1 text-left min-w-[130px] border-r border-slate-200 dark:border-slate-700">
                     Collector Identity
                   </th>
-                  <th colSpan={5} className="px-2 py-1 text-center border-r border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/80 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  <th colSpan={8} className="px-2 py-1 text-center border-r border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/80 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
                     📈 Collection Performance
                   </th>
                   <th colSpan={1} className="px-2 py-1 text-center border-r border-cyan-200 dark:border-cyan-900/60 bg-cyan-50/80 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300">
@@ -612,9 +702,18 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                   {/* Collection */}
                   <th className="px-2 py-1 text-center min-w-[85px]">Accounts</th>
                   <th className="px-2 py-1 text-center min-w-[75px]">Target</th>
-                  <th className="px-2 py-1 text-center min-w-[75px] text-emerald-600 dark:text-emerald-400">Collected</th>
+                  <th className="px-1 py-1 text-center w-[88px] min-w-[88px] text-emerald-600 dark:text-emerald-400"><span className="inline-block max-w-[76px] whitespace-normal leading-tight">Actual Collection</span></th>
+                  <th
+                    className="px-1 py-1 text-center w-[82px] min-w-[82px] text-amber-700 dark:text-amber-400"
+                    title="Valid collections above an individual account's target."
+                  ><span className="inline-block max-w-[68px] whitespace-normal leading-tight">Excess Collection</span></th>
+                  <th
+                    className="px-1 py-1 text-center w-[100px] min-w-[100px] text-violet-700 dark:text-violet-400"
+                    title="Valid cash collections from write-off, deceased, and reconstructed accounts excluded from Target and Balance."
+                  ><span className="inline-block max-w-[88px] whitespace-normal leading-tight">Write-off Valid Collections</span></th>
                   <th className="px-2 py-1 text-center min-w-[75px]">Balance</th>
-                  <th className="px-2 py-1 text-center min-w-[85px] border-r border-slate-200 dark:border-slate-700">Efficiency</th>
+                  <th className="px-1 py-1 text-center w-[88px] min-w-[88px] text-teal-700 dark:text-teal-400"><span className="inline-block max-w-[76px] whitespace-normal leading-tight">Total Collected</span></th>
+                  <th className="px-1 py-1 text-center w-[85px] min-w-[85px] border-r border-slate-200 dark:border-slate-700"><span className="inline-block max-w-[72px] whitespace-normal leading-tight">Efficiency Rate</span></th>
                   {/* Reconstructed */}
                   <th className="px-2 py-1 text-center min-w-[90px] text-cyan-700 dark:text-cyan-400 border-r border-slate-200 dark:border-slate-700">Reconstructed</th>
                   {/* Write-Off */}
@@ -634,18 +733,15 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                   return (
                     <tr
                       key={p.collector}
-                      tabIndex={performanceScope === 'yearly' ? 0 : undefined}
-                      onClick={() => {
-                        if (performanceScope === 'yearly') setSelectedYearlyCollector(p.collector);
-                      }}
+                      tabIndex={0}
+                      onClick={() => setSelectedYearlyCollector(p.collector)}
                       onKeyDown={(event) => {
-                        if (performanceScope !== 'yearly') return;
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
                           setSelectedYearlyCollector(p.collector);
                         }
                       }}
-                      className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${performanceScope === 'yearly' ? 'cursor-pointer focus:outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20' : ''}`}
+                      className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer focus:outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20"
                     >
                       {/* Collector Identity */}
                       <td className="px-2.5 py-1 align-middle border-r border-slate-100 dark:border-slate-700/50">
@@ -681,10 +777,24 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                         ₱{p.reportedAmount.toLocaleString()}
                       </td>
 
-                      {/* Collected */}
+                      {/* Actual Collection */}
                       <td className="px-2 py-1 text-center align-middle tabular-nums text-xs">
                         <span className="font-black text-emerald-600 dark:text-emerald-400">
-                          ₱{p.collectedAmount.toLocaleString()}
+                          ₱{p.actualCollectedAmount.toLocaleString()}
+                        </span>
+                      </td>
+
+                      {/* Excess Collection */}
+                      <td className="px-2 py-1 text-center align-middle tabular-nums text-xs">
+                        <span className="font-black text-amber-700 dark:text-amber-400">
+                          ₱{p.excessCollection.toLocaleString()}
+                        </span>
+                      </td>
+
+                      {/* Write-off Valid Collections */}
+                      <td className="px-2 py-1 text-center align-middle tabular-nums text-xs">
+                        <span className="font-black text-violet-700 dark:text-violet-400">
+                          ₱{p.writeOffValidCollections.toLocaleString()}
                         </span>
                       </td>
 
@@ -692,6 +802,13 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                       <td className="px-2 py-1 text-center align-middle tabular-nums text-xs">
                         <span className="font-black text-slate-800 dark:text-slate-100">
                           ₱{p.runningBalance.toLocaleString()}
+                        </span>
+                      </td>
+
+                      {/* Total Collected */}
+                      <td className="px-2 py-1 text-center align-middle tabular-nums text-xs">
+                        <span className="font-black text-teal-700 dark:text-teal-400">
+                          ₱{p.collectedAmount.toLocaleString()}
                         </span>
                       </td>
 
@@ -810,10 +927,19 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                       ₱{grandTotals.reportedAmount.toLocaleString()}
                     </td>
                     <td className="px-2 py-1.5 text-center align-middle text-emerald-700 dark:text-emerald-400 text-xs tabular-nums">
-                      ₱{grandTotals.collectedAmount.toLocaleString()}
+                      ₱{grandTotals.actualCollectedAmount.toLocaleString()}
+                    </td>
+                    <td className="px-2 py-1.5 text-center align-middle text-amber-700 dark:text-amber-400 text-xs tabular-nums">
+                      ₱{grandTotals.excessCollection.toLocaleString()}
+                    </td>
+                    <td className="px-2 py-1.5 text-center align-middle text-violet-700 dark:text-violet-400 text-xs tabular-nums">
+                      ₱{grandTotals.writeOffValidCollections.toLocaleString()}
                     </td>
                     <td className="px-2 py-1.5 text-center align-middle text-slate-900 dark:text-white text-xs tabular-nums">
                       ₱{grandTotals.runningBalance.toLocaleString()}
+                    </td>
+                    <td className="px-2 py-1.5 text-center align-middle text-teal-700 dark:text-teal-400 text-xs tabular-nums">
+                      ₱{grandTotals.collectedAmount.toLocaleString()}
                     </td>
                     <td className="px-2 py-1.5 align-middle border-r border-emerald-200 dark:border-emerald-800">
                       <div className="flex items-center justify-center gap-1">
@@ -873,7 +999,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                 )}
                 {combinedData.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="py-8 text-center text-slate-400 dark:text-slate-500 text-xs font-bold">
+                    <td colSpan={14} className="py-8 text-center text-slate-400 dark:text-slate-500 text-xs font-bold">
                       No field data available for this branch
                     </td>
                   </tr>
@@ -882,12 +1008,12 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
             </table>
           </div>
         </div>
-        {performanceScope === 'yearly' && selectedCollectorSummary && (
+        {selectedCollectorSummary && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
             <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-white dark:bg-slate-800 shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col">
               <div className="p-5 border-b border-slate-100 dark:border-slate-700 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400">{activeYearlyPeriod.label} Yearly Report</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400">{basisLabel} · {activeYearlyPeriod?.label || 'Overall'}</p>
                   <h3 className="text-xl font-black text-slate-900 dark:text-white mt-1">{selectedCollectorSummary.collector}</h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{selectedCollectorClients.length} clients under this collector</p>
                 </div>
@@ -910,7 +1036,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                   <p className="text-lg font-black text-slate-900 dark:text-white mt-1">₱{selectedCollectorSummary.reportedAmount.toLocaleString()}</p>
                 </div>
                 <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/20 p-3">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Collected</p>
+                  <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Total Collected</p>
                   <p className="text-lg font-black text-emerald-700 dark:text-emerald-300 mt-1">₱{selectedCollectorSummary.collectedAmount.toLocaleString()}</p>
                 </div>
                 <div className="rounded-lg bg-slate-50 dark:bg-slate-900/50 p-3">
@@ -925,6 +1051,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                     <tr>
                       <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500">Client</th>
                       <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500">Reported</th>
+                      {reportBasis === 'maturity' && <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500">Maturity Date</th>}
                       <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500">Status</th>
                       <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500 text-right">Reported Amount</th>
                       <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-500 text-right">Collected</th>
@@ -939,6 +1066,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                           <p className="text-[10px] font-bold text-slate-400 mt-0.5">Code: {client.code || 'N/A'}</p>
                         </td>
                         <td className="px-4 py-3 text-xs font-bold text-slate-600 dark:text-slate-300">{client.monthReported || 'N/A'}</td>
+                        {reportBasis === 'maturity' && <td className="px-4 py-3 text-xs font-bold text-slate-600 dark:text-slate-300">{client.dueDate || 'N/A'}</td>}
                         <td className="px-4 py-3 text-xs font-bold text-slate-600 dark:text-slate-300">{client.status}</td>
                         <td className="px-4 py-3 text-right text-xs font-bold text-slate-700 dark:text-slate-200">₱{client.reportedAmount.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right text-xs font-black text-emerald-600 dark:text-emerald-400">₱{client.collectedAmount.toLocaleString()}</td>
@@ -947,7 +1075,7 @@ const Reports: React.FC<ReportsProps> = ({ selectedBranch, activeView }) => {
                     ))}
                     {selectedCollectorClients.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-xs font-bold text-slate-400">No clients found for this collector and year period.</td>
+                        <td colSpan={reportBasis === 'maturity' ? 7 : 6} className="px-4 py-8 text-center text-xs font-bold text-slate-400">No clients found for this collector and period.</td>
                       </tr>
                     )}
                   </tbody>

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import WriteOff from './WriteOff';
 import { store } from '../services/dataStore.ts';
+import { hasActiveReceivableBalance } from '../services/loanUtils.ts';
 import {
   Branch,
   DispositionStatus,
@@ -25,6 +26,7 @@ vi.mock('../services/dataStore.ts', () => ({
     subscribe: vi.fn(),
     addDisposition: vi.fn(),
     updateDispositionStatus: vi.fn(),
+    restorePendingWriteOff: vi.fn(),
     updateLoan: vi.fn()
   }
 }));
@@ -85,6 +87,7 @@ describe('WriteOff', () => {
     (store.subscribe as any).mockReturnValue(() => {});
     (store.addDisposition as any).mockResolvedValue({ ...disposition, id: 'persisted-dead-disp' });
     (store.updateDispositionStatus as any).mockResolvedValue(undefined);
+    (store.restorePendingWriteOff as any).mockResolvedValue(undefined);
     (store.updateLoan as any).mockResolvedValue(undefined);
   });
 
@@ -116,6 +119,45 @@ describe('WriteOff', () => {
       );
     });
     expect(store.updateLoan).toHaveBeenCalled();
+  });
+
+  it.each(['Located', 'Unlocated'] as const)('restores a pending %s client only after reason and amount are supplied', async classification => {
+    (store.getAllDispositions as any).mockReturnValue([{ ...disposition, writeOffClassification: classification }]);
+    render(<WriteOff currentUser={makeUser(UserRole.CASHIER)} selectedBranch={Branch.ALL} />);
+    fireEvent.click(screen.getByRole('button', { name: classification === 'Located' ? /📍\s*Located/i : /🔍\s*Unlocated/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^restore$/i }));
+
+    expect(screen.getByRole('dialog', { name: 'Restore to Collection' })).toBeInTheDocument();
+    expect(store.restorePendingWriteOff).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Reason for restoration'), { target: { value: 'Client resumed payments' } });
+    fireEvent.change(screen.getByLabelText('Amount to restore (PHP)'), { target: { value: '7500.00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Restore' }));
+
+    await waitFor(() => expect(store.restorePendingWriteOff).toHaveBeenCalledWith(
+      'disp-1', 'Client resumed payments', 7500, UserRole.CASHIER, UserRole.CASHIER
+    ));
+    expect(screen.queryByRole('dialog', { name: 'Restore to Collection' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer Restore for deceased or rejected write-offs', () => {
+    (store.getAllDispositions as any).mockReturnValue([{ ...disposition, status: DispositionStatus.REJECTED }]);
+    render(<WriteOff currentUser={makeUser(UserRole.CASHIER)} selectedBranch={Branch.ALL} />);
+    fireEvent.click(screen.getByRole('button', { name: /📍\s*Located/i }));
+    expect(screen.queryByRole('button', { name: /^restore$/i })).not.toBeInTheDocument();
+  });
+
+  it('treats a restored balance as an active receivable even with an older write-off remark', () => {
+    const restoredLoan = {
+      ...loan,
+      outstandingBalance: 7500,
+      totalLoan: 7500,
+      runningBalance: 7500,
+      status: MovingStatus.NMSR,
+      actionStage: 'Active / Cooperative',
+      actionNote: 'Restored to Collection: Client resumed payments',
+      remarks: [{ id: 'old-remark', text: 'For Write-Off', collector: 'Collector One', timestamp: '2026-07-03T00:00:00.000Z' }]
+    };
+    expect(hasActiveReceivableBalance(restoredLoan)).toBe(true);
   });
 
   it('renders Dashboard, Located, Unlocated, and Deceased Clients classification tabs', () => {
@@ -163,7 +205,7 @@ describe('WriteOff', () => {
       remarks: [{
         id: 'rem-dec',
         text: 'Deceased borrower',
-        author: 'Collector B',
+        collector: 'Collector B',
         timestamp: '2026-07-04T00:00:00.000Z'
       }]
     };
@@ -210,7 +252,7 @@ describe('WriteOff', () => {
       remarks: [{
         id: 'remark-1',
         text: 'Deceased borrower',
-        author: 'Collector One',
+        collector: 'Collector One',
         timestamp: '2026-07-04T00:00:00.000Z'
       }]
     };
@@ -230,6 +272,7 @@ describe('WriteOff', () => {
     expect(screen.getByText('Deceased Accounts (1)')).toBeInTheDocument();
     // No approve action button on Deceased Clients tab
     expect(screen.queryByRole('button', { name: /^approve$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^restore$/i })).not.toBeInTheDocument();
   });
 
   it('separates real collections from write-off/deceased amounts and shows the financial totals', () => {
@@ -271,7 +314,7 @@ describe('WriteOff', () => {
       remarks: [{
         id: 'dead-remark',
         text: 'Deceased borrower',
-        author: 'Collector One',
+        collector: 'Collector One',
         timestamp: '2026-07-01T00:00:00.000Z'
       }]
     };

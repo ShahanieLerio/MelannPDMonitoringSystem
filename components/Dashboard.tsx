@@ -4,7 +4,7 @@ import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { store } from '../services/dataStore.ts';
 import { getLoanInsights } from '../services/geminiService.ts';
 import { MovingStatus, Branch, Loan, PaymentStatus, DispositionType, DispositionStatus, ManagementDisposition } from '../types.ts';
-import { hasActiveReceivableBalance, isDeadWriteOffLoan, isReconstructedOutcomeLoan, isReconstructedPaymentRemark, isReportableCollectionPayment, isWriteOffOutcomeLoan } from '../services/loanUtils.ts';
+import { getReportedStartDate, hasActiveReceivableBalance, isDeadWriteOffLoan, isReconstructedOutcomeLoan, isReconstructedPaymentRemark, isReportableCollectionPayment, isWriteOffOutcomeLoan } from '../services/loanUtils.ts';
 import { getCollectorDisplayName } from '../services/collectorUtils.ts';
 
 const isWriteOffOrDeceasedPaymentRemark = (remarks?: string) =>
@@ -34,7 +34,15 @@ interface DashboardProps {
   selectedBranch: Branch;
 }
 
-const KpiCard: React.FC<{ title: string; value: string | number; subValue?: string; subValueEmphasis?: boolean; icon: string; statusIndicator?: {text: string, type: 'positive' | 'neutral' | 'critical' | 'info'} }> = ({ title, value, subValue, subValueEmphasis = false, icon, statusIndicator }) => {
+const KpiCard: React.FC<{
+  title: string;
+  value?: string | number;
+  subValue?: string;
+  subValueEmphasis?: boolean;
+  icon: string;
+  statusIndicator?: {text: string, type: 'positive' | 'neutral' | 'critical' | 'info'};
+  children?: React.ReactNode;
+}> = ({ title, value, subValue, subValueEmphasis = false, icon, statusIndicator, children }) => {
   const statusStyles = {
     positive: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
     critical: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
@@ -57,15 +65,19 @@ const KpiCard: React.FC<{ title: string; value: string | number; subValue?: stri
                 </span>
             )}
         </div>
-        <div className="flex justify-between items-end relative z-10">
-            <div className="flex flex-col">
-                <span className="text-xl sm:text-2xl font-black text-slate-800 dark:text-white tracking-tight">{value}</span>
-                {subValue && (
-                  <span className={`${subValueEmphasis ? 'text-xs sm:text-sm font-bold text-emerald-700 dark:text-emerald-300' : 'text-[11px] font-semibold text-slate-400 dark:text-slate-500'} mt-0.5`}>
-                    {subValue}
-                  </span>
-                )}
-            </div>
+        <div className="flex justify-between items-end relative z-10 w-full">
+            {children ? (
+              children
+            ) : (
+              <div className="flex flex-col">
+                  <span className="text-xl sm:text-2xl font-black text-slate-800 dark:text-white tracking-tight">{value}</span>
+                  {subValue && (
+                    <span className={`${subValueEmphasis ? 'text-xs sm:text-sm font-bold text-emerald-700 dark:text-emerald-300' : 'text-[11px] font-semibold text-slate-400 dark:text-slate-500'} mt-0.5`}>
+                      {subValue}
+                    </span>
+                  )}
+              </div>
+            )}
         </div>
         <div className="absolute -bottom-4 -right-2 text-6xl opacity-[0.03] grayscale pointer-events-none group-hover:scale-105 transition-transform duration-500">{icon}</div>
     </div>
@@ -159,6 +171,12 @@ const toDateInputValue = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+const performanceYearlyPeriods = [
+  { id: '2016-2024', from: 2016, to: 2024 },
+  { id: '2025', from: 2025, to: 2025 },
+  { id: '2026', from: 2026, to: 2026 }
+];
+
 const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   const [allLoans, setAllLoans] = useState(store.getLoans(selectedBranch));
   const [allCollectors, setAllCollectors] = useState(store.getCollectors(Branch.ALL));
@@ -169,6 +187,11 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
   const [dateFilter, setDateFilter] = useState<'all' | 'last30' | 'custom'>('all');
   const [dateRangeFrom, setDateRangeFrom] = useState('');
   const [dateRangeTo, setDateRangeTo] = useState('');
+  const [performanceBasis, setPerformanceBasis] = useState<'reported' | 'maturity'>('reported');
+  const [reportedPerformancePeriod, setReportedPerformancePeriod] = useState('overall');
+  const [maturityPerformancePeriod, setMaturityPerformancePeriod] = useState('overall');
+  const selectedPerformancePeriod = performanceBasis === 'reported' ? reportedPerformancePeriod : maturityPerformancePeriod;
+  const activePerformanceYear = performanceYearlyPeriods.find(period => period.id === selectedPerformancePeriod);
 
   useEffect(() => {
     const refreshData = () => {
@@ -193,14 +216,12 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     const fromDate = dateFilter === 'custom' ? dateRangeFrom : toDateInputValue(cutoff);
     const toDate = dateFilter === 'custom' ? dateRangeTo : toDateInputValue(new Date());
     if (!fromDate || !toDate || fromDate > toDate) return [];
-    const fromMonth = fromDate.slice(0, 7);
-    const toMonth = toDate.slice(0, 7);
     return allLoans.filter(l => {
       const hasPaymentInRange = l.payments.some(p =>
         isReportableCollectionPayment(p) && p.date >= fromDate && p.date <= toDate
       );
-      const reportedMonth = l.monthReported || '';
-      const hasReportInRange = reportedMonth >= fromMonth && reportedMonth <= toMonth;
+      const reportedDate = getReportedStartDate(l.monthReported);
+      const hasReportInRange = reportedDate >= fromDate && reportedDate <= toDate;
       return hasPaymentInRange || hasReportInRange;
     });
   }, [allLoans, dateFilter, dateRangeFrom, dateRangeTo]);
@@ -225,7 +246,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     const totalAccounts = loans.length;
     const activeAccounts = loans.filter(hasActiveReceivableBalance);
     const activeAccountCount = activeAccounts.length;
-    
+
     const totalCollected = performanceLoans.reduce((sum, l) => sum + getReportableCollectedAmount(l), 0);
     const totalLoanAmount = performanceLoans.reduce((sum, l) => sum + getLedgerLoanAmount(l), 0);
     const totalReportedAmount = performanceLoans.reduce((sum, l) => sum + l.outstandingBalance, 0);
@@ -335,6 +356,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     };
 
     latestProspectByLoan.forEach((disposition, loanId) => {
+      if (disposition.status === DispositionStatus.REJECTED) return;
       const loan = loansById.get(loanId);
       if (!loan) return;
 
@@ -387,6 +409,45 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
 
     return summary;
   }, [allLoans, selectedBranch]);
+
+  // Use the same collector report source and period as the Reports matrix.
+  const collectionPerformanceGrandTotal = useMemo(() => {
+    const yearRange = performanceBasis === 'reported' && activePerformanceYear
+      ? { from: activePerformanceYear.from, to: activePerformanceYear.to } : undefined;
+    const maturityRange = performanceBasis === 'maturity' && activePerformanceYear
+      ? { from: `${activePerformanceYear.from}-01-01`, to: `${activePerformanceYear.to}-12-31` } : undefined;
+    const performance = performanceBasis === 'maturity'
+      ? store.getCollectorPerformance(selectedBranch, undefined, undefined, maturityRange)
+      : yearRange
+        ? store.getCollectorPerformance(selectedBranch, yearRange)
+        : store.getCollectorPerformance(selectedBranch);
+    const totals = performance.reduce((acc, curr) => ({
+      totalAccounts: acc.totalAccounts + (curr.totalAccounts || 0),
+      activeAccounts: acc.activeAccounts + (curr.activeAccountCount || 0),
+      reportedAmount: acc.reportedAmount + (curr.reportedAmount || 0),
+      actualCollectedAmount: acc.actualCollectedAmount + (curr.actualCollectedAmount || 0),
+      excessCollection: acc.excessCollection + (curr.excessCollection || 0),
+      writeOffValidCollections: acc.writeOffValidCollections + (curr.writeOffValidCollections || 0),
+      runningBalance: acc.runningBalance + (curr.runningBalance || 0),
+      collectedAmount: acc.collectedAmount + (curr.collectedAmount || 0),
+    }), {
+      totalAccounts: 0,
+      activeAccounts: 0,
+      reportedAmount: 0,
+      actualCollectedAmount: 0,
+      excessCollection: 0,
+      writeOffValidCollections: 0,
+      runningBalance: 0,
+      collectedAmount: 0,
+    });
+
+    return {
+      ...totals,
+      efficiencyRate: totals.reportedAmount > 0
+        ? (totals.actualCollectedAmount / totals.reportedAmount) * 100
+        : 0
+    };
+  }, [selectedBranch, allLoans, allCollectors, performanceBasis, selectedPerformancePeriod]);
 
   // --- Compute collector performance from filtered loans ---
   const collectorData = useMemo(() => {
@@ -541,10 +602,17 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
       ['Metric', 'Value'],
       ['Total Accounts', stats.totalAccounts],
       ['Active Accounts', stats.activeAccountCount],
-      ['Total Collected', stats.totalCollected],
+      ['Total Collected (All-Time Remitted)', stats.totalCollected],
+      ['Performance Report', `${performanceBasis === 'reported' ? 'Monthly Reported' : 'Maturity Date'} · ${activePerformanceYear?.id || 'Overall Report'}`],
+      ['Actual Collection', collectionPerformanceGrandTotal.actualCollectedAmount],
+      ['Excess Collection', collectionPerformanceGrandTotal.excessCollection],
+      ['Write-off Valid Collections', collectionPerformanceGrandTotal.writeOffValidCollections],
+      ['Total Collected (Performance)', collectionPerformanceGrandTotal.collectedAmount],
+      ['Performance Balance', collectionPerformanceGrandTotal.runningBalance],
       ['Total Loan', stats.totalLoanAmount],
-      ['Total Reported', stats.totalReportedAmount],
+      ['Total Reported (Target)', stats.totalReportedAmount],
       ['Running Balance', stats.totalRunning],
+      ['Collection Efficiency Rate (%)', `${collectionPerformanceGrandTotal.efficiencyRate.toFixed(1)}%`],
       ['Reconstructed Amount', stats.reconstructedStats.amount],
       ['Reconstructed Clients', stats.reconstructedStats.count],
       [],
@@ -595,7 +663,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
     exportData.push([]);
     exportData.push(['ACCOUNT DISTRIBUTION']);
     exportData.push(['Collector', 'Accounts']);
-    
+
     if (collectorDistribution.length > 0) {
       collectorDistribution.forEach(item => {
         exportData.push([item.name, item.value]);
@@ -703,7 +771,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
 
   return (
     <div className="space-y-3.5 animate-fadeIn max-w-[1600px] mx-auto pb-10">
-      
+
       {/* Header SECTION */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl shadow-[0_2px_12px_-3px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700">
         <div className="min-w-0">
@@ -854,133 +922,399 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
         />
       </div>
 
-      {/* Write-Off Module Reports Overview Panel */}
-      <div className="bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl shadow-[0_2px_12px_-3px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3.5 gap-2.5 border-b border-slate-100 dark:border-slate-700/50 pb-3">
+      {/* Performance & Terminal Modules: Overall Performance (Left) & Write-Off Module Reports (Right) */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 items-stretch">
+
+        {/* LEFT: Overall Performance */}
+        <div className="bg-white dark:bg-slate-800 p-4 md:p-4.5 rounded-2xl shadow-[0_2px_12px_-3px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300 flex flex-col justify-between h-full">
           <div>
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 flex items-center justify-center font-bold text-sm shadow-xs">
-                📋
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3.5 gap-2.5 border-b border-slate-100 dark:border-slate-700/50 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold text-sm shadow-xs">
+                    🎯
+                  </div>
+                  <h2 className="text-lg font-bold text-slate-800 dark:text-white">Overall Performance</h2>
+                </div>
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+                  Based on {performanceBasis === 'reported' ? 'monthly reported' : 'maturity date'} · {activePerformanceYear?.id || 'Overall'} · {selectedBranch}
+                </p>
               </div>
-              <h2 className="text-lg font-bold text-slate-800 dark:text-white">Write-Off Module Reports</h2>
+              <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/40 px-3 py-1 rounded-lg">
+                <span className="text-xs font-black text-emerald-700 dark:text-emerald-300">
+                  ⚡ Efficiency: {collectionPerformanceGrandTotal.efficiencyRate.toFixed(1)}%
+                </span>
+                <span className="text-[10px] font-bold text-emerald-600/80 dark:text-emerald-400/80 bg-emerald-100 dark:bg-emerald-900/50 px-1.5 py-0.5 rounded">
+                  {collectionPerformanceGrandTotal.totalAccounts.toLocaleString()} Accts
+                </span>
+              </div>
             </div>
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
-              Terminal accounts & write-off portfolio summary for {selectedBranch}
+
+            <div className="flex flex-wrap items-center gap-2 mb-2" aria-label="Performance report view">
+              <div role="tablist" aria-label="Performance date basis" className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-0.5 shadow-xs">
+                {(['reported', 'maturity'] as const).map(basis => (
+                  <button
+                    key={basis}
+                    type="button"
+                    role="tab"
+                    onClick={() => setPerformanceBasis(basis)}
+                    aria-selected={performanceBasis === basis}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-colors ${performanceBasis === basis ? 'bg-emerald-600 text-white' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                  >
+                    {basis === 'reported' ? 'Monthly Reported' : 'Maturity Date'}
+                  </button>
+                ))}
+              </div>
+              <div role="tablist" aria-label={`${performanceBasis === 'reported' ? 'Monthly Reported' : 'Maturity Date'} period`} className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-0.5 shadow-xs">
+                  {[{ id: 'overall' }, ...performanceYearlyPeriods].map(period => (
+                    <button
+                      key={period.id}
+                      type="button"
+                      role="tab"
+                      onClick={() => performanceBasis === 'reported' ? setReportedPerformancePeriod(period.id) : setMaturityPerformancePeriod(period.id)}
+                      aria-selected={selectedPerformancePeriod === period.id}
+                      className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-colors ${selectedPerformancePeriod === period.id ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                    >
+                      {period.id === 'overall' ? 'Overall Report' : period.id}
+                    </button>
+                  ))}
+              </div>
+            </div>
+            <p className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-3.5">
+              {performanceBasis === 'reported'
+                ? `Date basis: Monthly Reported. ${activePerformanceYear ? `Includes accounts reported in ${activePerformanceYear.id}.` : 'Includes all reported periods.'}`
+                : `Date basis: Maturity Date. ${activePerformanceYear ? `Includes loans maturing in ${activePerformanceYear.id}, regardless of month reported.` : 'Includes all maturity dates.'}`}
+              {' '}Collection performance uses the same calculations as the Reports matrix.
             </p>
-          </div>
-          <div className="flex items-center gap-2 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/60 dark:border-purple-800/40 px-3 py-1 rounded-lg">
-            <span className="text-xs font-black text-purple-700 dark:text-purple-300">
-              📊 Total Write-Off: ₱{writeOffStats.total.amount.toLocaleString()}
-            </span>
-            <span className="text-[10px] font-bold text-purple-600/80 dark:text-purple-400/80 bg-purple-100 dark:bg-purple-900/50 px-1.5 py-0.5 rounded">
-              {writeOffStats.total.count} Accounts
-            </span>
+            {dateFilter !== 'all' && (
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 -mt-2 mb-3">
+                Performance totals follow the report tab and are not changed by the Dashboard activity date filter.
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              {/* Row 1, Card 1: Target (Reported) */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-blue-200 dark:hover:border-blue-900/50 transition-all shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-wider">
+                      🎯 Target
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1 py-0.5 rounded border border-slate-200/60 dark:border-slate-700">
+                      {collectionPerformanceGrandTotal.totalAccounts.toLocaleString()} Accts
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-slate-900 dark:text-white tabular-nums leading-tight">
+                    ₱{collectionPerformanceGrandTotal.reportedAmount.toLocaleString()}
+                  </div>
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[9px] font-bold text-slate-500 dark:text-slate-400">
+                  <span>Active</span>
+                  <span className="text-blue-600 dark:text-blue-400 font-extrabold">{collectionPerformanceGrandTotal.activeAccounts.toLocaleString()} Accts</span>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-blue-500"></div>
+              </div>
+
+              {/* Row 1, Card 2: Actual Collection */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-200 dark:hover:border-emerald-900/50 transition-all shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                      💳 Actual Collection
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                      Post-Report
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 tabular-nums leading-tight">
+                    ₱{collectionPerformanceGrandTotal.actualCollectedAmount.toLocaleString()}
+                  </div>
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[9px] font-bold text-slate-500 dark:text-slate-400">
+                  <span>Reported Base</span>
+                  <span className="text-slate-700 dark:text-slate-300 font-extrabold">Excl. excess</span>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-emerald-500"></div>
+              </div>
+
+              {/* Row 1, Card 3: Balance */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-amber-200 dark:hover:border-amber-900/50 transition-all shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+                      📉 Balance
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1 py-0.5 rounded border border-slate-200/60 dark:border-slate-700">
+                      Remaining
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-slate-900 dark:text-white tabular-nums leading-tight">
+                    ₱{collectionPerformanceGrandTotal.runningBalance.toLocaleString()}
+                  </div>
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[9px] font-bold text-slate-500 dark:text-slate-400">
+                  <span>Exposure</span>
+                  <span className="text-amber-600 dark:text-amber-400 font-extrabold">{collectionPerformanceGrandTotal.activeAccounts.toLocaleString()} Unsettled</span>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-amber-500"></div>
+              </div>
+
+              {/* Row 2, Card 1: Excess Collection */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-orange-700 dark:text-orange-400 uppercase tracking-wider">
+                      ⚡ Excess Collection
+                    </span>
+                    <span className="text-[9px] font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/60 px-1 py-0.5 rounded border border-orange-200/60 dark:border-orange-800/60">
+                      Overpayment
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-orange-600 dark:text-orange-400 tabular-nums leading-tight">
+                    ₱{collectionPerformanceGrandTotal.excessCollection.toLocaleString()}
+                  </div>
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 text-[9px] font-bold text-slate-500 dark:text-slate-400 truncate">
+                  Beyond reported balance
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-orange-500"></div>
+              </div>
+
+              {/* Row 2, Card 2: Write-Off Valid Collections */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-violet-700 dark:text-violet-400 uppercase tracking-wider">
+                      📋 Write-Off Valid Collection
+                    </span>
+                    <span className="text-[9px] font-bold text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/60 px-1 py-0.5 rounded border border-violet-200/60 dark:border-violet-800/60">
+                      Terminal
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-violet-600 dark:text-violet-400 tabular-nums leading-tight">
+                    ₱{collectionPerformanceGrandTotal.writeOffValidCollections.toLocaleString()}
+                  </div>
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 text-[9px] font-bold text-slate-500 dark:text-slate-400 truncate">
+                  Valid on terminal accts
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-violet-500"></div>
+              </div>
+
+              {/* Row 2, Card 3: Overall Total Collected */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-200 dark:hover:border-emerald-900/50 transition-all shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                      💰 Overall Total Collected
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                      All Inflow
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 tabular-nums leading-tight">
+                    ₱{collectionPerformanceGrandTotal.collectedAmount.toLocaleString()}
+                  </div>
+                </div>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[9px] font-bold text-slate-500 dark:text-slate-400">
+                  <span>Total Inflow</span>
+                  <span className="text-emerald-700 dark:text-emerald-300 font-extrabold">All valid</span>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-emerald-500"></div>
+              </div>
+            </div>
+
+            {/* Overall Efficiency Rate Bar */}
+            <div className="mt-2.5 bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-teal-200 dark:hover:border-teal-900/50 transition-all shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black text-teal-700 dark:text-teal-400 uppercase tracking-wider">
+                    ⚡ Efficiency Rate:
+                  </span>
+                  <span className="text-base sm:text-lg font-black text-teal-600 dark:text-teal-400 tabular-nums">
+                    {collectionPerformanceGrandTotal.efficiencyRate.toFixed(1)}%
+                  </span>
+                </div>
+                <div className="text-left sm:text-right text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  Target Recovery: <span className="text-teal-600 dark:text-teal-400 font-extrabold tabular-nums">₱{collectionPerformanceGrandTotal.actualCollectedAmount.toLocaleString()}</span> <span className="text-slate-400">/</span> ₱{collectionPerformanceGrandTotal.reportedAmount.toLocaleString()}
+                </div>
+              </div>
+              <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 mt-2 overflow-hidden">
+                <div
+                  className="bg-teal-500 h-1.5 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.max(0, collectionPerformanceGrandTotal.efficiencyRate))}%` }}
+                ></div>
+              </div>
+              <div className="absolute top-0 right-0 w-1 h-full bg-teal-500"></div>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Located Write-Off */}
-          <div className="bg-slate-50/70 dark:bg-slate-900/50 p-3.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-blue-200 dark:hover:border-blue-900/50 transition-all shadow-xs">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1">
-                  📍 Located Write-Off
-                </span>
-                <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
-                  {writeOffStats.located.count} Acct{writeOffStats.located.count !== 1 ? 's' : ''}
-                </span>
+        {/* RIGHT: Write-Off Module Reports */}
+        <div className="bg-white dark:bg-slate-800 p-4 md:p-4.5 rounded-2xl shadow-[0_2px_12px_-3px_rgba(0,0,0,0.05)] border border-slate-100 dark:border-slate-700 transition-colors duration-300 flex flex-col justify-between h-full">
+          <div>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-2 border-b border-slate-100 dark:border-slate-700/50 pb-2.5">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 flex items-center justify-center font-bold text-sm shadow-xs">
+                    📋
+                  </div>
+                  <h2 className="text-base sm:text-lg font-bold text-slate-800 dark:text-white">Write-Off Reports</h2>
+                </div>
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
+                  Terminal accounts & write-off portfolio summary for {selectedBranch}
+                </p>
               </div>
-              <div className="text-xl font-black text-slate-900 dark:text-white tabular-nums">
-                ₱{writeOffStats.located.amount.toLocaleString()}
+              <div className="flex items-center gap-2 bg-purple-50 dark:bg-purple-950/40 border border-purple-200/60 dark:border-purple-800/40 px-2.5 py-1 rounded-lg">
+                <span className="text-xs font-black text-purple-700 dark:text-purple-300">
+                  📊 Total: ₱{writeOffStats.total.amount.toLocaleString()}
+                </span>
+                <span className="text-[10px] font-bold text-purple-600/80 dark:text-purple-400/80 bg-purple-100 dark:bg-purple-900/50 px-1.5 py-0.5 rounded">
+                  {writeOffStats.total.count} Accts
+                </span>
               </div>
             </div>
-            
-            <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1 text-[9px] font-bold">
-              <div className="flex items-center justify-between text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-200/40 dark:border-amber-800/40">
-                <span className="flex items-center gap-1">⏳ Pending Review</span>
-                <span>{writeOffStats.located.pending.count} (₱{writeOffStats.located.pending.amount.toLocaleString()})</span>
-              </div>
-              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200/40 dark:border-emerald-800/40">
-                <span className="flex items-center gap-1">✓ Officially Approved</span>
-                <span>{writeOffStats.located.official.count} (₱{writeOffStats.located.official.amount.toLocaleString()})</span>
-              </div>
-            </div>
-            <div className="absolute top-0 right-0 w-1 h-full bg-blue-500"></div>
-          </div>
 
-          {/* Unlocated Write-Off */}
-          <div className="bg-slate-50/70 dark:bg-slate-900/50 p-3.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-amber-200 dark:hover:border-amber-900/50 transition-all shadow-xs">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-black text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
-                  🔍 Unlocated Write-Off
-                </span>
-                <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
-                  {writeOffStats.unlocated.count} Acct{writeOffStats.unlocated.count !== 1 ? 's' : ''}
+            <div className="flex flex-wrap items-center gap-2 mb-3" aria-label="Write-off classification overview">
+              <div className="inline-flex items-center gap-2 rounded-lg border border-purple-200/60 dark:border-purple-800/40 bg-purple-50/50 dark:bg-purple-950/30 px-2.5 py-1 text-[10px] font-bold text-purple-700 dark:text-purple-300 shadow-xs">
+                <span className="uppercase tracking-wider">Classification:</span>
+                <span className="font-extrabold text-purple-900 dark:text-purple-200">
+                  Located ({writeOffStats.located.count}) · Unlocated ({writeOffStats.unlocated.count}) · Deceased ({writeOffStats.deceased.count})
                 </span>
               </div>
-              <div className="text-xl font-black text-slate-900 dark:text-white tabular-nums">
-                ₱{writeOffStats.unlocated.amount.toLocaleString()}
-              </div>
             </div>
-            
-            <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1 text-[9px] font-bold">
-              <div className="flex items-center justify-between text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-200/40 dark:border-amber-800/40">
-                <span className="flex items-center gap-1">⏳ Pending Review</span>
-                <span>{writeOffStats.unlocated.pending.count} (₱{writeOffStats.unlocated.pending.amount.toLocaleString()})</span>
-              </div>
-              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200/40 dark:border-emerald-800/40">
-                <span className="flex items-center gap-1">✓ Officially Approved</span>
-                <span>{writeOffStats.unlocated.official.count} (₱{writeOffStats.unlocated.official.amount.toLocaleString()})</span>
-              </div>
-            </div>
-            <div className="absolute top-0 right-0 w-1 h-full bg-amber-500"></div>
-          </div>
 
-          {/* Deceased Clients */}
-          <div className="bg-slate-50/70 dark:bg-slate-900/50 p-3.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-purple-200 dark:hover:border-purple-900/50 transition-all shadow-xs">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-black text-purple-700 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1">
-                  🕊️ Deceased Accounts
-                </span>
-                <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
-                  {writeOffStats.deceased.count} Acct{writeOffStats.deceased.count !== 1 ? 's' : ''}
-                </span>
-              </div>
-              <div className="text-xl font-black text-slate-900 dark:text-white tabular-nums">
-                ₱{writeOffStats.deceased.amount.toLocaleString()}
-              </div>
-            </div>
-            
-            <div className="mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[9px] font-semibold text-slate-500 dark:text-slate-400 bg-purple-50/50 dark:bg-purple-950/30 px-1.5 py-1 rounded">
-              <span>Direct Settlement Filing</span>
-              <span className="font-bold text-purple-700 dark:text-purple-300">Terminal status</span>
-            </div>
-            <div className="absolute top-0 right-0 w-1 h-full bg-purple-500"></div>
-          </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Located Write-Off */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-blue-200 dark:hover:border-blue-900/50 transition-all shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-wider flex items-center gap-1">
+                      📍 Located Write-Off
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
+                      {writeOffStats.located.count} Acct{writeOffStats.located.count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-slate-900 dark:text-white tabular-nums leading-tight">
+                    ₱{writeOffStats.located.amount.toLocaleString()}
+                  </div>
+                </div>
 
-          {/* Total Write-Off Portfolio */}
-          <div className="bg-purple-50/60 dark:bg-purple-950/30 p-3.5 rounded-xl border border-purple-200/70 dark:border-purple-800/60 flex flex-col justify-between relative overflow-hidden group shadow-xs">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-black text-purple-900 dark:text-purple-200 uppercase tracking-wider flex items-center gap-1">
-                  📊 Total Write-Off
-                </span>
-                <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-purple-200 dark:border-purple-700">
-                  {writeOffStats.total.count} Total Accts
-                </span>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1 text-[9px] font-bold">
+                  <div className="flex items-center justify-between text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-200/40 dark:border-amber-800/40">
+                    <span className="flex items-center gap-1">⏳ Pending Review</span>
+                    <span>{writeOffStats.located.pending.count} (₱{writeOffStats.located.pending.amount.toLocaleString()})</span>
+                  </div>
+                  <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200/40 dark:border-emerald-800/40">
+                    <span className="flex items-center gap-1">✓ Officially Approved</span>
+                    <span>{writeOffStats.located.official.count} (₱{writeOffStats.located.official.amount.toLocaleString()})</span>
+                  </div>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-blue-500"></div>
               </div>
-              <div className="text-xl font-black text-purple-950 dark:text-purple-100 tabular-nums">
-                ₱{writeOffStats.total.amount.toLocaleString()}
+
+              {/* Unlocated Write-Off */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-amber-200 dark:hover:border-amber-900/50 transition-all shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-black text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                      🔍 Unlocated Write-Off
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded shadow-xs border border-slate-200/60 dark:border-slate-700">
+                      {writeOffStats.unlocated.count} Acct{writeOffStats.unlocated.count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-slate-900 dark:text-white tabular-nums leading-tight">
+                    ₱{writeOffStats.unlocated.amount.toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1 text-[9px] font-bold">
+                  <div className="flex items-center justify-between text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-200/40 dark:border-amber-800/40">
+                    <span className="flex items-center gap-1">⏳ Pending Review</span>
+                    <span>{writeOffStats.unlocated.pending.count} (₱{writeOffStats.unlocated.pending.amount.toLocaleString()})</span>
+                  </div>
+                  <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200/40 dark:border-emerald-800/40">
+                    <span className="flex items-center gap-1">✓ Officially Approved</span>
+                    <span>{writeOffStats.unlocated.official.count} (₱{writeOffStats.unlocated.official.amount.toLocaleString()})</span>
+                  </div>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-amber-500"></div>
+              </div>
+
+              {/* Deceased Clients */}
+              <div className="bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col justify-between relative overflow-hidden group hover:border-purple-200 dark:hover:border-purple-900/50 transition-all shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-purple-700 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1">
+                      🕊️ Deceased Accounts
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200/60 dark:border-slate-700">
+                      {writeOffStats.deceased.count} Acct{writeOffStats.deceased.count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-slate-900 dark:text-white tabular-nums leading-tight">
+                    ₱{writeOffStats.deceased.amount.toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-1 text-[9px] font-bold">
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-300 bg-purple-50/50 dark:bg-purple-950/30 px-1.5 py-0.5 rounded border border-purple-200/30 dark:border-purple-800/30">
+                    <span>Direct Settlement</span>
+                    <span className="font-extrabold text-purple-700 dark:text-purple-300">Terminal</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[8px] italic">
+                    <span>Active Excluded</span>
+                    <span>Non-recoverable</span>
+                  </div>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-purple-500"></div>
+              </div>
+
+              {/* Total Write-Off Portfolio */}
+              <div className="bg-purple-50/60 dark:bg-purple-950/30 p-2.5 rounded-xl border border-purple-200/70 dark:border-purple-800/60 flex flex-col justify-between relative overflow-hidden group shadow-xs min-h-[108px]">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-black text-purple-900 dark:text-purple-200 uppercase tracking-wider flex items-center gap-1">
+                      📊 Total Write-Off
+                    </span>
+                    <span className="text-[9px] font-bold text-purple-700 dark:text-purple-300 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-700">
+                      {writeOffStats.total.count} Accts
+                    </span>
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-purple-950 dark:text-purple-100 tabular-nums leading-tight">
+                    ₱{writeOffStats.total.amount.toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="mt-2 pt-1.5 border-t border-purple-200/70 dark:border-purple-800/60 flex flex-col gap-1 text-[9px] font-bold">
+                  <div className="flex items-center justify-between text-purple-800 dark:text-purple-300 bg-purple-100/60 dark:bg-purple-900/40 px-1.5 py-0.5 rounded border border-purple-200/40 dark:border-purple-800/40">
+                    <span>Full Portfolio</span>
+                    <span>Located + Unlocated + Deceased</span>
+                  </div>
+                  <div className="flex items-center justify-between text-purple-700 dark:text-purple-300 text-[8px]">
+                    <span>Quarantined Sum</span>
+                    <span className="font-extrabold">{writeOffStats.total.count} Accounts</span>
+                  </div>
+                </div>
+                <div className="absolute top-0 right-0 w-1 h-full bg-purple-600"></div>
               </div>
             </div>
-            
-            <div className="mt-3 pt-2 border-t border-purple-200/70 dark:border-purple-800/60 flex items-center justify-between text-[9px] font-bold text-purple-800 dark:text-purple-300">
-              <span>Full Portfolio Write-Off</span>
-              <span>Located + Unlocated + Deceased</span>
+
+            {/* Quarantined Portfolio Notice */}
+            <div className="mt-2.5 bg-slate-50/70 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 shadow-xs">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0"></span>
+                <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                  Terminal Quarantined Portfolio: <strong className="text-purple-800 dark:text-purple-300">{writeOffStats.total.count} Accounts</strong>
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                <span>Write-Off Exposure:</span>
+                <span className="font-black text-purple-700 dark:text-purple-300 tabular-nums">₱{writeOffStats.total.amount.toLocaleString()}</span>
+              </div>
             </div>
-            <div className="absolute top-0 right-0 w-1 h-full bg-purple-600"></div>
           </div>
         </div>
       </div>
@@ -1091,7 +1425,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
                 <option value="Performance View">Performance View</option>
             </select>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto pr-2 pb-2 custom-scrollbar space-y-6 mt-2">
              {sortedCollectorData.map(cd => {
                  const percentage = cd.reportedAmount > 0 ? (cd.collectedAmount / cd.reportedAmount) * 100 : 0;
@@ -1122,7 +1456,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
             <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-1">Account Distribution</h3>
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Client load by personnel</span>
           </div>
-          
+
           <div className="relative h-56 flex items-center justify-center shrink-0 mb-4">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -1142,7 +1476,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Total Clients</span>
             </div>
           </div>
-          
+
           <div className="space-y-1.5 overflow-y-auto pr-2 flex-1 custom-scrollbar">
             {collectorDistribution.map((item, index) => {
               const listColors = ['#064e3b', '#047857', '#10b981', '#34d399', '#6ee7b7', '#94a3b8', '#cbd5e1'];
@@ -1183,7 +1517,7 @@ const Dashboard: React.FC<DashboardProps> = ({ selectedBranch }) => {
                </div>
                <div className="text-2xl font-black text-blue-700 dark:text-blue-400 bg-white dark:bg-slate-800 w-12 h-12 rounded-xl flex items-center justify-center shadow-sm">{todayActions.ptpDue}</div>
             </div>
-            
+
             <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl border border-amber-100 dark:border-amber-800/30 flex items-center justify-between">
                <div>
                   <div className="text-amber-800 dark:text-amber-300 font-bold">Follow-ups</div>

@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { ACCOUNT_ROLE_OPTIONS, User, UserRole, Branch } from '../types.ts';
-import { store } from '../services/dataStore.ts';
+import { getAuditPcIdentity, setAuditPcName, store } from '../services/dataStore.ts';
 import loginVisual from '../assets/no bg.png';
 import ConfirmationModal from './ConfirmationModal.tsx';
 
@@ -13,6 +13,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [pcName, setPcName] = useState(() => getAuditPcIdentity().name);
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<UserRole>(UserRole.COLLECTOR);
   const [branch, setBranch] = useState<Branch>(Branch.NAVAL);
@@ -63,6 +64,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         await store.whenReady();
         const result = store.authenticate(username, password);
         if (result.user) {
+          setAuditPcName(pcName);
           onLogin(result.user);
         } else {
           setError(result.error || 'Invalid credentials or account pending approval.');
@@ -182,6 +184,22 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                     </button>
                   </div>
                 </div>
+
+                {!isRegistering && (
+                  <div className="space-y-1.5">
+                    <label htmlFor="audit-pc-name" className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">PC Name for Tracer Log</label>
+                    <input
+                      id="audit-pc-name"
+                      type="text"
+                      maxLength={60}
+                      value={pcName}
+                      onChange={(e) => setPcName(e.target.value)}
+                      placeholder="e.g. Ormoc Cashier PC"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 focus:bg-white focus:outline-none transition-all font-semibold text-slate-800 text-sm shadow-sm"
+                    />
+                    <p className="text-[10px] text-slate-400 px-1">Saved on this browser for future logins.</p>
+                  </div>
+                )}
 
                 {isRegistering && (
                   <div className="space-y-1.5">

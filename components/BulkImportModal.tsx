@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { store } from '../services/dataStore.ts';
-import { ACTIVE_PORTFOLIO_MATURITY_END, ACTIVE_PORTFOLIO_MATURITY_START, isLoanMaturityInActivePortfolioRange } from '../services/loanUtils.ts';
+import { ACTIVE_PORTFOLIO_MATURITY_END, ACTIVE_PORTFOLIO_MATURITY_START, get45DayReportedDate, isLoanMaturityInActivePortfolioRange } from '../services/loanUtils.ts';
 import { Loan, Branch, User, UserRole, MovingStatus, LocationStatus, PriorityLevel, isAllBranchRole } from '../types.ts';
 import { formatReportedMonth } from '../constants.tsx';
 import ConfirmationModal from './ConfirmationModal.tsx';
@@ -258,7 +258,7 @@ const BulkImportModal: React.FC<BulkImportModalProps> = ({ currentUser, onClose,
 
                     if (!firstName || firstName === 'undefined') errors.push(`Missing: First Name`);
                     if (!lastName || lastName === 'undefined') errors.push(`Missing: Last Name`);
-                    if (!reportedDate) errors.push(`Missing: Reported Month`);
+                    if (!reportedDate && !get45DayReportedDate(dueDate)) errors.push(`Missing: Reported Month`);
                     if (!dueDate) errors.push(`Missing: Due Date`);
                     if (dueDate && !isLoanMaturityInActivePortfolioRange(dueDate)) {
                         errors.push(`Maturity Date must be from ${ACTIVE_PORTFOLIO_MATURITY_START} to ${ACTIVE_PORTFOLIO_MATURITY_END}`);
@@ -279,7 +279,7 @@ const BulkImportModal: React.FC<BulkImportModalProps> = ({ currentUser, onClose,
                         city: String(val('city') || 'N/A'),
                         barangay: String(val('barangay') || 'N/A'),
                         fullAddress: String(val('Full Address') || val('Address') || ''),
-                        monthReported: reportedDate.substring(0, 7),
+                        monthReported: get45DayReportedDate(dueDate) || reportedDate.substring(0, 7),
                         dueDate: dueDate,
                         outstandingBalance: outstanding,
                         amountCollected: 0,

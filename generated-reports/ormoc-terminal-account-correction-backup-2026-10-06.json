@@ -1,0 +1,313 @@
+{
+  "createdAt": "2026-10-06T06:30:04.812Z",
+  "rule": "Reported Amount equals Total Loan minus actual cash collections before the first day of Month Reported. Exclude Dead/Deceased, Write-Off, and Reconstructed noncash outcome payments. Stored payment balance_after follows chronological app recalculation including active outcome settlements.",
+  "loans": [
+    {
+      "id": "fsawjc5",
+      "code": "3725",
+      "name": "Surio, Rogelio M.",
+      "monthReported": "2024-02",
+      "totalLoan": 18728,
+      "sourceAdjustment": 0,
+      "cashBefore": 1000,
+      "nonCashBefore": 12328,
+      "lastCashPaymentDate": "2023-12-14",
+      "before": 17728,
+      "after": 17728,
+      "actionStage": null,
+      "actionNote": null
+    },
+    {
+      "id": "4494",
+      "code": "487",
+      "name": "GANDIA, MERCY",
+      "monthReported": "2018-09",
+      "totalLoan": 10900,
+      "sourceAdjustment": 0,
+      "cashBefore": 0,
+      "nonCashBefore": 10900,
+      "lastCashPaymentDate": null,
+      "before": 10900,
+      "after": 10900,
+      "actionStage": null,
+      "actionNote": null
+    },
+    {
+      "id": "dburucs",
+      "code": "2583",
+      "name": "Pacaldo, Reynaldo",
+      "monthReported": "2026-01",
+      "totalLoan": 3565,
+      "sourceAdjustment": 0,
+      "cashBefore": 200,
+      "nonCashBefore": 0,
+      "lastCashPaymentDate": "2025-09-05",
+      "before": 0,
+      "after": 3365,
+      "actionStage": null,
+      "actionNote": null
+    },
+    {
+      "id": "27460",
+      "code": "2564",
+      "name": "BALORO, VILMA",
+      "monthReported": "2022-10",
+      "totalLoan": 3480,
+      "sourceAdjustment": 0,
+      "cashBefore": 3080,
+      "nonCashBefore": 0,
+      "lastCashPaymentDate": "2022-09-30",
+      "before": 2360,
+      "after": 400,
+      "actionStage": "For Write-Off",
+      "actionNote": "Management Disposition: Prospect for Write-Off - Paid na daw sa itomon"
+    },
+    {
+      "id": "14794",
+      "code": "927",
+      "name": "YANGAO, EMIY",
+      "monthReported": "2020-05",
+      "totalLoan": 39676,
+      "sourceAdjustment": 3,
+      "cashBefore": 5879,
+      "nonCashBefore": 0,
+      "lastCashPaymentDate": "2020-03-18",
+      "before": 33800,
+      "after": 33797,
+      "actionStage": "For Write-Off",
+      "actionNote": "Management Disposition: Prospect for Write-Off [Unlocated] - nilayas during covid sa tacloban daw nilayas"
+    }
+  ],
+  "paymentChanges": [
+    {
+      "id": "jcash-payment-893455-L44817",
+      "loanId": "fsawjc5",
+      "date": "2023-12-14",
+      "amount": 1000,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 17728,
+      "after": 5400
+    },
+    {
+      "id": "jcash-payment-893456-L44817",
+      "loanId": "fsawjc5",
+      "date": "2024-03-07",
+      "amount": 1000,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 16728,
+      "after": 4400
+    },
+    {
+      "id": "jcash-payment-893457-L44817",
+      "loanId": "fsawjc5",
+      "date": "2024-03-25",
+      "amount": 300,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 16428,
+      "after": 4100
+    },
+    {
+      "id": "jcash-payment-893458-L44817",
+      "loanId": "fsawjc5",
+      "date": "2024-05-15",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 16328,
+      "after": 4000
+    },
+    {
+      "id": "jcash-payment-893461-L44817",
+      "loanId": "fsawjc5",
+      "date": "2024-05-18",
+      "amount": 200,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 16128,
+      "after": 3800
+    },
+    {
+      "id": "jcash-payment-893459-L44817",
+      "loanId": "fsawjc5",
+      "date": "2024-05-24",
+      "amount": 200,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 15928,
+      "after": 3600
+    },
+    {
+      "id": "jcash-payment-893460-L44817",
+      "loanId": "fsawjc5",
+      "date": "2024-09-23",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 15828,
+      "after": 3500
+    },
+    {
+      "id": "jcash-payment-899442-L44817",
+      "loanId": "fsawjc5",
+      "date": "2025-08-30",
+      "amount": 1000,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 14828,
+      "after": 2500
+    },
+    {
+      "id": "jcash-payment-910812-L44817",
+      "loanId": "fsawjc5",
+      "date": "2025-10-03",
+      "amount": 1000,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 13828,
+      "after": 1500
+    },
+    {
+      "id": "jcash-payment-922459-L44817",
+      "loanId": "fsawjc5",
+      "date": "2025-11-07",
+      "amount": 1000,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 12828,
+      "after": 500
+    },
+    {
+      "id": "jcash-payment-932441-L44817",
+      "loanId": "fsawjc5",
+      "date": "2025-12-08",
+      "amount": 500,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 12328,
+      "after": 0
+    },
+    {
+      "id": "jcash-payment-565966",
+      "loanId": "27460",
+      "date": "2022-07-07",
+      "amount": 120,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 3360,
+      "after": 1400
+    },
+    {
+      "id": "jcash-payment-567886",
+      "loanId": "27460",
+      "date": "2022-07-12",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 3260,
+      "after": 1300
+    },
+    {
+      "id": "jcash-payment-569664",
+      "loanId": "27460",
+      "date": "2022-07-15",
+      "amount": 150,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 3110,
+      "after": 1150
+    },
+    {
+      "id": "jcash-payment-571040",
+      "loanId": "27460",
+      "date": "2022-07-19",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 3010,
+      "after": 1050
+    },
+    {
+      "id": "jcash-payment-571471",
+      "loanId": "27460",
+      "date": "2022-07-20",
+      "amount": 50,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 2960,
+      "after": 1000
+    },
+    {
+      "id": "jcash-payment-571886",
+      "loanId": "27460",
+      "date": "2022-07-21",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 2860,
+      "after": 900
+    },
+    {
+      "id": "jcash-payment-574167",
+      "loanId": "27460",
+      "date": "2022-07-28",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 2760,
+      "after": 800
+    },
+    {
+      "id": "jcash-payment-575507",
+      "loanId": "27460",
+      "date": "2022-08-01",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 2660,
+      "after": 700
+    },
+    {
+      "id": "jcash-payment-585838",
+      "loanId": "27460",
+      "date": "2022-08-29",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 2560,
+      "after": 600
+    },
+    {
+      "id": "jcash-payment-598110",
+      "loanId": "27460",
+      "date": "2022-09-30",
+      "amount": 200,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 2360,
+      "after": 400
+    },
+    {
+      "id": "jcash-payment-647369",
+      "loanId": "27460",
+      "date": "2023-02-18",
+      "amount": 300,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 2060,
+      "after": 100
+    },
+    {
+      "id": "jcash-payment-694865",
+      "loanId": "27460",
+      "date": "2023-06-27",
+      "amount": 100,
+      "status": "GOOD",
+      "remarks": "Migrated from jcashdb.mdb",
+      "before": 1960,
+      "after": 0
+    }
+  ]
+}

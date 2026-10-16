@@ -5,6 +5,36 @@ export const ACTIVE_PORTFOLIO_MATURITY_END = '2026-12-31';
 export const JCASH_MIGRATION_PAYMENT_REMARK = 'Migrated from jcashdb.mdb';
 export const MODERN_MIGRATION_PAYMENT_REMARK = 'Migrated from melann.db';
 
+export function get45DayReportedDate(dueDate?: string | null): string {
+  const date = normalizeDateOnly(dueDate);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < '2025-01-01') return '';
+  const year = Number(date.slice(0, 4));
+  const monthDay = date.slice(5);
+  let reportedYear = year;
+  let reportedMonthDay: string;
+  if (monthDay <= '02-15') reportedMonthDay = '04-01';
+  else if (monthDay <= '03-31') reportedMonthDay = '05-16';
+  else if (monthDay <= '05-15') reportedMonthDay = '07-01';
+  else if (monthDay <= '06-30') reportedMonthDay = '08-16';
+  else if (monthDay <= '08-15') reportedMonthDay = '10-01';
+  else if (monthDay <= '09-30') reportedMonthDay = '11-16';
+  else if (monthDay <= '11-15') {
+    reportedYear++;
+    reportedMonthDay = '01-01';
+  } else {
+    reportedYear++;
+    reportedMonthDay = '02-16';
+  }
+  return `${reportedYear}-${reportedMonthDay}`;
+}
+
+export function getReportedStartDate(monthReported?: string | null): string {
+  if (!monthReported) return '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(monthReported)
+    ? monthReported
+    : /^\d{4}-\d{2}$/.test(monthReported) ? `${monthReported}-01` : '';
+}
+
 export function normalizeDateOnly(value?: string | null): string {
   if (!value) return '';
   const raw = String(value).trim();
@@ -102,6 +132,7 @@ export function isReconstructedOutcomeLoan(loan: Loan): boolean {
 }
 
 export function isWriteOffOutcomeLoan(loan: Loan): boolean {
+  if (loan.actionStage === 'Active / Cooperative' && loan.actionNote?.startsWith('Restored to Collection:')) return false;
   const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
   return hasWriteOffText(loan.actionStage) ||
     hasWriteOffText(loan.actionNote) ||

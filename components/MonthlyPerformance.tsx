@@ -5,6 +5,7 @@ import { store } from '../services/dataStore.ts';
 import { getCollectorDisplayName, normalizeCollectorKey } from '../services/collectorUtils.ts';
 import { isDeadWriteOffLoan, isReportableCollectionPayment } from '../services/loanUtils.ts';
 import { Loan, Payment, Branch, DispositionStatus, DispositionType } from '../types.ts';
+import { formatReportedMonth } from '../constants.tsx';
 
 interface MonthlyPerformanceProps {
     selectedBranch: Branch;
@@ -110,7 +111,8 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
         loans.forEach(loan => {
             if (isExcludedFromCollectionReports(loan)) return;
 
-            if (loan.monthReported >= fromStr && loan.monthReported <= toStr) {
+            const reportedMonth = loan.monthReported.slice(0, 7);
+            if (reportedMonth >= fromStr && reportedMonth <= toStr) {
                 const key = getCollectorDisplayName(loan.collector, collectors);
                 if (!data[key]) {
                     const searchName = normalizeCollectorKey(loan.collector);
@@ -254,8 +256,8 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
         return loans
             .filter(loan =>
                 !isExcludedFromCollectionReports(loan) &&
-                loan.monthReported >= fromStr &&
-                loan.monthReported <= toStr &&
+                loan.monthReported.slice(0, 7) >= fromStr &&
+                loan.monthReported.slice(0, 7) <= toStr &&
                 getCollectorDisplayName(loan.collector, collectors) === selectedReportedCollector
             )
             .sort((a, b) => b.monthReported.localeCompare(a.monthReported) || b.outstandingBalance - a.outstandingBalance);
@@ -676,7 +678,7 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                                         <tr>
                                             <th className="px-4 py-3">Client</th>
                                             <th className="px-4 py-3">Code</th>
-                                            <th className="px-4 py-3">Reported Month</th>
+                                            <th className="px-4 py-3">Reported Date</th>
                                             <th className="px-4 py-3">Due Date</th>
                                             <th className="px-4 py-3 text-right">Reported Amount</th>
                                         </tr>
@@ -689,7 +691,7 @@ const MonthlyPerformance: React.FC<MonthlyPerformanceProps> = ({ selectedBranch 
                                                     <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500">{loan.barangay}, {loan.city}</p>
                                                 </td>
                                                 <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{loan.code}</td>
-                                                <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{formatDateLabel(`${loan.monthReported}-01`, { month: 'long', year: 'numeric' })}</td>
+                                                <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{formatReportedMonth(loan.monthReported)}</td>
                                                 <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-300">{formatDateLabel((loan.dueDate || '').substring(0, 10))}</td>
                                                 <td className="px-4 py-3 text-right font-black text-emerald-700 dark:text-emerald-300">₱{loan.outstandingBalance.toLocaleString()}</td>
                                             </tr>

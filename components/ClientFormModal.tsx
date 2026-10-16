@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Loan, LocationStatus, MovingStatus, Branch, User, Collector } from '../types.ts';
 import { store } from '../services/dataStore.ts';
+import { get45DayReportedDate } from '../services/loanUtils.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
 import SuccessModal from './SuccessModal.tsx';
 
@@ -116,7 +117,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
         code: loan.code || '',
         firstName: loan.firstName || '',
         lastName: loan.lastName || '',
-        monthReported: loan.monthReported || '',
+        monthReported: get45DayReportedDate(loan.dueDate) || loan.monthReported || '',
         dueDate: loan.dueDate || '',
         dateRelease: loan.dateRelease || '',
         principal: loan.principal ? loan.principal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : '',
@@ -199,6 +200,10 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     
     if (!formData.monthReported) errors.monthReported = 'Reporting month is required';
     if (!formData.dueDate) errors.dueDate = 'Due Date is required';
+    const cycleDate = get45DayReportedDate(formData.dueDate);
+    if (cycleDate && formData.monthReported !== cycleDate) {
+      errors.monthReported = `The reporting date for this 45-day cycle is ${cycleDate}.`;
+    }
     
     const balance = parseFloat(formData.outstandingBalance.toString().replace(/,/g, ''));
     if (isNaN(balance) || balance < 0) errors.outstandingBalance = 'Valid initial balance is required';
@@ -308,6 +313,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
     // Always prioritize storing the Active Nickname if it exists
     const finalData = {
       ...formData,
+      monthReported: get45DayReportedDate(formData.dueDate) || formData.monthReported,
       principal: parseFloat(formData.principal.toString().replace(/,/g, '')) || null,
       totalLoan: parseFloat(formData.totalLoan.toString().replace(/,/g, '')) || null,
       outstandingBalance: parseFloat(formData.outstandingBalance.toString().replace(/,/g, '')) || 0,
@@ -513,12 +519,13 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
 
                 <div className="relative">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                  <label className={activeFixedIconLabelStyle}>Monthly Reported <span className="text-red-500">*</span></label>
+                  <label className={activeFixedIconLabelStyle}>{get45DayReportedDate(formData.dueDate) ? 'Date Reported' : 'Monthly Reported'} <span className="text-red-500">*</span></label>
                   <input
                     name="monthReported"
-                    type="month"
+                    type={get45DayReportedDate(formData.dueDate) ? 'date' : 'month'}
                     className={`peer w-full bg-white border ${fieldErrors.monthReported ? 'border-red-500 bg-red-50 focus:border-red-500' : 'border-gray-200'} pl-10 pr-3 pt-5 pb-2 rounded-xl text-gray-800 text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all ${nativeDatePickerClass}`}
                     value={formData.monthReported}
+                    readOnly={Boolean(get45DayReportedDate(formData.dueDate))}
                     onChange={e => {
                       setFormData({ ...formData, monthReported: e.target.value });
                       if (fieldErrors.monthReported) setFieldErrors(p => ({ ...p, monthReported: '' }));
@@ -536,7 +543,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({ loan, currentUser, se
                     className={`peer w-full bg-white border ${fieldErrors.dueDate ? 'border-red-500 bg-red-50 focus:border-red-500' : 'border-gray-200'} pl-10 pr-3 pt-5 pb-2 rounded-xl text-gray-800 text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all ${nativeDatePickerClass}`}
                     value={formData.dueDate}
                     onChange={e => {
-                      setFormData({ ...formData, dueDate: e.target.value });
+                      const cycleDate = get45DayReportedDate(e.target.value);
+                      setFormData({ ...formData, dueDate: e.target.value, monthReported: cycleDate || formData.monthReported.slice(0, 7) });
                       if (fieldErrors.dueDate) setFieldErrors(p => ({ ...p, dueDate: '' }));
                     }}
                   />

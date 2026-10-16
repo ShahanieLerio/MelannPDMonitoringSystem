@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS loans (
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     borrower_name TEXT NOT NULL,
-    month_reported TEXT NOT NULL, -- YYYY-MM
+    month_reported TEXT NOT NULL, -- YYYY-MM legacy; YYYY-MM-DD for maturity dates from 2025
     due_date TEXT NOT NULL,
     outstanding_balance NUMERIC(15, 2) NOT NULL,
     amount_collected NUMERIC(15, 2) DEFAULT 0,
@@ -145,6 +145,25 @@ CREATE TABLE IF NOT EXISTS activity_logs (
     user_role TEXT NOT NULL,
     module TEXT NOT NULL
 );
+
+-- Append-only account audit trail. Never cascade-delete audit rows with business data.
+CREATE TABLE IF NOT EXISTS tracer_logs (
+    id BIGSERIAL PRIMARY KEY,
+    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id TEXT,
+    user_name TEXT NOT NULL,
+    user_role TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    action TEXT NOT NULL,
+    module TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    record_id TEXT,
+    ip_address TEXT,
+    pc_id TEXT,
+    pc_name TEXT
+);
+CREATE INDEX IF NOT EXISTS tracer_logs_occurred_at_idx ON tracer_logs (occurred_at DESC);
+CREATE INDEX IF NOT EXISTS tracer_logs_user_id_idx ON tracer_logs (user_id, occurred_at DESC);
 
 -- Visit Logs (Close Monitoring)
 CREATE TABLE IF NOT EXISTS visit_logs (

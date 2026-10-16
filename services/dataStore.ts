@@ -1,8 +1,60 @@
 import { Loan, MovingStatus, LocationStatus, Payment, PaymentStatus, User, UserRole, UserStatus, CollectorPerformance, CollectorPerformanceClientDetail, Remark, PriorityLevel, Collector, Supervisor, ActionPersonnel, DemandLetter, DemandLetterType, DemandLetterStatus, Branch, HistoryRecord, RecurringSchedule, VisitLog, VisitLogAction, ContactLog, ContactMethod, DeletedLoan, MigrationBatch, ManagementDisposition, DispositionType, DispositionStatus, isAllBranchRole, canApproveWriteOff } from '../types';
 import { dedupeCollectors, getCollectorDisplayMatchKeys, getCollectorDisplayName, hasDuplicateCollectorIdentity, normalizeCollectorAliasKey, normalizeCollectorKey, normalizeCollectorLooseKey } from './collectorUtils';
-import { hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReconstructedPaymentRemark, isReportableCollectionPayment } from './loanUtils';
+import { getReportedStartDate, hasActiveClientBalance, isLoanAllowedInActivePortfolio, isLoanMaturityInActivePortfolioRange, isReconstructedPaymentRemark, isReportableCollectionPayment } from './loanUtils';
 const API_URL = `http://${window.location.hostname}:5000/api`;
 const AUTO_SYNC_INTERVAL_MS = 60000;
+
+export interface TracerLog {
+  id: number;
+  occurred_at: string;
+  user_name: string;
+  user_role: string;
+  branch: string;
+  action: string;
+  module: string;
+  detail: string;
+  record_id: string | null;
+  ip_address: string | null;
+  pc_id: string | null;
+  pc_name: string | null;
+}
+
+export interface TracerUser {
+  id: string;
+  username: string;
+  role: string;
+  branch: string;
+  last_activity: string;
+}
+
+const PC_ID_KEY = 'melann_audit_pc_id';
+const PC_NAME_KEY = 'melann_audit_pc_name';
+
+export const getAuditPcIdentity = (): { id: string; name: string } => {
+  let id = localStorage.getItem(PC_ID_KEY);
+  if (!id) {
+    const unique = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    id = `PC-${unique.slice(0, 8).toUpperCase()}`;
+    localStorage.setItem(PC_ID_KEY, id);
+  }
+  return { id, name: localStorage.getItem(PC_NAME_KEY) || id };
+};
+
+export const setAuditPcName = (name: string): void => {
+  const safeName = name.trim().replace(/[^\x20-\x7E]/g, '').slice(0, 60);
+  if (safeName) localStorage.setItem(PC_NAME_KEY, safeName);
+  else localStorage.removeItem(PC_NAME_KEY);
+};
+
+const auditHeaders = (userId?: string): Record<string, string> => {
+  let id = userId;
+  if (!id) {
+    try { id = JSON.parse(localStorage.getItem('melann_user') || 'null')?.id; } catch { /* no active user */ }
+  }
+  const pc = getAuditPcIdentity();
+  return { ...(id ? { 'x-audit-user-id': id } : {}), 'x-audit-pc-id': pc.id, 'x-audit-pc-name': pc.name };
+};
 
 const createRecordId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -84,7 +136,7 @@ class DataStore {
   private autoSyncTimer: number | null = null;
   private loanViewCache = new Map<string, { loansRef: Loan[]; collectorsRef: Collector[]; result: Loan[] }>();
 
-  private getCollectorDisplayName(collector?: string | null) {
+  getCollectorDisplayName(collector?: string | null) {
     return getCollectorDisplayName(collector, this.collectors);
   }
 
@@ -302,7 +354,10 @@ class DataStore {
       // Conservative Merge Rule:
       // Don't wipe local loans that haven't synced to server yet
       const serverIDs = new Set(mappedLoans.map(l => l.id));
-      const localOnly = this.loans.filter(l => !serverIDs.has(l.id));
+      // Recycle Bin is authoritative for deletions. A stale local snapshot must
+      // never resurrect a loan that the server intentionally omitted.
+      const deletedServerIDs = new Set((dbDeletedLoans || []).map((loan: any) => String(loan.id)));
+      const localOnly = this.loans.filter(l => !serverIDs.has(l.id) && !deletedServerIDs.has(String(l.id)));
       
       this.loans = [...mappedLoans, ...localOnly].filter(isLoanAllowedInActivePortfolio);
 
@@ -438,10 +493,33 @@ class DataStore {
   private async api(path: string, method: string = 'GET', body?: any) {
     const res = await fetch(`${API_URL}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...auditHeaders() },
       body: body ? JSON.stringify(body) : undefined
     });
     if (!res.ok) throw new Error(`API Error: ${await res.text()}`);
+    return res.json();
+  }
+
+  async recordTracerEvent(user: User, action: 'LOGIN' | 'LOGOUT' | 'VIEW', module: string) {
+    const res = await fetch(`${API_URL}/tracer_logs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auditHeaders(user.id) },
+      body: JSON.stringify({ action, module })
+    });
+    if (!res.ok) throw new Error(`Tracer log error: ${res.status}`);
+  }
+
+  async getTracerUsers(): Promise<TracerUser[]> {
+    const res = await fetch(`${API_URL}/tracer_logs/users`, { headers: auditHeaders() });
+    if (!res.ok) throw new Error(`Could not load tracer users: ${res.status}`);
+    return res.json();
+  }
+
+  async getTracerLogs(filters: { user?: string; userId?: string; action?: string; module?: string; from?: string; to?: string; offset?: number; limit?: number } = {}): Promise<{ rows: TracerLog[]; total: number }> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)); });
+    const res = await fetch(`${API_URL}/tracer_logs?${params}`, { headers: auditHeaders() });
+    if (!res.ok) throw new Error(`Could not load tracer logs: ${res.status}`);
     return res.json();
   }
 
@@ -1446,6 +1524,16 @@ class DataStore {
     );
   }
 
+  private getSourceCollectedAdjustment(loan: Loan) {
+    if (!this.isJcashSourceLoan(loan)) return 0;
+
+    // Compare the stored source total with every imported transaction, including
+    // reversed rows. Reversed payments must not be mistaken for unitemized legacy
+    // collections, or their amount will be deducted from the opening balance.
+    const recordedPaymentTotal = loan.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    return Math.max(0, Number(loan.amountCollected || 0) - recordedPaymentTotal);
+  }
+
   private syncPreservedPaidMonitoringLoan(loan: Loan) {
     const activePayments = loan.payments.filter(p => p.status !== PaymentStatus.REVERSED);
     const paymentTotal = activePayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
@@ -1468,10 +1556,7 @@ class DataStore {
     });
 
     const activePayments = loan.payments.filter(p => p.status !== PaymentStatus.REVERSED);
-    const activePaymentTotal = activePayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
-      ? Math.max(0, Number(loan.amountCollected || 0) - activePaymentTotal)
-      : 0;
+    const sourceCollectedAdjustment = this.getSourceCollectedAdjustment(loan);
 
     let currentBalance = (loan.totalLoan != null ? loan.totalLoan : loan.outstandingBalance) - sourceCollectedAdjustment;
     let totalCollected = sourceCollectedAdjustment;
@@ -1642,12 +1727,7 @@ class DataStore {
     }
 
     const previousAmountCollected = loan.amountCollected;
-    const previousActivePaymentTotal = loan.payments
-      .filter(p => p.status !== PaymentStatus.REVERSED)
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
-      ? Math.max(0, Number(loan.amountCollected || 0) - previousActivePaymentTotal)
-      : 0;
+    const sourceCollectedAdjustment = this.getSourceCollectedAdjustment(loan);
 
     // Proceed Anyway on a duplicate date must append a separate audit row.
     // The duplicate warning is a user checkpoint, not a replacement rule.
@@ -1736,12 +1816,7 @@ class DataStore {
       payments: loan.payments.map(p => ({ ...p })),
       history: [...loan.history]
     };
-    const previousActivePaymentTotal = loan.payments
-      .filter(p => p.status !== PaymentStatus.REVERSED)
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const sourceCollectedAdjustment = this.isJcashSourceLoan(loan)
-      ? Math.max(0, Number(loan.amountCollected || 0) - previousActivePaymentTotal)
-      : 0;
+    const sourceCollectedAdjustment = this.getSourceCollectedAdjustment(loan);
 
     // Mark as reversed
     loan.payments[paymentIndex].status = PaymentStatus.REVERSED;
@@ -1754,16 +1829,40 @@ class DataStore {
     // Authoritative Recalculation
     const updatedLoan = this.recalculateLoanFinances(loan.id)!;
 
+    const historyId = Math.random().toString(36).substring(2, 9);
+    const timestamp = new Date().toISOString();
     try {
-      await this.api(`/payments/${orNumber}`, 'PUT', { status: PaymentStatus.REVERSED, remarks: loan.payments[paymentIndex].remarks });
-      await this.api(`/loans/${loan.id}`, 'PUT', updatedLoan);
-    await this.recordHistory(loan.id, 'Payment Reversed', `Payment OR: ${orNumber} (₱${payment.amount.toLocaleString()}) reversed. Reason: ${reason || 'Not specified'}. New balance: ₱${updatedLoan.runningBalance.toLocaleString()}`, recorder, role, 'Payment Stream');
+      const persisted = await this.api(`/payments/${encodeURIComponent(orNumber)}/reverse`, 'POST', {
+        loanId: loan.id,
+        remarks: loan.payments[paymentIndex].remarks,
+        reason,
+        history: {
+          id: historyId,
+          type: 'Payment Reversed',
+          user: recorder,
+          role,
+          module: 'Payment Stream',
+          timestamp
+        }
+      });
+      if (Number.isFinite(Number(persisted.amountCollected))) updatedLoan.amountCollected = Number(persisted.amountCollected);
+      if (Number.isFinite(Number(persisted.runningBalance))) updatedLoan.runningBalance = Number(persisted.runningBalance);
+      if (persisted.status) updatedLoan.status = persisted.status;
+      for (const persistedPayment of persisted.payments || []) {
+        const localPayment = updatedLoan.payments.find(row => row.id === persistedPayment.id);
+        if (!localPayment) continue;
+        localPayment.balanceAfter = Number(persistedPayment.balanceAfter);
+        localPayment.status = persistedPayment.status;
+        localPayment.remarks = persistedPayment.remarks;
+      }
     } catch (err) {
       this.loans[loanIndex] = previousLoan;
       throw err;
     }
 
     this.loans[loanIndex] = updatedLoan;
+    const description = `Payment OR: ${orNumber} (₱${payment.amount.toLocaleString()}) reversed. Reason: ${reason || 'Not specified'}. New balance: ₱${updatedLoan.runningBalance.toLocaleString()}`;
+    updatedLoan.history.push({ id: historyId, type: 'Payment Reversed', description, user: recorder, role, module: 'Payment Stream', timestamp });
     this.save();
 
     return { success: true, message: 'Payment successfully reversed.', loan: updatedLoan };
@@ -1930,7 +2029,43 @@ class DataStore {
     };
   }
 
-  getCollectorPerformance(branch?: Branch, yearRange?: { from: number; to: number }) {
+  private getHistoricalCollectorLoanTotals(loan: Loan, asOfDate: string) {
+    const reportedStart = getReportedStartDate(loan.monthReported);
+    if (!reportedStart || reportedStart > asOfDate) return null;
+
+    const datedPayments = (loan.payments || []).filter(payment =>
+      payment.status !== PaymentStatus.REVERSED && payment.date.slice(0, 10) <= asOfDate
+    );
+    const collectedAmount = datedPayments
+      .filter(payment => payment.date.slice(0, 10) >= reportedStart && isReportableCollectionPayment(payment))
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const hasDatedOutcome = datedPayments.some(payment =>
+      /\b(dead|deceased|write[-\s]?off)\b/i.test(payment.remarks || '') || isReconstructedPaymentRemark(payment.remarks)
+    ) || (loan.remarks || []).some(remark =>
+      remark.timestamp.slice(0, 10) <= asOfDate &&
+      (/\b(dead|deceased|write[-\s]?off)\b/i.test(remark.text) || isReconstructedPaymentRemark(remark.text))
+    );
+    const restoredAfterDate = (loan.history || []).some(record =>
+      record.type === 'Write-Off Restored' && record.timestamp.slice(0, 10) > asOfDate
+    );
+    const hasDatedDisposition = this.managementDispositions.some(disposition =>
+      disposition.loanId === loan.id &&
+      (disposition.type === DispositionType.PROSPECT_WRITE_OFF || disposition.type === DispositionType.DEAD_ACCOUNT) &&
+      disposition.decisionDate.slice(0, 10) <= asOfDate &&
+      (disposition.status !== DispositionStatus.REJECTED || restoredAfterDate)
+    );
+    const terminalOutcome = hasDatedOutcome || hasDatedDisposition;
+    const reportedAmount = terminalOutcome ? 0 : Number(loan.outstandingBalance || 0);
+    const runningBalance = terminalOutcome ? 0 : Math.max(0, reportedAmount - collectedAmount);
+    const actualCollectedAmount = terminalOutcome ? 0 : Math.min(collectedAmount, reportedAmount);
+    // Cash on a terminal account remains in Collected but has no target or
+    // balance to reduce. Keep it separate from an actual account overpayment.
+    const excessCollection = terminalOutcome ? 0 : Math.max(0, collectedAmount - reportedAmount);
+    const writeOffValidCollections = terminalOutcome ? collectedAmount : 0;
+    return { reportedAmount, collectedAmount, actualCollectedAmount, runningBalance, excessCollection, writeOffValidCollections, terminalOutcome };
+  }
+
+  getCollectorPerformance(branch?: Branch, yearRange?: { from: number; to: number }, asOfDate?: string, maturityRange?: { from?: string; to?: string }) {
     const collectors: Record<string, CollectorPerformance> = {};
     const filteredLoans = this.getLoans(branch);
     const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
@@ -1940,6 +2075,7 @@ class DataStore {
       ) ||
       (loan.remarks || []).some(remark => isReconstructedPaymentRemark(remark.text));
     const hasWriteOffOutcome = (loan: Loan) =>
+      (loan.actionStage === 'Active / Cooperative' && loan.actionNote?.startsWith('Restored to Collection:')) ? false :
       this.isOfficialWriteOff(loan.id) ||
       hasWriteOffText(loan.actionStage) ||
       hasWriteOffText(loan.actionNote) ||
@@ -1951,19 +2087,34 @@ class DataStore {
       this.isDeadWriteOff(loan) || hasReconstructedOutcome(loan) || hasWriteOffOutcome(loan);
 
     filteredLoans.forEach(loan => {
+      if (maturityRange?.from && (!loan.dueDate || loan.dueDate < maturityRange.from)) return;
+      if (maturityRange?.to && (!loan.dueDate || loan.dueDate > maturityRange.to)) return;
       if (yearRange) {
         const reportedYear = Number((loan.monthReported || '').slice(0, 4));
         if (!reportedYear || reportedYear < yearRange.from || reportedYear > yearRange.to) return;
       }
+      const historicalTotals = asOfDate ? this.getHistoricalCollectorLoanTotals(loan, asOfDate) : null;
+      if (asOfDate && !historicalTotals) return;
 
       const coll = this.getCollectorDisplayName(loan.collector);
       if (!coll || coll === 'N/A' || coll === 'UNDEFINED' || coll === 'UNASSIGNED') return;
 
       if (!collectors[coll]) {
-        collectors[coll] = { collector: coll, totalAccounts: 0, activeAccountCount: 0, reportedAmount: 0, collectedAmount: 0, runningBalance: 0, collectionRate: 0, paidCount: 0 };
+        collectors[coll] = { collector: coll, totalAccounts: 0, activeAccountCount: 0, reportedAmount: 0, collectedAmount: 0, actualCollectedAmount: 0, runningBalance: 0, excessCollection: 0, writeOffValidCollections: 0, collectionRate: 0, paidCount: 0 };
       }
       const p = collectors[coll];
       p.totalAccounts++;
+      if (historicalTotals) {
+        p.reportedAmount += historicalTotals.reportedAmount;
+        p.collectedAmount += historicalTotals.collectedAmount;
+        p.actualCollectedAmount += historicalTotals.actualCollectedAmount;
+        p.runningBalance += historicalTotals.runningBalance;
+        p.excessCollection += historicalTotals.excessCollection;
+        p.writeOffValidCollections += historicalTotals.writeOffValidCollections;
+        if (historicalTotals.runningBalance > 0) p.activeAccountCount = (p.activeAccountCount || 0) + 1;
+        else if (!historicalTotals.terminalOutcome) p.paidCount++;
+        return;
+      }
       const terminalOutcome = isTerminalOutcome(loan);
       const isActiveAccount = Number(loan.runningBalance || 0) > 0 && loan.status !== MovingStatus.PAID && !terminalOutcome;
       if (isActiveAccount) p.activeAccountCount = (p.activeAccountCount || 0) + 1;
@@ -1971,24 +2122,29 @@ class DataStore {
       // Only count genuine cash payments made on or after the month the loan was reported.
       // This is evaluated before terminal outcomes so genuine cash from a Deceased,
       // Reconstructed, or officially Written-Off account remains credited.
-      const reportedStart = loan.monthReported ? new Date(loan.monthReported + '-01').getTime() : 0;
+      const reportedStart = getReportedStartDate(loan.monthReported);
       const activePayments = (loan.payments || []).filter(isReportableCollectionPayment);
       const collectedSinceReported = activePayments
-        .filter(pay => new Date(pay.date).getTime() >= reportedStart)
+        .filter(pay => pay.date.slice(0, 10) >= reportedStart)
         .reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
 
       p.collectedAmount += collectedSinceReported;
-      if (terminalOutcome) return;
+      if (terminalOutcome) {
+        p.writeOffValidCollections += collectedSinceReported;
+        return;
+      }
 
       p.reportedAmount += loan.outstandingBalance;
+      p.actualCollectedAmount += Math.min(collectedSinceReported, loan.outstandingBalance);
       // Eligible account balance after genuine post-reported collections.
       p.runningBalance += Math.max(0, loan.outstandingBalance - collectedSinceReported);
+      p.excessCollection += Math.max(0, collectedSinceReported - loan.outstandingBalance);
       if (loan.status === MovingStatus.PAID) p.paidCount++;
     });
-    return Object.values(collectors).map(p => ({ ...p, collectionRate: p.reportedAmount > 0 ? (p.collectedAmount / p.reportedAmount) * 100 : 0 }));
+    return Object.values(collectors).map(p => ({ ...p, collectionRate: p.reportedAmount > 0 ? (p.actualCollectedAmount / p.reportedAmount) * 100 : 0 }));
   }
 
-  getCollectorPerformanceDetails(branch: Branch | undefined, collector: string, yearRange: { from: number; to: number }): CollectorPerformanceClientDetail[] {
+  getCollectorPerformanceDetails(branch: Branch | undefined, collector: string, yearRange?: { from: number; to: number }, asOfDate?: string, maturityRange?: { from?: string; to?: string }): CollectorPerformanceClientDetail[] {
     const filteredLoans = this.getLoans(branch);
     const hasWriteOffText = (value?: string | null) => /\bwrite[-\s]?off\b/i.test(value || '');
     const hasReconstructedOutcome = (loan: Loan) =>
@@ -1997,6 +2153,7 @@ class DataStore {
       ) ||
       (loan.remarks || []).some(remark => isReconstructedPaymentRemark(remark.text));
     const hasWriteOffOutcome = (loan: Loan) =>
+      (loan.actionStage === 'Active / Cooperative' && loan.actionNote?.startsWith('Restored to Collection:')) ? false :
       this.isOfficialWriteOff(loan.id) ||
       hasWriteOffText(loan.actionStage) ||
       hasWriteOffText(loan.actionNote) ||
@@ -2009,15 +2166,34 @@ class DataStore {
 
     return filteredLoans
       .filter(loan => {
-        const reportedYear = Number((loan.monthReported || '').slice(0, 4));
-        if (!reportedYear || reportedYear < yearRange.from || reportedYear > yearRange.to) return false;
+        if (maturityRange?.from && (!loan.dueDate || loan.dueDate < maturityRange.from)) return false;
+        if (maturityRange?.to && (!loan.dueDate || loan.dueDate > maturityRange.to)) return false;
+        if (yearRange) {
+          const reportedYear = Number((loan.monthReported || '').slice(0, 4));
+          if (!reportedYear || reportedYear < yearRange.from || reportedYear > yearRange.to) return false;
+        }
+        if (asOfDate && (!getReportedStartDate(loan.monthReported) || getReportedStartDate(loan.monthReported) > asOfDate)) return false;
         return this.getCollectorDisplayName(loan.collector) === collector;
       })
       .map(loan => {
-        const reportedStart = loan.monthReported ? new Date(loan.monthReported + '-01').getTime() : 0;
+        if (asOfDate) {
+          const totals = this.getHistoricalCollectorLoanTotals(loan, asOfDate);
+          if (totals) return {
+            loanId: loan.id,
+            code: loan.code,
+            borrowerName: loan.borrowerName,
+            monthReported: loan.monthReported,
+            dueDate: loan.dueDate,
+            status: totals.runningBalance > 0 ? MovingStatus.MOVING : MovingStatus.PAID,
+            reportedAmount: totals.reportedAmount,
+            collectedAmount: totals.collectedAmount,
+            runningBalance: totals.runningBalance
+          };
+        }
+        const reportedStart = getReportedStartDate(loan.monthReported);
         const collectedSinceReported = (loan.payments || [])
           .filter(isReportableCollectionPayment)
-          .filter(pay => new Date(pay.date).getTime() >= reportedStart)
+          .filter(pay => pay.date.slice(0, 10) >= reportedStart)
           .reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
 
         if (isTerminalOutcome(loan)) {
@@ -2026,6 +2202,7 @@ class DataStore {
             code: loan.code,
             borrowerName: loan.borrowerName,
             monthReported: loan.monthReported,
+            dueDate: loan.dueDate,
             status: loan.status,
             reportedAmount: 0,
             collectedAmount: collectedSinceReported,
@@ -2038,6 +2215,7 @@ class DataStore {
           code: loan.code,
           borrowerName: loan.borrowerName,
           monthReported: loan.monthReported,
+          dueDate: loan.dueDate,
           status: loan.status,
           reportedAmount: loan.outstandingBalance,
           collectedAmount: collectedSinceReported,
@@ -2381,6 +2559,30 @@ class DataStore {
     return [...this.managementDispositions].sort((a, b) => new Date(b.decisionDate).getTime() - new Date(a.decisionDate).getTime());
   }
 
+  async restorePendingWriteOff(id: string, reason: string, amount: number, user: string, role: string): Promise<void> {
+    const disposition = this.managementDispositions.find(item => item.id === id);
+    if (!disposition || disposition.type !== DispositionType.PROSPECT_WRITE_OFF || disposition.status !== DispositionStatus.PENDING_REVIEW) {
+      throw new Error('Only pending Located or Unlocated write-offs can be restored.');
+    }
+    const loan = this.loans.find(item => item.id === disposition.loanId);
+    if (!loan) throw new Error('Client record not found.');
+    if (!reason.trim() || !Number.isFinite(amount) || amount <= 0) throw new Error('Enter a reason and a valid amount.');
+
+    const result = await this.api(`/management_dispositions/${encodeURIComponent(id)}/restore`, 'POST', {
+      reason: reason.trim(), amount, restoredBy: user, role
+    });
+    disposition.status = DispositionStatus.REJECTED;
+    loan.outstandingBalance = Number(result.outstandingBalance);
+    loan.totalLoan = Number(result.totalLoan);
+    loan.runningBalance = Number(result.runningBalance);
+    loan.status = result.status;
+    loan.location = result.location;
+    loan.actionStage = result.actionStage;
+    loan.actionNote = result.actionNote;
+    if (result.history) loan.history.push(result.history);
+    this.save();
+  }
+
   async addDisposition(
     loanId: string, 
     type: DispositionType, 
@@ -2408,7 +2610,7 @@ class DataStore {
     try {
       const res = await fetch(`${API_URL}/management_dispositions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...auditHeaders() },
         body: JSON.stringify(newDisposition)
       });
       
@@ -2440,7 +2642,7 @@ class DataStore {
 
     const res = await fetch(`${API_URL}/management_dispositions/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...auditHeaders() },
       body: JSON.stringify({ ...changes, updatedBy, role })
     });
     if (!res.ok) {
@@ -2464,7 +2666,7 @@ class DataStore {
     const disposition = this.managementDispositions.find(item => item.id === id);
     if (!disposition) throw new Error('Disposition not found');
 
-    const res = await fetch(`${API_URL}/management_dispositions/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${API_URL}/management_dispositions/${id}`, { method: 'DELETE', headers: auditHeaders() });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.error || `Server error: ${res.status}`);
@@ -2515,11 +2717,15 @@ class DataStore {
     }
 
     try {
-      await fetch(`${API_URL}/management_dispositions/${id}/status`, {
+      const response = await fetch(`${API_URL}/management_dispositions/${id}/status`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...auditHeaders() },
         body: JSON.stringify({ status: newStatus, updatedBy, role })
       });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `Unable to update write-off status (${response.status}).`);
+      }
       
       const oldStatus = disp.status;
       disp.status = newStatus;

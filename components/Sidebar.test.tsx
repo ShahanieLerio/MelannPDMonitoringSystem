@@ -46,12 +46,23 @@ describe('Sidebar', () => {
     expect(screen.getByText('Personnel Management')).toBeInTheDocument();
     expect(screen.getByText('Manage Users')).toBeInTheDocument();
     expect(screen.getByText('Backup & Restore')).toBeInTheDocument();
+    expect(screen.getByText('Tracer Log')).toBeInTheDocument();
+  });
+
+  it('shows Write-Off in Reports immediately after Reconstructed', () => {
+    render(<Sidebar {...defaultProps} />);
+
+    const menu = screen.getByRole('navigation').textContent || '';
+    expect(menu.indexOf('Reconstructed')).toBeLessThan(menu.indexOf('Write-Off'));
+    expect(menu.indexOf('Write-Off')).toBeLessThan(menu.indexOf('Loans Maturity Checker'));
+    expect(menu.indexOf('Write-Off')).toBeLessThan(menu.indexOf('Administration'));
   });
 
   it('does not show Manage Users for branch users', () => {
     render(<Sidebar {...defaultProps} role={UserRole.NAVAL_USER} />);
 
     expect(screen.queryByText('Manage Users')).not.toBeInTheDocument();
+    expect(screen.queryByText('Tracer Log')).not.toBeInTheDocument();
   });
 
   it('shows data maintenance modules for IT/Accounting Clerk without backup access', () => {

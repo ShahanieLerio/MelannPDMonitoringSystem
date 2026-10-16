@@ -245,7 +245,7 @@ const LoanGrid: React.FC<LoanGridProps> = ({ currentUser, selectedBranch, active
         l.code.toLowerCase().includes(normalizedSearch);
 
       // 2. Date Range Logic
-      const reportedDate = l.monthReported;
+      const reportedDate = l.monthReported.slice(0, 7);
       const matchDate = reportedDate >= startStr && reportedDate <= endStr;
 
       // 3. Multi-Select Filters Logic (OR logic within filter, AND logic between filters)

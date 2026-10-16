@@ -137,6 +137,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, activeTab, setActi
     { id: 'users', label: 'Manage Users', icon: () => <span className="text-xl">⚙️</span>, roles: canManageUsers(role) ? [role] : [] },
     { id: 'database', label: 'Backup & Restore', icon: () => <span className="text-xl">🗄️</span>, roles: adminToolRoles },
     { id: 'recycle-bin', label: 'Recycle Bin', icon: () => <span className="text-xl">♻️</span>, roles: dataMaintenanceRoles },
+    { id: 'tracer-log', label: 'Tracer Log', icon: () => <span className="text-xl">🧾</span>, roles: canManageUsers(role) ? [role] : [] },
   ];
 
   const menuItemById = Object.fromEntries(menuItems.map(item => [item.id, item]));
@@ -145,8 +146,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen, activeTab, setActi
     { label: 'Client & Loan Management', itemIds: ['loans'] },
     { label: 'Monitoring & Follow-Up', itemIds: ['client-update', 'ptp-escalation', 'action-tracker', 'demand-letters'] },
     { label: 'Payment & Collection', itemIds: ['receive-payment', 'dcr', 'collection-sheet', 'collectors'] },
-    { label: 'Reports', itemIds: ['reports', 'reports-reconstructed', 'maturity-checker'] },
-    { label: 'Administration', itemIds: ['write-off', 'migration', 'documentation', 'users', 'database', 'recycle-bin'] },
+    { label: 'Reports', itemIds: ['reports', 'reports-reconstructed', 'write-off', 'maturity-checker'] },
+    { label: 'Administration', itemIds: ['migration', 'documentation', 'users', 'database', 'recycle-bin', 'tracer-log'] },
   ];
 
   const handleMenuClick = (item: any) => {

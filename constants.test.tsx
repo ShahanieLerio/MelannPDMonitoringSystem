@@ -55,6 +55,7 @@ describe('Constants', () => {
             expect(formatReportedMonth('2024-01')).toBe('Jan-24');
             expect(formatReportedMonth('2024-02')).toBe('Feb-24');
             expect(formatReportedMonth('2024-12')).toBe('Dec-24');
+            expect(formatReportedMonth('2025-05-16')).toBe('May 16, 2025');
         });
 
         it('should handle all months', () => {

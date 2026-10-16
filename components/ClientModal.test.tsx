@@ -87,4 +87,51 @@ describe('ClientModal', () => {
     expect(within(rows[1]).getByText('JCASH-888717')).toBeInTheDocument();
     expect(within(rows[2]).getByText('JCASH-555250')).toBeInTheDocument();
   });
+
+  it('keeps renewed loan cycles separate and lets the user review the old paid payments', () => {
+    const oldPaidLoan = makeLoan({
+      id: 'old-paid-cycle',
+      dateRelease: '2024-01-10',
+      dueDate: '2024-03-10',
+      monthReported: '2024-04',
+      amountCollected: 61000,
+      runningBalance: 0,
+      status: MovingStatus.PAID,
+      payments: [{
+        id: 'old-payment', loanId: 'old-paid-cycle', date: '2024-03-09',
+        orNumber: 'OR-OLD-PAID', amount: 61000, balanceAfter: -1000,
+        recorder: 'Shan', status: PaymentStatus.GOOD, createdAt: '2024-03-09T08:00:00.000Z'
+      }]
+    });
+    const activeReloan = makeLoan({
+      id: 'new-past-due-cycle',
+      dateRelease: '2025-04-02',
+      dueDate: '2025-05-27',
+      monthReported: '2025-08',
+      totalLoan: 9080,
+      outstandingBalance: 5030,
+      amountCollected: 4050,
+      runningBalance: 5030,
+      status: MovingStatus.NM,
+      payments: [{
+        id: 'new-payment', loanId: 'new-past-due-cycle', date: '2025-05-26',
+        orNumber: 'OR-NEW-RELOAN', amount: 200, balanceAfter: 5030,
+        recorder: 'Shan', status: PaymentStatus.GOOD, createdAt: '2025-05-26T08:00:00.000Z'
+      }]
+    });
+    vi.mocked(store.getLoans).mockReturnValue([oldPaidLoan, activeReloan]);
+
+    render(<ClientModal loan={activeReloan} onClose={vi.fn()} />);
+
+    expect(screen.getByText('Renewed (2x)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /payment stream/i }));
+    expect(screen.getByText('OR-NEW-RELOAN')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /profile analytics/i }));
+    fireEvent.click(screen.getByRole('button', { name: /view loan cycle released 2024-01-10/i }));
+    expect(screen.getByText('FULLY PAID')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /payment stream/i }));
+    expect(screen.getByText('OR-OLD-PAID')).toBeInTheDocument();
+    expect(screen.queryByText('OR-NEW-RELOAN')).not.toBeInTheDocument();
+  });
 });

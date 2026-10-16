@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import LoginPage from './LoginPage';
-import { store } from '../services/dataStore';
+import { setAuditPcName, store } from '../services/dataStore';
 import { UserRole, UserStatus, Branch } from '../types';
 
 vi.mock('../services/dataStore', () => ({
@@ -10,7 +10,9 @@ vi.mock('../services/dataStore', () => ({
     registerUser: vi.fn(),
     refresh: vi.fn(),
     whenReady: vi.fn()
-  }
+  },
+  getAuditPcIdentity: vi.fn(() => ({ id: 'PC-TEST', name: 'PC-TEST' })),
+  setAuditPcName: vi.fn()
 }));
 
 describe('LoginPage', () => {
@@ -61,10 +63,12 @@ describe('LoginPage', () => {
     (store.authenticate as any).mockReturnValue({ user });
 
     render(<LoginPage onLogin={onLogin} />);
+    fireEvent.change(screen.getByLabelText('PC Name for Tracer Log'), { target: { value: 'Ormoc Cashier PC' } });
     await submitLogin();
 
     expect(store.authenticate).toHaveBeenCalledWith('testuser', 'password');
     expect(onLogin).toHaveBeenCalledWith(user);
+    expect(setAuditPcName).toHaveBeenCalledWith('Ormoc Cashier PC');
   });
 
   it('shows authentication errors', async () => {

@@ -1,0 +1,687 @@
+{
+  "createdAt": "2026-10-06T05:55:15.468Z",
+  "rule": "Last GOOD payment balance_after before first day of Month Reported, else Total Loan",
+  "scope": "Only the 45 IDs in the previous 83-client list with Month Reported through 2025",
+  "corrections": [
+    {
+      "id": "25224",
+      "code": "2139",
+      "name": "HORCA, FE",
+      "month": "2022-06",
+      "lastGoodPaymentId": "p1vlo53",
+      "lastGoodPaymentDate": "2022-04-29",
+      "before": 3002,
+      "after": 1670
+    },
+    {
+      "id": "38717",
+      "code": "2588",
+      "name": "SEVILLA, CELERINA",
+      "month": "2025-02",
+      "lastGoodPaymentId": "jcash-payment-986774",
+      "lastGoodPaymentDate": "2025-01-23",
+      "before": 6422,
+      "after": 7722
+    },
+    {
+      "id": "10532",
+      "code": "1355",
+      "name": "INSO, ANGELYN",
+      "month": "2019-08",
+      "lastGoodPaymentId": "jcash-payment-195033",
+      "lastGoodPaymentDate": "2019-07-25",
+      "before": 3235,
+      "after": 2235
+    },
+    {
+      "id": "29473",
+      "code": "2335",
+      "name": "PERALTA, JUDY ANN",
+      "month": "2023-02",
+      "lastGoodPaymentId": "0ncwsiv",
+      "lastGoodPaymentDate": "2022-12-20",
+      "before": 2156,
+      "after": 1575
+    },
+    {
+      "id": "39086",
+      "code": "1776",
+      "name": "MALUPA, JESSA",
+      "month": "2025-02",
+      "lastGoodPaymentId": "jcash-payment-832875",
+      "lastGoodPaymentDate": "2025-01-22",
+      "before": 4172,
+      "after": 3672
+    },
+    {
+      "id": "38927",
+      "code": "3165",
+      "name": "ANICETO, MARILYN",
+      "month": "2025-01",
+      "lastGoodPaymentId": "wcarfcy",
+      "lastGoodPaymentDate": "2024-12-12",
+      "before": 8901,
+      "after": 8472
+    },
+    {
+      "id": "0j0tsop",
+      "code": "2320",
+      "name": "Cataag, Daniela",
+      "month": "2022-08",
+      "lastGoodPaymentId": "jcash-payment-548320",
+      "lastGoodPaymentDate": "2022-05-31",
+      "before": 5152,
+      "after": 4752
+    },
+    {
+      "id": "15412",
+      "code": "1514",
+      "name": "FENIX, LUCIA",
+      "month": "2020-06",
+      "lastGoodPaymentId": "jcash-payment-281962",
+      "lastGoodPaymentDate": "2020-05-25",
+      "before": 9340,
+      "after": 8940
+    },
+    {
+      "id": "39420",
+      "code": "3412",
+      "name": "MERCOLITA, CHARITA",
+      "month": "2025-01",
+      "lastGoodPaymentId": "jcash-payment-843789",
+      "lastGoodPaymentDate": "2024-12-26",
+      "before": 3006,
+      "after": 3366
+    },
+    {
+      "id": "44359",
+      "code": "2817",
+      "name": "ESTRERA, NELFA",
+      "month": "2025-11",
+      "lastGoodPaymentId": "jcash-payment-913767",
+      "lastGoodPaymentDate": "2025-10-11",
+      "before": 6300,
+      "after": 5950
+    },
+    {
+      "id": "19887",
+      "code": "1922",
+      "name": "GRACIANO, JESUSA",
+      "month": "2021-09",
+      "lastGoodPaymentId": "jcash-payment-403814",
+      "lastGoodPaymentDate": "2021-06-23",
+      "before": 9432,
+      "after": 9732
+    },
+    {
+      "id": "38210",
+      "code": "3356",
+      "name": "CALA, LOUIE JAY",
+      "month": "2025-01",
+      "lastGoodPaymentId": "jcash-payment-825973",
+      "lastGoodPaymentDate": "2024-12-27",
+      "before": 71900,
+      "after": 71640
+    },
+    {
+      "id": "38779",
+      "code": "3451",
+      "name": "CA�ETE, NAUME",
+      "month": "2025-01",
+      "lastGoodPaymentId": "jcash-payment-800361",
+      "lastGoodPaymentDate": "2024-10-07",
+      "before": 10250,
+      "after": 10050
+    },
+    {
+      "id": "14951",
+      "code": "294",
+      "name": "LONGAKIT, TIOFILO",
+      "month": "2020-05",
+      "lastGoodPaymentId": "jcash-payment-276433",
+      "lastGoodPaymentDate": "2020-03-14",
+      "before": 8540,
+      "after": 8340
+    },
+    {
+      "id": "14198",
+      "code": "1026",
+      "name": "NAILON, ESTRELLA",
+      "month": "2020-03",
+      "lastGoodPaymentId": "jcash-payment-269154",
+      "lastGoodPaymentDate": "2020-02-26",
+      "before": 20419,
+      "after": 20219
+    },
+    {
+      "id": "47530",
+      "code": "4016",
+      "name": "REGALA, ROCELA",
+      "month": "2025-11",
+      "lastGoodPaymentId": "jcash-payment-953046",
+      "lastGoodPaymentDate": "2025-10-28",
+      "before": 3025,
+      "after": 2825
+    },
+    {
+      "id": "47431",
+      "code": "4013",
+      "name": "AMABAO, IRENE",
+      "month": "2025-10",
+      "lastGoodPaymentId": "jcash-payment-951299",
+      "lastGoodPaymentDate": "2025-07-23",
+      "before": 2900,
+      "after": 2750
+    },
+    {
+      "id": "8456",
+      "code": "1218",
+      "name": "FORTALIZA, ROCHELLE",
+      "month": "2019-04",
+      "lastGoodPaymentId": "fzyumpt",
+      "lastGoodPaymentDate": "2019-03-30",
+      "before": 2710,
+      "after": 2860
+    },
+    {
+      "id": "44584",
+      "code": "2092",
+      "name": "ALDAYA, RUBELYN",
+      "month": "2025-11",
+      "lastGoodPaymentId": "jcash-payment-920282",
+      "lastGoodPaymentDate": "2025-10-29",
+      "before": 2695,
+      "after": 2595
+    },
+    {
+      "id": "3970",
+      "code": "285",
+      "name": "ARIÑO, JESSA",
+      "month": "2017-06",
+      "lastGoodPaymentId": null,
+      "lastGoodPaymentDate": null,
+      "before": 5223,
+      "after": 5123
+    },
+    {
+      "id": "38880",
+      "code": "1771",
+      "name": "BASMAYOR, CARMELITA",
+      "month": "2025-02",
+      "lastGoodPaymentId": "jcash-payment-830778",
+      "lastGoodPaymentDate": "2025-01-15",
+      "before": 2788,
+      "after": 2688
+    },
+    {
+      "id": "32873",
+      "code": "3190",
+      "name": "CERRO, EMILY",
+      "month": "2023-10",
+      "lastGoodPaymentId": "jcash-payment-691240",
+      "lastGoodPaymentDate": "2023-06-16",
+      "before": 2811,
+      "after": 2711
+    },
+    {
+      "id": "43050",
+      "code": "3471",
+      "name": "CORPEZ, NECIFORA",
+      "month": "2025-08",
+      "lastGoodPaymentId": "jcash-payment-910685",
+      "lastGoodPaymentDate": "2025-06-10",
+      "before": 5730,
+      "after": 5830
+    },
+    {
+      "id": "44066",
+      "code": "3578",
+      "name": "ESPINOSA, BERNANDITA",
+      "month": "2025-10",
+      "lastGoodPaymentId": "jcash-payment-899372",
+      "lastGoodPaymentDate": "2025-08-30",
+      "before": 5100,
+      "after": 5000
+    },
+    {
+      "id": "32392",
+      "code": "1681",
+      "name": "LINGO, JACQUELINE",
+      "month": "2024-01",
+      "lastGoodPaymentId": "jcash-payment-755744",
+      "lastGoodPaymentDate": "2023-12-26",
+      "before": 20635,
+      "after": 20535
+    },
+    {
+      "id": "42354",
+      "code": "3168",
+      "name": "MARIBAO, LELITH",
+      "month": "2025-08",
+      "lastGoodPaymentId": "jcash-payment-888154",
+      "lastGoodPaymentDate": "2025-07-28",
+      "before": 26459,
+      "after": 26359
+    },
+    {
+      "id": "39452",
+      "code": "3241",
+      "name": "PANILAWON, LILIBETH",
+      "month": "2024-10",
+      "lastGoodPaymentId": "jcash-payment-809782",
+      "lastGoodPaymentDate": "2024-09-25",
+      "before": 2742,
+      "after": 2642
+    },
+    {
+      "id": "32712",
+      "code": "3011",
+      "name": "PORTILLO, MAGDALENA",
+      "month": "2023-10",
+      "lastGoodPaymentId": "jcash-payment-714754",
+      "lastGoodPaymentDate": "2023-08-22",
+      "before": 3419,
+      "after": 3319
+    },
+    {
+      "id": "47562",
+      "code": "4064",
+      "name": "YAON, NENITA",
+      "month": "2025-12",
+      "lastGoodPaymentId": "jcash-payment-953326",
+      "lastGoodPaymentDate": "2025-11-22",
+      "before": 6540,
+      "after": 6640
+    },
+    {
+      "id": "44613",
+      "code": "3698",
+      "name": "DEMANDANTE, MERLE",
+      "month": "2025-11",
+      "lastGoodPaymentId": "jcash-payment-906870",
+      "lastGoodPaymentDate": "2025-09-20",
+      "before": 1201,
+      "after": 1111
+    },
+    {
+      "id": "26161",
+      "code": "2154",
+      "name": "BAGAYAS, MYLA",
+      "month": "2022-08",
+      "lastGoodPaymentId": "jcash-payment-551880",
+      "lastGoodPaymentDate": "2022-06-07",
+      "before": 2490,
+      "after": 2440
+    },
+    {
+      "id": "32068",
+      "code": "2616",
+      "name": "CAONES, ESTRELLITA",
+      "month": "2023-08",
+      "lastGoodPaymentId": "jcash-payment-703533",
+      "lastGoodPaymentDate": "2023-07-21",
+      "before": 4680,
+      "after": 4630
+    },
+    {
+      "id": "15750",
+      "code": "344",
+      "name": "DADIS, MICHELLE",
+      "month": "2020-06",
+      "lastGoodPaymentId": "jcash-payment-283677",
+      "lastGoodPaymentDate": "2020-03-03",
+      "before": 4260,
+      "after": 4310
+    },
+    {
+      "id": "38981",
+      "code": "1848",
+      "name": "MERAMONTE, ROZEL",
+      "month": "2025-02",
+      "lastGoodPaymentId": "jcash-payment-827554",
+      "lastGoodPaymentDate": "2025-01-06",
+      "before": 4000,
+      "after": 3950
+    },
+    {
+      "id": "4724",
+      "code": "297",
+      "name": "GAMUTAN, ANNIE",
+      "month": "2018-09",
+      "lastGoodPaymentId": "jcash-payment-39181",
+      "lastGoodPaymentDate": "2018-06-08",
+      "before": 8420,
+      "after": 8390
+    },
+    {
+      "id": "4082",
+      "code": "301",
+      "name": "OLIMPUS, LUISA",
+      "month": "2018-04",
+      "lastGoodPaymentId": "jcash-payment-22700",
+      "lastGoodPaymentDate": "2018-01-23",
+      "before": 5770,
+      "after": 5750
+    },
+    {
+      "id": "3101",
+      "code": "760",
+      "name": "SEBIDOS, LIA",
+      "month": "2018-04",
+      "lastGoodPaymentId": "jcash-payment-12394",
+      "lastGoodPaymentDate": "2018-03-26",
+      "before": 9649,
+      "after": 9629
+    },
+    {
+      "id": "12317",
+      "code": "1005",
+      "name": "JUGAR, ELIZABETH",
+      "month": "2019-11",
+      "lastGoodPaymentId": "jcash-payment-230856",
+      "lastGoodPaymentDate": "2019-10-31",
+      "before": 66550,
+      "after": 66540
+    },
+    {
+      "id": "11188",
+      "code": "1318",
+      "name": "TOONG, DESERIE",
+      "month": "2019-09",
+      "lastGoodPaymentId": "jcash-payment-207838",
+      "lastGoodPaymentDate": "2019-08-29",
+      "before": 11407,
+      "after": 11397
+    },
+    {
+      "id": "31951",
+      "code": "2802",
+      "name": "GABI, AMOR",
+      "month": "2023-08",
+      "lastGoodPaymentId": "jcash-payment-701870",
+      "lastGoodPaymentDate": "2023-07-17",
+      "before": 6902,
+      "after": 6897
+    },
+    {
+      "id": "25977",
+      "code": "2236",
+      "name": "MAGALLANES, MADELIN",
+      "month": "2022-08",
+      "lastGoodPaymentId": "jcash-payment-549779",
+      "lastGoodPaymentDate": "2022-06-02",
+      "before": 6220,
+      "after": 6215
+    },
+    {
+      "id": "14776",
+      "code": "1366",
+      "name": "MONES, EULALIA",
+      "month": "2020-05",
+      "lastGoodPaymentId": "jcash-payment-275605",
+      "lastGoodPaymentDate": "2020-03-12",
+      "before": 14610,
+      "after": 14605
+    },
+    {
+      "id": "5226",
+      "code": "1128",
+      "name": "PAJARON, MERCY CHRISTINE",
+      "month": "2018-10",
+      "lastGoodPaymentId": "jcash-payment-79799",
+      "lastGoodPaymentDate": "2018-09-17",
+      "before": 3935,
+      "after": 3930
+    },
+    {
+      "id": "39233",
+      "code": "2552",
+      "name": "PANTA JR, DIOSDADO",
+      "month": "2024-12",
+      "lastGoodPaymentId": "jcash-payment-817073",
+      "lastGoodPaymentDate": "2024-11-27",
+      "before": 7406,
+      "after": 7401
+    },
+    {
+      "id": "6366",
+      "code": "247",
+      "name": "FLORES, MARIFE",
+      "month": "2018-12",
+      "lastGoodPaymentId": "jcash-payment-80272",
+      "lastGoodPaymentDate": "2018-09-18",
+      "before": 6054,
+      "after": 6051
+    }
+  ],
+  "protected2026": [
+    {
+      "id": "6niis1m",
+      "code": "3668",
+      "month": "2026-04",
+      "unchangedAmount": 2784
+    },
+    {
+      "id": "46953",
+      "code": "3036",
+      "month": "2026-05",
+      "unchangedAmount": 1460
+    },
+    {
+      "id": "modern-1075",
+      "code": "3380",
+      "month": "2026-08",
+      "unchangedAmount": 5560
+    },
+    {
+      "id": "modern-1025",
+      "code": "321",
+      "month": "2026-08",
+      "unchangedAmount": 7012
+    },
+    {
+      "id": "9g3lme3",
+      "code": "3967",
+      "month": "2026-01",
+      "unchangedAmount": 7430
+    },
+    {
+      "id": "48240",
+      "code": "2021",
+      "month": "2026-07",
+      "unchangedAmount": 1145
+    },
+    {
+      "id": "46438",
+      "code": "3697",
+      "month": "2026-04",
+      "unchangedAmount": 622
+    },
+    {
+      "id": "47056",
+      "code": "3851",
+      "month": "2026-05",
+      "unchangedAmount": 1720
+    },
+    {
+      "id": "45953",
+      "code": "3701",
+      "month": "2026-02",
+      "unchangedAmount": 5843
+    },
+    {
+      "id": "lele38u",
+      "code": "3613",
+      "month": "2026-03",
+      "unchangedAmount": 2248
+    },
+    {
+      "id": "47474",
+      "code": "3995",
+      "month": "2026-04",
+      "unchangedAmount": 5590
+    },
+    {
+      "id": "modern-1030",
+      "code": "3492",
+      "month": "2026-08",
+      "unchangedAmount": 585
+    },
+    {
+      "id": "44940",
+      "code": "3027",
+      "month": "2026-01",
+      "unchangedAmount": 13380
+    },
+    {
+      "id": "47198",
+      "code": "3868",
+      "month": "2026-05",
+      "unchangedAmount": 3150
+    },
+    {
+      "id": "46480",
+      "code": "3487",
+      "month": "2026-04",
+      "unchangedAmount": 2290
+    },
+    {
+      "id": "46040",
+      "code": "1363",
+      "month": "2026-02",
+      "unchangedAmount": 8300
+    },
+    {
+      "id": "45870",
+      "code": "2702",
+      "month": "2026-04",
+      "unchangedAmount": 660
+    },
+    {
+      "id": "44043",
+      "code": "2509",
+      "month": "2026-01",
+      "unchangedAmount": 1755
+    },
+    {
+      "id": "modern-1041",
+      "code": "3877",
+      "month": "2026-08",
+      "unchangedAmount": 1120
+    },
+    {
+      "id": "45981",
+      "code": "3787",
+      "month": "2026-02",
+      "unchangedAmount": 1892
+    },
+    {
+      "id": "43424",
+      "code": "1010",
+      "month": "2026-02",
+      "unchangedAmount": 17450
+    },
+    {
+      "id": "44894",
+      "code": "3456",
+      "month": "2026-01",
+      "unchangedAmount": 5525
+    },
+    {
+      "id": "45940",
+      "code": "3699",
+      "month": "2026-02",
+      "unchangedAmount": 2923
+    },
+    {
+      "id": "47273",
+      "code": "3268",
+      "month": "2026-05",
+      "unchangedAmount": 1003
+    },
+    {
+      "id": "47417",
+      "code": "1608",
+      "month": "2026-05",
+      "unchangedAmount": 4760
+    },
+    {
+      "id": "45087",
+      "code": "3765",
+      "month": "2026-01",
+      "unchangedAmount": 1655
+    },
+    {
+      "id": "wgc5w9l",
+      "code": "2094",
+      "month": "2026-04",
+      "unchangedAmount": 890
+    },
+    {
+      "id": "47548",
+      "code": "4041",
+      "month": "2026-05",
+      "unchangedAmount": 1140
+    },
+    {
+      "id": "47395",
+      "code": "3874",
+      "month": "2026-05",
+      "unchangedAmount": 1610
+    },
+    {
+      "id": "47429",
+      "code": "4027",
+      "month": "2026-04",
+      "unchangedAmount": 4960
+    },
+    {
+      "id": "45738",
+      "code": "3458",
+      "month": "2026-02",
+      "unchangedAmount": 9310
+    },
+    {
+      "id": "47484",
+      "code": "3946",
+      "month": "2026-01",
+      "unchangedAmount": 3110
+    },
+    {
+      "id": "47189",
+      "code": "3640",
+      "month": "2026-05",
+      "unchangedAmount": 2315
+    },
+    {
+      "id": "46348",
+      "code": "2313",
+      "month": "2026-04",
+      "unchangedAmount": 3520
+    },
+    {
+      "id": "modern-1046",
+      "code": "3836",
+      "month": "2026-08",
+      "unchangedAmount": 3175
+    },
+    {
+      "id": "47551",
+      "code": "4047",
+      "month": "2026-01",
+      "unchangedAmount": 10000
+    },
+    {
+      "id": "47375",
+      "code": "3795",
+      "month": "2026-05",
+      "unchangedAmount": 3030
+    },
+    {
+      "id": "47608",
+      "code": "3958",
+      "month": "2026-05",
+      "unchangedAmount": 7470
+    }
+  ]
+}

@@ -205,7 +205,7 @@ export interface Loan {
   borrowerName: string;
   firstName: string;
   lastName: string;
-  monthReported: string; // YYYY-MM
+  monthReported: string; // YYYY-MM for legacy cycles; YYYY-MM-DD for maturity dates from 2025
   dueDate: string;
   dateRelease?: string | null;
   principal?: number | null;
@@ -226,6 +226,7 @@ export interface Loan {
   contactNumber?: string;
   promiseToPayDate?: string | null;
   followUpDate?: string | null;
+  lastPaidDate?: string | null;
   recurringSchedule?: RecurringSchedule | null;
   branch: Branch;
   actionNote?: string | null;
@@ -238,7 +239,10 @@ export interface CollectorPerformance {
   activeAccountCount?: number;
   reportedAmount: number;
   collectedAmount: number;
+  actualCollectedAmount: number;
   runningBalance: number;
+  excessCollection: number;
+  writeOffValidCollections: number;
   collectionRate: number;
   paidCount: number;
 }
@@ -248,6 +252,7 @@ export interface CollectorPerformanceClientDetail {
   code: string;
   borrowerName: string;
   monthReported: string;
+  dueDate?: string;
   status: MovingStatus;
   reportedAmount: number;
   collectedAmount: number;

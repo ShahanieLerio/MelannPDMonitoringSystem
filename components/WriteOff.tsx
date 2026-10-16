@@ -116,6 +116,11 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
   const [sortKey, setSortKey] = useState<SortKey>('decisionDate');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [restoringRow, setRestoringRow] = useState<WriteOffRow | null>(null);
+  const [restoreReason, setRestoreReason] = useState('');
+  const [restoreAmount, setRestoreAmount] = useState('');
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [approvalWarningOpen, setApprovalWarningOpen] = useState(false);
 
@@ -197,6 +202,7 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
 
     const rows: WriteOffRow[] = [];
     latestProspectByLoan.forEach((disposition, loanId) => {
+      if (disposition.status === DispositionStatus.REJECTED) return;
       const loan = loansById.get(loanId);
       if (loan) {
         rows.push({
@@ -448,6 +454,35 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
       });
     } finally {
       setApprovingId(null);
+    }
+  };
+
+  const openRestore = (row: WriteOffRow) => {
+    setRestoringRow(row);
+    setRestoreReason('');
+    setRestoreAmount(getLoanFinancials(row.loan).balanceBeforeWriteOff.toFixed(2));
+    setRestoreError('');
+  };
+
+  const submitRestore = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!restoringRow) return;
+    const amount = Number(restoreAmount);
+    const available = getLoanFinancials(restoringRow.loan).balanceBeforeWriteOff;
+    if (!restoreReason.trim() || !Number.isFinite(amount) || amount <= 0 || amount > available || !/^\d+(\.\d{1,2})?$/.test(restoreAmount)) {
+      setRestoreError(`Enter a reason and an amount from PHP 0.01 to ${currency(available)}.`);
+      return;
+    }
+    setRestoring(true);
+    setRestoreError('');
+    try {
+      await store.restorePendingWriteOff(restoringRow.disposition.id, restoreReason.trim(), amount, currentUser.username, currentUser.role);
+      setFeedback({ type: 'success', message: `${restoringRow.loan.borrowerName} was restored to active collection (${currency(amount)}).` });
+      setRestoringRow(null);
+    } catch (error) {
+      setRestoreError(error instanceof Error ? error.message : 'Unable to restore this client. Please try again.');
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -1351,7 +1386,15 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
                   )}
                 </td>
                 {showActionColumn && (
-                  <td className="px-3 py-3 text-right whitespace-nowrap">
+                  <td className="px-3 py-3 text-right whitespace-nowrap space-x-2">
+                    <button
+                      type="button"
+                      disabled={approvingId === row.disposition.id || restoring}
+                      onClick={() => openRestore(row)}
+                      className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                    >
+                      Restore
+                    </button>
                     <button
                       type="button"
                       disabled={approvingId === row.disposition.id}
@@ -1754,6 +1797,25 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
       </div>
 
       {isDashboardTab ? <DashboardView /> : <RowTable rows={visibleRows} />}
+
+      {restoringRow && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !restoring) setRestoringRow(null); }}>
+          <form onSubmit={submitRestore} role="dialog" aria-modal="true" aria-labelledby="restore-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+            <h2 id="restore-title" className="text-xl font-black text-slate-900 dark:text-white">Restore to Collection</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{restoringRow.loan.borrowerName} will leave the pending {restoringRow.classification} write-off list and return to active reports.</p>
+            <label htmlFor="restore-reason" className="mt-5 block text-xs font-bold uppercase text-slate-600 dark:text-slate-300">Reason for restoration</label>
+            <textarea id="restore-reason" required rows={3} value={restoreReason} onChange={event => setRestoreReason(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white" placeholder="Why can this client resume payment?" />
+            <label htmlFor="restore-amount" className="mt-4 block text-xs font-bold uppercase text-slate-600 dark:text-slate-300">Amount to restore (PHP)</label>
+            <input id="restore-amount" type="number" required min="0.01" max={getLoanFinancials(restoringRow.loan).balanceBeforeWriteOff} step="0.01" value={restoreAmount} onChange={event => setRestoreAmount(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white" />
+            <p className="mt-1 text-xs text-slate-500">Available balance: {currency(getLoanFinancials(restoringRow.loan).balanceBeforeWriteOff)}</p>
+            {restoreError && <p role="alert" className="mt-3 text-sm font-semibold text-rose-600">{restoreError}</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" disabled={restoring} onClick={() => setRestoringRow(null)} className="rounded-xl px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+              <button type="submit" disabled={restoring} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{restoring ? 'Restoring...' : 'Confirm Restore'}</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <ConfirmationModal
         isOpen={approvalWarningOpen}

@@ -4,6 +4,9 @@ const { Pool } = require('pg');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
+const { getReportedDateForDueDate } = require('./reportingCycle.cjs');
+const { calculateReportedAmount } = require('./reportedAmount.cjs');
 const { execFile } = require('child_process');
 require('dotenv').config({ path: '.env.local' });
 
@@ -24,6 +27,55 @@ const pool = new Pool({
 // Generic Query Handler
 const query = (text, params) => pool.query(text, params);
 const PAYMENT_DUPLICATE_DATE_INDEX = 'payments_loan_id_date_unique';
+
+const auditModules = {
+    users: 'Manage Users', loans: 'Loan Grid', recycle_bin: 'Recycle Bin',
+    payments: 'Payments', collectors: 'Personnel Management', supervisors: 'Personnel Management',
+    action_personnel: 'Personnel Management', remarks: 'Client Update',
+    demand_letters: 'Demand Letters', activity_logs: 'Client Update',
+    visit_logs: 'Client Update', contact_logs: 'Client Update',
+    management_dispositions: 'Write-Off', migration_batches: 'Migration',
+};
+
+const writeTracerLog = async ({ userId, action, module, detail = '', recordId = null, ipAddress = null, pcId = null, pcName = null }) => {
+    const actor = userId ? (await query(
+        'SELECT id, username, role, branch FROM users WHERE id = $1', [userId]
+    )).rows[0] : null;
+    await query(
+        `INSERT INTO tracer_logs (user_id, user_name, user_role, branch, action, module, detail, record_id, ip_address, pc_id, pc_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [actor?.id || null, actor?.username || 'Unknown', actor?.role || 'Unknown',
+            actor?.branch || 'Unknown', action, module, detail, recordId, ipAddress,
+            typeof pcId === 'string' ? pcId.slice(0, 100) : null,
+            typeof pcName === 'string' ? pcName.slice(0, 100) : null]
+    );
+};
+
+// Record successful data changes without copying sensitive request bodies into the trail.
+app.use('/api', (req, res, next) => {
+    const parts = req.originalUrl.split('?')[0].split('/').filter(Boolean);
+    if (parts[0] === 'api') parts.shift();
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || parts[0] === 'tracer_logs') return next();
+    res.on('finish', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) return;
+        const module = auditModules[parts[0]] || parts[0] || 'System';
+        let action = req.method === 'POST' ? 'ADD' : req.method === 'DELETE' ? 'DELETE' : 'EDIT';
+        if (parts.includes('restore')) action = 'RESTORE';
+        else if (parts.includes('reverse')) action = 'REVERSE';
+        else if (parts.includes('migrate')) action = 'IMPORT';
+        else if (parts.includes('scan')) action = 'SCAN';
+        else if (parts[0] === 'recycle_bin' && req.method === 'POST') action = 'DELETE';
+        const bodyId = req.body?.id ?? req.body?.loanId;
+        const recordId = parts.length > 1 && !['bulk', 'branch'].includes(parts[1])
+            ? parts[1] : ['string', 'number'].includes(typeof bodyId) ? String(bodyId).slice(0, 100) : null;
+        void writeTracerLog({
+            userId: req.get('x-audit-user-id'), action, module,
+            detail: `${req.method} /api/${parts.join('/')}`, recordId, ipAddress: req.ip,
+            pcId: req.get('x-audit-pc-id'), pcName: req.get('x-audit-pc-name')
+        }).catch(error => console.error('Tracer log write failed:', error));
+    });
+    next();
+});
 
 const JCASHDB_PATH = process.env.JCASHDB_PATH || '\\\\SERVERPC\\LendingV2Melan\\db\\jcashdb.mdb';
 const JCASHDB_PASSWORD = process.env.JCASHDB_PASSWORD || '';
@@ -93,6 +145,27 @@ const ensureDatabaseCompatibility = async () => {
         await client.query('ALTER TABLE collectors ADD COLUMN IF NOT EXISTS photo_url TEXT');
         await client.query('ALTER TABLE collectors ADD COLUMN IF NOT EXISTS assigned_supervisor TEXT');
         await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT');
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS tracer_logs (
+                id BIGSERIAL PRIMARY KEY,
+                occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                user_id TEXT,
+                user_name TEXT NOT NULL,
+                user_role TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                action TEXT NOT NULL,
+                module TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                record_id TEXT,
+                ip_address TEXT,
+                pc_id TEXT,
+                pc_name TEXT
+            )
+        `);
+        await client.query('ALTER TABLE tracer_logs ADD COLUMN IF NOT EXISTS pc_id TEXT');
+        await client.query('ALTER TABLE tracer_logs ADD COLUMN IF NOT EXISTS pc_name TEXT');
+        await client.query('CREATE INDEX IF NOT EXISTS tracer_logs_occurred_at_idx ON tracer_logs (occurred_at DESC)');
+        await client.query('CREATE INDEX IF NOT EXISTS tracer_logs_user_id_idx ON tracer_logs (user_id, occurred_at DESC)');
         await client.query('ALTER TABLE demand_letters ADD COLUMN IF NOT EXISTS courrier TEXT');
         await client.query('ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS type TEXT');
         await client.query('ALTER TABLE IF EXISTS visit_logs ADD COLUMN IF NOT EXISTS personnel_assigned TEXT DEFAULT \'\'');
@@ -277,11 +350,7 @@ const buildBorrowerName = (firstName, lastName, fallback) => {
 };
 
 const getReportedMonthForDueDate = (dueDateStr) => {
-    if (!dueDateStr) return '';
-    const [yearPart, monthPart, dayPart] = String(dueDateStr).split('-').map(Number);
-    if (!yearPart || !monthPart || !dayPart) return String(dueDateStr).slice(0, 7);
-    const reported = new Date(Date.UTC(yearPart, monthPart + 1, dayPart));
-    return `${reported.getUTCFullYear()}-${String(reported.getUTCMonth() + 1).padStart(2, '0')}`;
+    return getReportedDateForDueDate(dueDateStr);
 };
 
 const isGoodSourcePayment = (payment) => {
@@ -358,6 +427,22 @@ const inferOriginalTotalLoan = (loan, payments) => {
         firstOpeningBalance,
         totalPaidPlusCurrentBalance
     );
+};
+
+const normalizeCycleDate = (value) => String(value || '').slice(0, 10);
+
+const isSameLoanCycle = (storedLoan, incomingLoan) =>
+    normalizeCycleDate(storedLoan?.date_release ?? storedLoan?.dateRelease) === normalizeCycleDate(incomingLoan?.dateRelease) &&
+    normalizeCycleDate(storedLoan?.due_date ?? storedLoan?.dueDate) === normalizeCycleDate(incomingLoan?.dueDate);
+
+const buildMigrationCycleId = (sourceType, sourceLoanId, loan) => {
+    const safePart = (value, fallback) => String(value || fallback).replace(/[^a-zA-Z0-9-]/g, '-');
+    return [
+        safePart(sourceType, 'source'),
+        safePart(sourceLoanId, 'loan'),
+        safePart(normalizeCycleDate(loan?.dateRelease), 'no-release'),
+        safePart(normalizeCycleDate(loan?.dueDate), 'no-maturity')
+    ].join('-');
 };
 
 const mapSourceLoan = (loan) => {
@@ -707,6 +792,89 @@ const persistCollectorPhoto = (collectorId, photoUrl) => {
 // --- API ENDPOINTS ---
 
 // Users
+app.get('/api/tracer_logs/users', async (req, res) => {
+    try {
+        const viewer = (await query('SELECT role, branch FROM users WHERE id = $1', [req.get('x-audit-user-id') || ''])).rows[0];
+        if (!viewer || !['SUPER_ADMIN', 'BRANCH_MANAGER'].includes(viewer.role)) return res.status(403).json({ error: 'Audit access denied' });
+        const params = viewer.role === 'SUPER_ADMIN' ? [] : [viewer.branch];
+        const branchFilter = params.length ? 'AND branch = $1' : '';
+        const result = await query(`
+            SELECT * FROM (
+                SELECT DISTINCT ON (user_id) user_id AS id, user_name AS username,
+                    user_role AS role, branch, occurred_at AS last_activity
+                FROM tracer_logs
+                WHERE user_id IS NOT NULL ${branchFilter}
+                ORDER BY user_id, occurred_at DESC, tracer_logs.id DESC
+            ) active_users
+            ORDER BY last_activity DESC, username ASC
+        `, params);
+        res.json(result.rows);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/tracer_logs', async (req, res) => {
+    try {
+        const viewer = (await query('SELECT role, branch FROM users WHERE id = $1', [req.get('x-audit-user-id') || ''])).rows[0];
+        if (!viewer || !['SUPER_ADMIN', 'BRANCH_MANAGER'].includes(viewer.role)) return res.status(403).json({ error: 'Audit access denied' });
+        const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 500);
+        const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
+        const conditions = [];
+        const params = [];
+        if (viewer.role !== 'SUPER_ADMIN') {
+            params.push(viewer.branch);
+            conditions.push(`branch = $${params.length}`);
+        }
+        if (req.query.user) {
+            params.push(`%${String(req.query.user).slice(0, 100)}%`);
+            conditions.push(`user_name ILIKE $${params.length}`);
+        }
+        if (req.query.userId) {
+            params.push(String(req.query.userId));
+            conditions.push(`user_id = $${params.length}`);
+        }
+        if (req.query.action) {
+            params.push(String(req.query.action));
+            conditions.push(`action = $${params.length}`);
+        }
+        if (req.query.module) {
+            params.push(`%${String(req.query.module).slice(0, 100)}%`);
+            conditions.push(`module ILIKE $${params.length}`);
+        }
+        if (typeof req.query.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from)) {
+            params.push(req.query.from);
+            conditions.push(`occurred_at >= ($${params.length}::date::timestamp AT TIME ZONE 'Asia/Manila')`);
+        }
+        if (typeof req.query.to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to)) {
+            params.push(req.query.to);
+            conditions.push(`occurred_at < (($${params.length}::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Manila')`);
+        }
+        const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+        const total = await query(`SELECT COUNT(*) FROM tracer_logs ${where}`, params);
+        const rows = await query(
+            `SELECT id, occurred_at, user_id, user_name, user_role, branch, action, module, detail, record_id, ip_address, pc_id, pc_name
+             FROM tracer_logs ${where} ORDER BY occurred_at DESC, id DESC
+             LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+            [...params, limit, offset]
+        );
+        res.json({ rows: rows.rows, total: Number(total.rows[0].count) });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/tracer_logs', async (req, res) => {
+    try {
+        const { action, module, detail } = req.body || {};
+        if (!['LOGIN', 'LOGOUT', 'VIEW'].includes(action) || typeof module !== 'string' || module.length > 100) {
+            return res.status(400).json({ error: 'Invalid audit event' });
+        }
+        await writeTracerLog({
+            userId: req.get('x-audit-user-id'), action, module,
+            detail: typeof detail === 'string' ? detail.slice(0, 250) : '', ipAddress: req.ip,
+            pcId: req.get('x-audit-pc-id'), pcName: req.get('x-audit-pc-name')
+        });
+        res.status(201).json({ success: true });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.get('/api/users', async (req, res) => {
     try {
         const result = await query('SELECT * FROM users');
@@ -766,7 +934,13 @@ app.get('/api/loans', async (req, res) => {
         const result = await query(`
             SELECT l.*
             FROM loans l
-            WHERE (l.due_date >= $1 AND l.due_date <= $2)
+            WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM deleted_loans d
+                    WHERE d.id = l.id
+               )
+              AND (
+               (l.due_date >= $1 AND l.due_date <= $2)
                OR EXISTS (
                     SELECT 1
                     FROM payments p
@@ -781,6 +955,7 @@ app.get('/api/loans', async (req, res) => {
                         OR COALESCE(l.amount_collected, 0) = 0
                     )
                )
+              )
             ORDER BY l.last_name ASC, l.first_name ASC
         `, [ACTIVE_PORTFOLIO_MATURITY_START, ACTIVE_PORTFOLIO_MATURITY_END, JCASH_MIGRATION_PAYMENT_REMARK, JCASHDB_BRANCH, MODERN_MIGRATION_PAYMENT_REMARK]);
         res.json(result.rows);
@@ -1064,7 +1239,7 @@ app.post('/api/recycle_bin/:id/restore', async (req, res) => {
         })).filter(h => h.id && h.description);
 
         await client.query(
-            'INSERT INTO loans (id, collector, code, first_name, last_name, borrower_name, month_reported, due_date, outstanding_balance, amount_collected, running_balance, status, location, area, city, barangay, full_address, contact_number, branch, ai_priority, promise_to_pay_date, follow_up_date, recurring_schedule, action_note, action_stage, date_release, principal, total_loan) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)',
+            'INSERT INTO loans (id, collector, code, first_name, last_name, borrower_name, month_reported, due_date, outstanding_balance, amount_collected, running_balance, status, location, area, city, barangay, full_address, contact_number, branch, ai_priority, promise_to_pay_date, follow_up_date, recurring_schedule, action_note, action_stage, date_release, principal, total_loan) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) ON CONFLICT (id) DO NOTHING',
             [loan.id, loan.collector, loan.code, loan.firstName, loan.lastName, loan.borrowerName, loan.monthReported, loan.dueDate, loan.outstandingBalance, loan.amountCollected, loan.runningBalance, loan.status, loan.location, loan.area, loan.city, loan.barangay, loan.fullAddress, loan.contactNumber ?? null, loan.branch, loan.aiPriority ?? null, loan.promiseToPayDate ?? null, loan.followUpDate ?? null, scheduleVal, loan.actionNote ?? null, loan.actionStage ?? null, loan.dateRelease ?? null, loan.principal ?? null, loan.totalLoan ?? null]
         );
 
@@ -1164,6 +1339,113 @@ app.put('/api/payments/:orNumber', async (req, res) => {
         await query('UPDATE payments SET status=$1, remarks=$2 WHERE or_number=$3', [status, remarks, orNumber]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/payments/:orNumber/reverse', async (req, res) => {
+    const { orNumber } = req.params;
+    const { loanId, remarks, reason, history } = req.body || {};
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const paymentLookup = await client.query('SELECT * FROM payments WHERE or_number = $1', [orNumber]);
+        if (paymentLookup.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Payment not found.' });
+        }
+        const selectedPayment = paymentLookup.rows[0];
+        if (loanId && String(selectedPayment.loan_id) !== String(loanId)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Payment does not belong to the selected client.' });
+        }
+
+        const loanResult = await client.query('SELECT * FROM loans WHERE id = $1 FOR UPDATE', [selectedPayment.loan_id]);
+        if (loanResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Client record not found.' });
+        }
+        const paymentRows = await client.query(
+            'SELECT * FROM payments WHERE loan_id = $1 ORDER BY date ASC, created_at ASC, id ASC FOR UPDATE',
+            [selectedPayment.loan_id]
+        );
+        const payments = paymentRows.rows;
+        const payment = payments.find(row => row.id === selectedPayment.id);
+        if (!payment) throw new Error('Payment disappeared while preparing the reversal.');
+        if (payment.status === 'REVERSED') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'This payment has already been reversed.' });
+        }
+
+        const loan = loanResult.rows[0];
+        const totalRecordedPayments = payments.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        const isJcashLoan = payments.some(row => String(row.remarks || '').includes(JCASH_MIGRATION_PAYMENT_REMARK)) ||
+            (loan.branch === JCASHDB_BRANCH && /^\d+$/.test(String(loan.id || '')));
+        const sourceCollectedAdjustment = isJcashLoan
+            ? Math.max(0, Number(loan.amount_collected || 0) - totalRecordedPayments)
+            : 0;
+        const reversalNote = String(remarks || `${payment.remarks || ''} (REVERSED)`);
+        await client.query('UPDATE payments SET status = $1, remarks = $2 WHERE id = $3', ['REVERSED', reversalNote, payment.id]);
+        payment.status = 'REVERSED';
+        payment.remarks = reversalNote;
+
+        const activePayments = payments.filter(row => row.status !== 'REVERSED');
+        const activePaymentTotal = activePayments.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        const totalLoan = Number(loan.total_loan ?? loan.outstanding_balance ?? 0);
+        let currentBalance = totalLoan - sourceCollectedAdjustment;
+        for (const row of payments) {
+            if (row.status !== 'REVERSED') currentBalance -= Number(row.amount || 0);
+            row.balance_after = currentBalance;
+            await client.query('UPDATE payments SET balance_after = $1 WHERE id = $2', [currentBalance, row.id]);
+        }
+        const runningBalance = Math.max(0, currentBalance);
+        let status = 'NM';
+        if (runningBalance <= 0) {
+            status = 'Paid';
+        } else if (activePayments.length === 0) {
+            status = 'NMSR';
+        } else {
+            const latestPayment = activePayments[activePayments.length - 1];
+            status = Date.now() - new Date(latestPayment.date).getTime() <= 30 * 24 * 60 * 60 * 1000 ? 'M' : 'NM';
+        }
+
+        const amountCollected = sourceCollectedAdjustment + activePaymentTotal;
+        await client.query(
+            'UPDATE loans SET amount_collected = $1, running_balance = $2, status = $3 WHERE id = $4',
+            [amountCollected, runningBalance, status, selectedPayment.loan_id]
+        );
+        let historyEntry = null;
+        if (history?.id) {
+            const description = `Payment OR: ${orNumber} (₱${Number(payment.amount).toLocaleString()}) reversed. Reason: ${reason || 'Not specified'}. New balance: ₱${runningBalance.toLocaleString()}`;
+            historyEntry = {
+                id: history.id,
+                type: history.type || 'Payment Reversed',
+                description,
+                user: history.user || 'System',
+                role: history.role || 'System',
+                module: history.module || 'Payment Stream',
+                timestamp: history.timestamp || new Date().toISOString()
+            };
+            await client.query(
+                'INSERT INTO activity_logs (id, loan_id, type, description, user_name, user_role, module, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+                [historyEntry.id, selectedPayment.loan_id, historyEntry.type, historyEntry.description, historyEntry.user, historyEntry.role, historyEntry.module, historyEntry.timestamp]
+            );
+        }
+
+        await client.query('COMMIT');
+        res.json({
+            success: true,
+            amountCollected,
+            runningBalance,
+            status,
+            history: historyEntry,
+            payments: payments.map(row => ({ id: row.id, balanceAfter: Number(row.balance_after), status: row.status, remarks: row.remarks }))
+        });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
 });
 
 // Collectors
@@ -1535,12 +1817,90 @@ app.put('/api/management_dispositions/:id/status', async (req, res) => {
     }
 
     try {
-        await query(
-            'UPDATE management_dispositions SET status = $1 WHERE id = $2',
-            [status, req.params.id]
+        const result = await query(
+            'UPDATE management_dispositions SET status = $1 WHERE id = $2 AND status = $3 RETURNING id',
+            [status, req.params.id, 'Pending Review']
         );
+        if (result.rowCount === 0) return res.status(409).json({ error: 'This write-off decision is no longer pending.' });
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/management_dispositions/:id/restore', async (req, res) => {
+    const reason = String(req.body?.reason || '').trim();
+    const amount = Number(req.body?.amount);
+    const restoredBy = String(req.body?.restoredBy || '').trim();
+    const role = String(req.body?.role || '').trim();
+    if (!reason || !restoredBy || !role || !Number.isFinite(amount) || amount <= 0 || Math.abs(Math.round(amount * 100) - amount * 100) > 0.000001) {
+        return res.status(400).json({ error: 'A reason and a positive amount (up to two decimal places) are required.' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const dispositionResult = await client.query('SELECT * FROM management_dispositions WHERE id = $1 FOR UPDATE', [req.params.id]);
+        const disposition = dispositionResult.rows[0];
+        if (!disposition || disposition.type !== 'Prospect for Write-Off' || disposition.status !== 'Pending Review') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Only pending Located or Unlocated write-offs can be restored.' });
+        }
+        const loanResult = await client.query('SELECT * FROM loans WHERE id = $1 FOR UPDATE', [disposition.loan_id]);
+        const loan = loanResult.rows[0];
+        if (!loan) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Client record not found.' });
+        }
+        const latestResult = await client.query('SELECT id FROM management_dispositions WHERE loan_id = $1 ORDER BY decision_date DESC LIMIT 1', [loan.id]);
+        if (latestResult.rows[0]?.id !== disposition.id) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'A newer decision exists for this client. Refresh and try again.' });
+        }
+        const paymentResult = await client.query('SELECT remarks FROM payments WHERE loan_id = $1 AND status <> $2', [loan.id, 'REVERSED']);
+        const remarkResult = await client.query('SELECT text FROM remarks WHERE loan_id = $1', [loan.id]);
+        const isDeceased = /\b(dead|deceased)\b/i.test(String(disposition.reason || '')) ||
+            (disposition.evidence || []).includes('Deceased borrower') ||
+            remarkResult.rows.some(remark => /\b(dead|deceased)\b/i.test(String(remark.text || ''))) ||
+            paymentResult.rows.some(payment => /\b(dead|deceased)\b/i.test(String(payment.remarks || '')));
+        const hasBookedWriteOff = paymentResult.rows.some(payment => /\bwrite[-\s]?off\b/i.test(String(payment.remarks || '')));
+        if (isDeceased || hasBookedWriteOff) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'This account has a deceased or booked write-off transaction and cannot use pending restoration.' });
+        }
+        const collected = Number(loan.amount_collected || 0);
+        const availableBalance = Math.max(0, Number(loan.total_loan ?? loan.outstanding_balance ?? 0) - collected);
+        if (amount > availableBalance + 0.001) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: `Restoration amount cannot exceed the current balance of PHP ${availableBalance.toFixed(2)}.` });
+        }
+
+        const actionStage = 'Active / Cooperative';
+        const actionNote = `Restored to Collection: ${reason}`;
+        const balanceReduction = availableBalance - amount;
+        const totalLoan = Math.round((Number(loan.total_loan ?? loan.outstanding_balance ?? 0) - balanceReduction) * 100) / 100;
+        const outstandingBalance = Math.round(Math.max(0, Number(loan.outstanding_balance ?? loan.total_loan ?? 0) - balanceReduction) * 100) / 100;
+        await client.query('UPDATE management_dispositions SET status = $1 WHERE id = $2', ['Rejected', disposition.id]);
+        const location = disposition.write_off_classification === 'Unlocated' ? 'L' : loan.location;
+        await client.query(
+            'UPDATE loans SET outstanding_balance = $1, total_loan = $2, running_balance = $3, status = $4, action_stage = $5, action_note = $6, location = $7 WHERE id = $8',
+            [outstandingBalance, totalLoan, amount, 'NMSR', actionStage, actionNote, location, loan.id]
+        );
+        const history = {
+            id: randomUUID(), type: 'Write-Off Restored',
+            description: `Pending ${disposition.write_off_classification || 'Located'} write-off restored to collection. Amount: PHP ${amount.toFixed(2)}. Reason: ${reason}`,
+            user: restoredBy, role, module: 'Write-Off', timestamp: new Date().toISOString()
+        };
+        await client.query(
+            'INSERT INTO activity_logs (id, loan_id, type, description, user_name, user_role, module, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            [history.id, loan.id, history.type, history.description, history.user, history.role, history.module, history.timestamp]
+        );
+        await client.query('COMMIT');
+        res.json({ outstandingBalance, totalLoan, runningBalance: amount, status: 'NMSR', actionStage, actionNote, location, history });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
 });
 
 // JCASH read-only migration batches
@@ -1650,6 +2010,14 @@ app.post('/api/migration_batches/scan', async (req, res) => {
                     // not inflate it from existing/payment-derived balances.
                     if (!Number.isFinite(Number(item.loan.totalLoan)) || Number(item.loan.totalLoan) <= 0) {
                         item.loan.totalLoan = inferOriginalTotalLoan(item.loan, payments);
+                    }
+                    if (item.loan.dueDate >= '2025-01-01' && Number(item.loan.totalLoan) > 0) {
+                        item.loan.outstandingBalance = calculateReportedAmount({
+                            id: item.loan.id,
+                            branch: item.loan.branch,
+                            total_loan: item.loan.totalLoan,
+                            amount_collected: item.loan.amountCollected
+                        }, payments, item.loan.monthReported).reportedAmount;
                     }
 
                     return {
@@ -1805,7 +2173,37 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
 
         for (const account of accountsToMigrate) {
             const loan = account.loan;
+            if (loan.dueDate >= '2025-01-01') {
+                loan.monthReported = getReportedDateForDueDate(loan.dueDate);
+                loan.outstandingBalance = calculateReportedAmount({
+                    id: loan.id,
+                    branch: loan.branch,
+                    total_loan: loan.totalLoan,
+                    amount_collected: loan.amountCollected
+                }, account.payments || [], loan.monthReported).reportedAmount;
+            }
+            const sourceLoanId = String(loan.id);
+            let effectiveLoanId = sourceLoanId;
+            const activeCycleResult = await client.query(
+                'SELECT id, date_release, due_date FROM loans WHERE id = $1',
+                [sourceLoanId]
+            );
+            const deletedCycleResult = await client.query(
+                'SELECT original_loan_data FROM deleted_loans WHERE id = $1',
+                [sourceLoanId]
+            );
+            const storedCycle = activeCycleResult.rows[0] || deletedCycleResult.rows[0]?.original_loan_data;
+
+            // A source ID normally identifies one loan cycle. If historical data
+            // already uses that ID for a different release/maturity pair, retain
+            // the old cycle and give this migration a deterministic cycle ID.
+            if (storedCycle && !isSameLoanCycle(storedCycle, loan)) {
+                effectiveLoanId = buildMigrationCycleId(payload.sourceType, sourceLoanId, loan);
+            }
             const scheduleVal = loan.recurringSchedule ? (typeof loan.recurringSchedule === 'string' ? loan.recurringSchedule : JSON.stringify(loan.recurringSchedule)) : null;
+            // A successful migration makes this source record active again. Clear
+            // any stale recycle-bin entry so the active-loan endpoint can return it.
+            await client.query('DELETE FROM deleted_loans WHERE id = $1', [effectiveLoanId]);
             await client.query(`
                 INSERT INTO loans (id, collector, code, first_name, last_name, borrower_name, month_reported, due_date, outstanding_balance, amount_collected, running_balance, status, location, area, city, barangay, full_address, contact_number, branch, ai_priority, promise_to_pay_date, follow_up_date, recurring_schedule, action_note, action_stage, date_release, principal, total_loan)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
@@ -1839,7 +2237,7 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
                     principal = EXCLUDED.principal,
                     total_loan = EXCLUDED.total_loan
             `, [
-                loan.id, loan.collector, loan.code, loan.firstName, loan.lastName, loan.borrowerName,
+                effectiveLoanId, loan.collector, loan.code, loan.firstName, loan.lastName, loan.borrowerName,
                 loan.monthReported, loan.dueDate, loan.outstandingBalance, loan.amountCollected,
                 loan.runningBalance, loan.status, loan.location, loan.area, loan.city, loan.barangay,
                 loan.fullAddress, loan.contactNumber ?? null, loan.branch, loan.aiPriority ?? null,
@@ -1850,10 +2248,13 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
 
             await client.query(
                 'DELETE FROM payments WHERE loan_id = $1 AND remarks = $2',
-                [loan.id, sourcePaymentRemark]
+                [effectiveLoanId, sourcePaymentRemark]
             );
 
             for (const payment of account.payments || []) {
+                const effectivePaymentId = effectiveLoanId === sourceLoanId
+                    ? payment.id
+                    : `${payment.id}-${effectiveLoanId}`;
                 await client.query(`
                     INSERT INTO payments (id, loan_id, amount, or_number, date, balance_after, recorder, remarks, status, created_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -1868,7 +2269,7 @@ app.post('/api/migration_batches/:id/migrate', async (req, res) => {
                         status = EXCLUDED.status,
                         created_at = EXCLUDED.created_at
                 `, [
-                    payment.id, payment.loanId, payment.amount, payment.orNumber, payment.date,
+                    effectivePaymentId, effectiveLoanId, payment.amount, payment.orNumber, payment.date,
                     payment.balanceAfter, payment.recorder, payment.remarks, payment.status, payment.createdAt
                 ]);
             }

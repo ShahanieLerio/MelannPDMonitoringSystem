@@ -10,6 +10,7 @@ vi.mock('../services/dataStore', () => ({
   store: {
     getLoans: vi.fn(),
     getCollectors: vi.fn(),
+    getCollectorPerformance: vi.fn(),
     getAllDispositions: vi.fn(() => []),
     getDeadWriteOffs: vi.fn(() => []),
     isDeadWriteOff: vi.fn(() => false),
@@ -126,7 +127,62 @@ describe('Dashboard', () => {
       { id: 'c1', name: 'John Doe', nickname: 'JOHN', branch: Branch.NAVAL },
       { id: 'c2', name: 'Jane Smith', nickname: 'JANE', branch: Branch.NAVAL }
     ]);
+    (store.getCollectorPerformance as any).mockReturnValue([]);
     (store.subscribe as any).mockReturnValue(() => {});
+  });
+
+  it('shows report-aligned collection categories for both date bases and periods', () => {
+    (store.getCollectorPerformance as any).mockImplementation((_branch: Branch, range?: { from: number; to: number }, _asOf?: string, maturityRange?: { from?: string; to?: string }) => [
+      {
+        collector: 'JOHN', totalAccounts: 2, activeAccountCount: 1,
+        reportedAmount: maturityRange?.from ? 3000 : range?.from === 2025 ? 200 : 1000,
+        actualCollectedAmount: maturityRange?.from ? 900 : range?.from === 2025 ? 50 : 600,
+        excessCollection: range?.from === 2025 ? 5 : 20,
+        writeOffValidCollections: range?.from === 2025 ? 10 : 30,
+        collectedAmount: range?.from === 2025 ? 65 : 650,
+        runningBalance: maturityRange?.from ? 2100 : range?.from === 2025 ? 150 : 400,
+        collectionRate: 0, paidCount: 0
+      }
+    ]);
+
+    render(<Dashboard selectedBranch={Branch.NAVAL} />);
+
+    const card = screen.getByText('Overall Performance').closest('div.bg-white') as HTMLElement;
+    expect(card).toHaveTextContent('Actual Collection');
+    expect(card).toHaveTextContent('Excess Collection');
+    expect(card).toHaveTextContent('Write-Off Valid Collection');
+    expect(card).toHaveTextContent('₱600');
+    expect(card).toHaveTextContent('₱20');
+    expect(card).toHaveTextContent('₱30');
+    expect(card).toHaveTextContent('₱650');
+    expect(card).toHaveTextContent('60.0%');
+
+    expect(card).toHaveTextContent('Date basis: Monthly Reported. Includes all reported periods.');
+    fireEvent.click(screen.getByRole('tab', { name: '2025' }));
+    expect(store.getCollectorPerformance).toHaveBeenCalledWith(Branch.NAVAL, { from: 2025, to: 2025 });
+    expect(card).toHaveTextContent('₱50');
+    expect(card).toHaveTextContent('₱5');
+    expect(card).toHaveTextContent('₱10');
+    expect(card).toHaveTextContent('₱65');
+    expect(card).toHaveTextContent('25.0%');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Maturity Date' }));
+    expect(store.getCollectorPerformance).toHaveBeenCalledWith(Branch.NAVAL, undefined, undefined, undefined);
+    expect(card).toHaveTextContent('Date basis: Maturity Date. Includes all maturity dates.');
+    fireEvent.click(screen.getByRole('tab', { name: '2016-2024' }));
+    expect(store.getCollectorPerformance).toHaveBeenCalledWith(Branch.NAVAL, undefined, undefined,
+      { from: '2016-01-01', to: '2024-12-31' });
+    expect(card).toHaveTextContent('₱900');
+    expect(card).toHaveTextContent('30.0%');
+    expect(card).toHaveTextContent('Includes loans maturing in 2016-2024, regardless of month reported.');
+    fireEvent.click(screen.getByRole('tab', { name: '2025' }));
+    expect(store.getCollectorPerformance).toHaveBeenCalledWith(Branch.NAVAL, undefined, undefined,
+      { from: '2025-01-01', to: '2025-12-31' });
+    fireEvent.click(screen.getByRole('tab', { name: '2026' }));
+    expect(store.getCollectorPerformance).toHaveBeenCalledWith(Branch.NAVAL, undefined, undefined,
+      { from: '2026-01-01', to: '2026-12-31' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Monthly Reported' }));
+    expect(screen.getByRole('tab', { name: '2025' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('renders portfolio KPI cards from loan data', () => {
@@ -136,7 +192,7 @@ describe('Dashboard', () => {
     expect(screen.getByText('Total Accounts')).toBeInTheDocument();
     expect(screen.getByText('Total Loan')).toBeInTheDocument();
     expect(screen.getByText('Total Reported')).toBeInTheDocument();
-    expect(screen.getByText('Total Collected')).toBeInTheDocument();
+    expect(screen.getAllByText('Total Collected').length).toBeGreaterThan(0);
     expect(screen.getByText('Running Balance')).toBeInTheDocument();
     expect(screen.getAllByText('3').length).toBeGreaterThan(0);
     expect(screen.getByText('2 Active as of now')).toBeInTheDocument();
@@ -391,6 +447,7 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByText('Last 30 Days'));
 
     expect(screen.getByText(/Last 30 Days/)).toBeInTheDocument();
+    expect(screen.getByText(/Performance totals follow the report tab/)).toBeInTheDocument();
   });
 
   it('shows empty collector copy when no loans are assigned', () => {
@@ -425,7 +482,7 @@ describe('Dashboard', () => {
 
     render(<Dashboard selectedBranch={Branch.NAVAL} />);
 
-    expect(screen.getByText('Write-Off Module Reports')).toBeInTheDocument();
+    expect(screen.getByText('Write-Off Reports')).toBeInTheDocument();
     expect(screen.getByText('📍 Located Write-Off')).toBeInTheDocument();
     expect(screen.getByText('🔍 Unlocated Write-Off')).toBeInTheDocument();
     expect(screen.getByText('🕊️ Deceased Accounts')).toBeInTheDocument();

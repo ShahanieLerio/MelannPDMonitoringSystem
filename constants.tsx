@@ -21,10 +21,11 @@ export const STATUS_COLORS: Record<string, string> = {
 
 export const formatReportedMonth = (val: string) => {
   if (!val || !val.includes('-')) return val;
-  const [year, month] = val.split('-');
+  const [year, month, day] = val.split('-');
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const mIdx = parseInt(month) - 1;
   if (mIdx < 0 || mIdx > 11) return val;
+  if (day) return `${months[mIdx]} ${Number(day)}, ${year}`;
   return `${months[mIdx]}-${year.slice(-2)}`;
 };
 

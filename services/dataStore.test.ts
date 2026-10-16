@@ -69,6 +69,25 @@ describe('DataStore Service', () => {
     });
 
     describe('LocalStorage Operations', () => {
+        it('keeps a stable PC identity and sends it with tracer events', async () => {
+            const { getAuditPcIdentity, setAuditPcName, store } = await import('./dataStore');
+            await store.whenReady();
+            const first = getAuditPcIdentity();
+            expect(getAuditPcIdentity().id).toBe(first.id);
+            setAuditPcName('Ormoc Cashier PC');
+            expect(getAuditPcIdentity().name).toBe('Ormoc Cashier PC');
+
+            vi.clearAllMocks();
+            await store.recordTracerEvent({ id: 'user-1' } as any, 'LOGIN', 'Account');
+            expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/tracer_logs'), expect.objectContaining({
+                headers: expect.objectContaining({
+                    'x-audit-user-id': 'user-1',
+                    'x-audit-pc-id': first.id,
+                    'x-audit-pc-name': 'Ormoc Cashier PC'
+                })
+            }));
+        });
+
         it('should store and retrieve data from localStorage', () => {
             const testData = { test: 'data' };
             localStorageMock.setItem('test_key', JSON.stringify(testData));
@@ -364,12 +383,24 @@ describe('DataStore Service', () => {
                 {
                     ...baseLoan,
                     id: 'collector-reconstructed',
-                    remarks: [{ id: 'recon-remark', text: 'Reconstructed account', timestamp: '2026-06-20T00:00:00.000Z', collector: 'OFFICE' }]
+                    remarks: [{ id: 'recon-remark', text: 'Reconstructed account', timestamp: '2026-06-20T00:00:00.000Z', collector: 'OFFICE' }],
+                    payments: [{
+                        id: 'pay-reconstructed-cash', loanId: 'collector-reconstructed', date: '2026-06-20',
+                        orNumber: 'OR-RECONSTRUCTED-CASH', amount: 75, balanceAfter: 925,
+                        recorder: 'Admin', remarks: '', status: PaymentStatus.GOOD,
+                        createdAt: '2026-06-20T08:00:00.000Z'
+                    }]
                 },
                 {
                     ...baseLoan,
                     id: 'collector-write-off',
-                    actionStage: 'Write-off'
+                    actionStage: 'Write-off',
+                    payments: [{
+                        id: 'pay-write-off-cash', loanId: 'collector-write-off', date: '2026-06-20',
+                        orNumber: 'OR-WRITE-OFF-CASH', amount: 150, balanceAfter: 850,
+                        recorder: 'Admin', remarks: '', status: PaymentStatus.GOOD,
+                        createdAt: '2026-06-20T08:00:00.000Z'
+                    }]
                 }
             ];
 
@@ -378,15 +409,60 @@ describe('DataStore Service', () => {
             expect(performance.totalAccounts).toBe(5);
             expect(performance.activeAccountCount).toBe(1);
             expect(performance.reportedAmount).toBe(2000);
-            expect(performance.collectedAmount).toBe(1500);
+            expect(performance.collectedAmount).toBe(1725);
+            expect(performance.actualCollectedAmount).toBe(1200);
             expect(performance.runningBalance).toBe(800);
-            expect(performance.collectionRate).toBe(75);
+            expect(performance.excessCollection).toBe(0);
+            expect(performance.writeOffValidCollections).toBe(525);
+            expect(performance.collectedAmount).toBe(performance.actualCollectedAmount + performance.excessCollection + performance.writeOffValidCollections);
+            expect(performance.runningBalance).toBe(performance.reportedAmount - performance.collectedAmount + performance.excessCollection + performance.writeOffValidCollections);
+            expect(performance.collectionRate).toBe(60);
 
             const details = store.getCollectorPerformanceDetails(Branch.ORMOC, 'OFFICE', { from: 2026, to: 2026 });
             expect(details.find(detail => detail.loanId === 'collector-deceased')).toMatchObject({
                 reportedAmount: 0,
                 collectedAmount: 300,
                 runningBalance: 0
+            });
+        });
+
+        it('sums account-level excess collections without offsetting another account balance', async () => {
+            const { store } = await import('./dataStore');
+            const baseLoan = {
+                collector: 'OFFICE', code: 'CP-EXCESS', borrowerName: 'EXCESS, CLIENT',
+                firstName: 'Excess', lastName: 'Client', monthReported: '2026-06',
+                dueDate: '2026-07-15', totalLoan: 1000, outstandingBalance: 1000,
+                amountCollected: 0, runningBalance: 1000, status: MovingStatus.MOVING,
+                location: LocationStatus.LOCATED, area: 'Ormoc', city: 'Ormoc',
+                barangay: 'Poblacion', fullAddress: 'Ormoc, Leyte', remarks: [], history: [],
+                branch: Branch.ORMOC
+            };
+            const payment = (loanId: string, amount: number, date: string, status = PaymentStatus.GOOD) => ({
+                id: `${loanId}-${date}-${amount}`, loanId, date, orNumber: `${loanId}-${date}-${amount}`,
+                amount, balanceAfter: 0, recorder: 'Admin', remarks: '', status,
+                createdAt: `${date}T08:00:00.000Z`
+            });
+            (store as any).collectors = [
+                { id: 'collector-office', name: 'OFFICE', nickname: 'OFFICE', address: 'Ormoc', branch: Branch.ORMOC }
+            ];
+            (store as any).managementDispositions = [];
+            (store as any).loans = [
+                { ...baseLoan, id: 'overpaid', payments: [
+                    payment('overpaid', 1200, '2026-06-20'),
+                    payment('overpaid', 50, '2026-06-21', PaymentStatus.REVERSED)
+                ] },
+                { ...baseLoan, id: 'underpaid', payments: [payment('underpaid', 300, '2026-06-20')] }
+            ];
+
+            expect(store.getCollectorPerformance(Branch.ORMOC)[0]).toMatchObject({
+                reportedAmount: 2000, collectedAmount: 1500, actualCollectedAmount: 1300,
+                runningBalance: 700, excessCollection: 200, writeOffValidCollections: 0, collectionRate: 65
+            });
+            expect(store.getCollectorPerformance(Branch.ORMOC, undefined, '2026-06-19')[0]).toMatchObject({
+                actualCollectedAmount: 0, excessCollection: 0, runningBalance: 2000
+            });
+            expect(store.getCollectorPerformance(Branch.ORMOC, undefined, '2026-06-20')[0]).toMatchObject({
+                actualCollectedAmount: 1300, excessCollection: 200, runningBalance: 700
             });
         });
 
@@ -432,12 +508,14 @@ describe('DataStore Service', () => {
                     ...baseLoan,
                     id: 'collector-2025',
                     monthReported: '2025-02',
+                    dueDate: '2024-12-20',
                     outstandingBalance: 2000
                 },
                 {
                     ...baseLoan,
                     id: 'collector-2026',
                     monthReported: '2026-03',
+                    dueDate: '2025-01-01',
                     outstandingBalance: 3000
                 }
             ];
@@ -451,6 +529,13 @@ describe('DataStore Service', () => {
             expect(historical[0].reportedAmount).toBe(1000);
             expect(year2025[0].reportedAmount).toBe(2000);
             expect(year2026[0].reportedAmount).toBe(3000);
+
+            const maturityRange = { from: '2016-01-01', to: '2024-12-31' };
+            const [maturityPerformance] = store.getCollectorPerformance(Branch.ORMOC, undefined, undefined, maturityRange);
+            const maturityDetails = store.getCollectorPerformanceDetails(Branch.ORMOC, 'OFFICE', undefined, undefined, maturityRange);
+            expect(maturityPerformance).toMatchObject({ totalAccounts: 2, reportedAmount: 3000, runningBalance: 3000 });
+            expect(maturityDetails.map(detail => detail.loanId).sort()).toEqual(['collector-2024', 'collector-2025']);
+            expect(maturityDetails.find(detail => detail.loanId === 'collector-2025')?.dueDate).toBe('2024-12-20');
         });
 
         it('returns client rows for a collector yearly performance drilldown', async () => {
@@ -462,7 +547,7 @@ describe('DataStore Service', () => {
                 borrowerName: 'DETAIL, CLIENT',
                 firstName: 'Detail',
                 lastName: 'Client',
-                monthReported: '2025-02',
+                monthReported: '2025-05-16',
                 dueDate: '2025-03-15',
                 totalLoan: 1000,
                 outstandingBalance: 1000,
@@ -475,16 +560,27 @@ describe('DataStore Service', () => {
                 barangay: 'Poblacion',
                 fullAddress: 'Ormoc, Leyte',
                 payments: [{
+                    id: 'pay-before-report',
+                    loanId: 'collector-detail-base',
+                    date: '2025-05-15',
+                    orNumber: 'OR-BEFORE-REPORT',
+                    amount: 100,
+                    balanceAfter: 900,
+                    recorder: 'Admin',
+                    remarks: '',
+                    status: PaymentStatus.GOOD,
+                    createdAt: '2025-05-15T08:00:00.000Z'
+                }, {
                     id: 'pay-detail',
                     loanId: 'collector-detail-base',
-                    date: '2025-02-20',
+                    date: '2025-05-16',
                     orNumber: 'OR-DETAIL',
                     amount: 300,
                     balanceAfter: 700,
                     recorder: 'Admin',
                     remarks: '',
                     status: PaymentStatus.GOOD,
-                    createdAt: '2025-02-20T08:00:00.000Z'
+                    createdAt: '2025-05-16T08:00:00.000Z'
                 }],
                 remarks: [],
                 history: [],
@@ -514,6 +610,47 @@ describe('DataStore Service', () => {
                 collectedAmount: 300,
                 runningBalance: 700
             });
+            const [performance] = store.getCollectorPerformance(Branch.ORMOC, { from: 2025, to: 2025 });
+            expect(performance.collectedAmount).toBe(300);
+        });
+
+        it('reconstructs collector target, cash and balance through an as-of date', async () => {
+            const { store } = await import('./dataStore');
+            const loan = {
+                id: 'as-of-loan', collector: 'OFFICE', code: 'AS-OF', borrowerName: 'AS OF, CLIENT',
+                firstName: 'As Of', lastName: 'Client', monthReported: '2025-05-16', dueDate: '2025-03-15',
+                totalLoan: 1000, outstandingBalance: 1000, amountCollected: 1000, runningBalance: 0,
+                status: MovingStatus.PAID, location: LocationStatus.LOCATED, area: 'Ormoc', city: 'Ormoc',
+                barangay: 'Poblacion', fullAddress: 'Ormoc, Leyte',
+                remarks: [{ id: 'later-outcome', text: 'Client deceased', timestamp: '2025-10-02T08:00:00.000Z', collector: 'OFFICE' }],
+                history: [], branch: Branch.ORMOC,
+                payments: [
+                    { id: 'before-report', loanId: 'as-of-loan', date: '2025-05-15', amount: 100, status: PaymentStatus.GOOD, remarks: '' },
+                    { id: 'on-as-of', loanId: 'as-of-loan', date: '2025-09-30', amount: 300, status: PaymentStatus.GOOD, remarks: '' },
+                    { id: 'after-as-of', loanId: 'as-of-loan', date: '2025-10-01', amount: 700, status: PaymentStatus.GOOD, remarks: '' },
+                    { id: 'reversed', loanId: 'as-of-loan', date: '2025-09-30', amount: 200, status: PaymentStatus.REVERSED, remarks: '' }
+                ]
+            };
+            (store as any).collectors = [{ id: 'office', name: 'OFFICE', nickname: 'OFFICE', branch: Branch.ORMOC }];
+            (store as any).managementDispositions = [];
+            (store as any).loans = [loan, { ...loan, id: 'reported-later', monthReported: '2025-10-01', payments: [], remarks: [] }];
+
+            const [historical] = store.getCollectorPerformance(Branch.ORMOC, undefined, '2025-09-30');
+            expect(historical).toMatchObject({ totalAccounts: 1, activeAccountCount: 1, reportedAmount: 1000, collectedAmount: 300, actualCollectedAmount: 300, runningBalance: 700 });
+            expect(historical.collectionRate).toBe(30);
+            const details = store.getCollectorPerformanceDetails(Branch.ORMOC, 'OFFICE', { from: 2025, to: 2025 }, '2025-09-30');
+            expect(details).toHaveLength(1);
+            expect(details[0]).toMatchObject({ reportedAmount: 1000, collectedAmount: 300, runningBalance: 700, status: MovingStatus.MOVING });
+            expect(store.getCollectorPerformance(Branch.ORMOC, { from: 2026, to: 2026 }, '2025-09-30')).toEqual([]);
+            const [afterOutcome] = store.getCollectorPerformance(Branch.ORMOC, undefined, '2025-10-03');
+            expect(afterOutcome.reportedAmount).toBe(1000);
+            expect(afterOutcome.collectedAmount).toBe(1000);
+            expect(afterOutcome.actualCollectedAmount).toBe(0);
+            expect(afterOutcome.runningBalance).toBe(1000);
+            expect(afterOutcome.excessCollection).toBe(0);
+            expect(afterOutcome.writeOffValidCollections).toBe(1000);
+            expect(afterOutcome.runningBalance).toBe(afterOutcome.reportedAmount - afterOutcome.collectedAmount + afterOutcome.excessCollection + afterOutcome.writeOffValidCollections);
+            expect(afterOutcome.collectionRate).toBe(0);
         });
     });
 
@@ -586,6 +723,46 @@ describe('DataStore Service', () => {
     });
 
     describe('Business Logic', () => {
+        it('does not count a reversed JCASH payment as an opening-balance adjustment', async () => {
+            const { store } = await import('./dataStore');
+            (store as any).loans = [{
+                id: '22891',
+                collector: 'PD ISABEL',
+                code: '2584',
+                borrowerName: 'LLADOC, JESSICA',
+                firstName: 'JESSICA',
+                lastName: 'LLADOC',
+                totalLoan: 5600,
+                outstandingBalance: 3756,
+                amountCollected: 1144,
+                runningBalance: 4456,
+                status: MovingStatus.NM,
+                branch: Branch.ORMOC,
+                payments: [
+                    {
+                        id: 'jcash-payment-144', loanId: '22891', date: '2021-11-11',
+                        orNumber: 'JCASH-144', amount: 144, balanceAfter: 4456,
+                        recorder: 'pearl', remarks: 'Migrated from jcashdb.mdb',
+                        status: PaymentStatus.GOOD, createdAt: '2026-06-16T05:27:09.327Z'
+                    },
+                    {
+                        id: 'jcash-payment-reversed-1000', loanId: '22891', date: '2021-11-10',
+                        orNumber: 'JCASH-991017', amount: 1000, balanceAfter: 5456,
+                        recorder: 'pearl', remarks: 'Migrated from jcashdb.mdb (REVERSED: Misposting)',
+                        status: PaymentStatus.REVERSED, createdAt: '2026-06-16T05:27:09.327Z'
+                    }
+                ],
+                remarks: [],
+                history: []
+            }];
+
+            (store as any).recalculateLoanFinances('22891');
+
+            expect((store as any).loans[0].payments.find((payment: any) => payment.orNumber === 'JCASH-144').balanceAfter).toBe(5456);
+            expect((store as any).loans[0].runningBalance).toBe(5456);
+            expect((store as any).loans[0].amountCollected).toBe(144);
+        });
+
         it('appends confirmed same-date payments and recalculates the stream', async () => {
             const { store } = await import('./dataStore');
             const loan = {
@@ -644,20 +821,20 @@ describe('DataStore Service', () => {
             const postedPayment = (store as any).loans[0].payments.find((p: any) => p.orNumber === 'OR-20260619-79FU');
             expect((store as any).loans[0].payments).toHaveLength(3);
             expect((store as any).loans[0].payments.find((p: any) => p.orNumber === 'JCASH-153000')).toBeDefined();
-            expect(postedPayment.balanceAfter).toBe(2860);
-            expect((store as any).loans[0].runningBalance).toBe(2860);
+            expect(postedPayment.balanceAfter).toBe(3160);
+            expect((store as any).loans[0].runningBalance).toBe(3160);
             expect(global.fetch).toHaveBeenCalledWith(
                 expect.stringContaining('/api/payments'),
                 expect.objectContaining({
                     method: 'POST',
-                    body: expect.stringContaining('"balanceAfter":2860')
+                    body: expect.stringContaining('"balanceAfter":3160')
                 })
             );
             expect(global.fetch).toHaveBeenCalledWith(
                 expect.stringContaining('/api/loans/8456'),
                 expect.objectContaining({
                     method: 'PUT',
-                    body: expect.stringContaining('"runningBalance":2860')
+                    body: expect.stringContaining('"runningBalance":3160')
                 })
             );
         });
@@ -832,12 +1009,50 @@ describe('DataStore Service', () => {
             expect((store as any).loans[0].runningBalance).toBe(2395);
             expect((store as any).loans[0].payments.find((p: any) => p.orNumber === 'OR-20260720-YPP5').status).toBe(PaymentStatus.REVERSED);
             expect(global.fetch).toHaveBeenCalledWith(
-                expect.stringContaining('/api/loans/48223'),
+                expect.stringContaining('/api/payments/OR-20260720-YPP5/reverse'),
                 expect.objectContaining({
-                    method: 'PUT',
-                    body: expect.stringContaining('"runningBalance":2395')
+                    method: 'POST',
+                    body: expect.stringContaining('"loanId":"48223"')
                 })
             );
+        });
+
+        it('restores local payment and balance when the atomic reversal request fails', async () => {
+            const { store } = await import('./dataStore');
+            (store as any).loans = [{
+                id: 'rollback-loan',
+                collector: 'Collector',
+                code: 'ROLLBACK',
+                borrowerName: 'ROLLBACK, CLIENT',
+                firstName: 'CLIENT',
+                lastName: 'ROLLBACK',
+                totalLoan: 500,
+                outstandingBalance: 500,
+                amountCollected: 100,
+                runningBalance: 400,
+                status: MovingStatus.MOVING,
+                location: LocationStatus.LOCATED,
+                area: '', city: '', barangay: '', fullAddress: '',
+                payments: [{
+                    id: 'rollback-payment', loanId: 'rollback-loan', date: '2026-08-01',
+                    orNumber: 'OR-ROLLBACK', amount: 100, balanceAfter: 400,
+                    recorder: 'Collector', remarks: '', status: PaymentStatus.GOOD,
+                    createdAt: '2026-08-01T00:00:00.000Z'
+                }],
+                remarks: [], history: [], branch: Branch.NAVAL
+            }];
+            global.fetch = vi.fn(() => Promise.resolve({
+                ok: false,
+                text: () => Promise.resolve('{"error":"database unavailable"}')
+            } as Response));
+
+            await expect(store.reversePayment('OR-ROLLBACK', 'Mistake', 'Collector', UserRole.SUPER_ADMIN))
+                .rejects.toThrow('database unavailable');
+
+            expect((store as any).loans[0].payments[0].status).toBe(PaymentStatus.GOOD);
+            expect((store as any).loans[0].payments[0].remarks).toBe('');
+            expect((store as any).loans[0].runningBalance).toBe(400);
+            expect((store as any).loans[0].amountCollected).toBe(100);
         });
 
         it('rebuilds stale JCASH payment balances on refresh instead of displaying stored zero balances', async () => {
@@ -915,6 +1130,33 @@ describe('DataStore Service', () => {
             expect(latestPayment?.balanceAfter).toBe(1250);
             expect(loan.runningBalance).toBe(1250);
             expect(loan.amountCollected).toBe(2200);
+        });
+
+        it('does not restore a deleted cached loan during refresh', async () => {
+            vi.resetModules();
+            localStorageMock.clear();
+            const deletedLoan = {
+                id: 'deleted-2706', code: '2706', borrowerName: 'OLORVIDA, VINCENT',
+                firstName: 'VINCENT', lastName: 'OLORVIDA', collector: 'PD ISABEL',
+                monthReported: '2023-06', dueDate: '2023-04-21', totalLoan: 3972,
+                outstandingBalance: 3972, amountCollected: 0, runningBalance: 3972,
+                status: MovingStatus.NMSR, location: LocationStatus.LOCATED,
+                area: 'Isabel', city: 'Palompon', barangay: 'Buenavista', fullAddress: '',
+                payments: [], remarks: [], history: [], branch: Branch.ORMOC
+            };
+            localStorageMock.setItem('melann_loans', JSON.stringify([deletedLoan]));
+            (global.fetch as any).mockImplementation((url: string) => {
+                const payload = url.includes('/recycle_bin')
+                    ? [{ id: deletedLoan.id, original_loan_data: deletedLoan, deleted_by: 'admin', branch: Branch.ORMOC }]
+                    : [];
+                return Promise.resolve({ ok: true, json: async () => payload } as Response);
+            });
+
+            const { store } = await import('./dataStore');
+            await store.refresh();
+
+            expect(store.getLoans(Branch.ALL).some(loan => loan.id === deletedLoan.id)).toBe(false);
+            expect((global.fetch as any).mock.calls.some(([url]: [string]) => url.includes('/loans/bulk'))).toBe(false);
         });
 
         it('syncs edited collector nicknames across loans, remarks, and demand letters', async () => {

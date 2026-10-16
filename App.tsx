@@ -23,6 +23,7 @@ const BackupRestore = React.lazy(() => import('./components/BackupRestore.tsx'))
 const DailyCollectionReport = React.lazy(() => import('./components/DailyCollectionReport.tsx'));
 const Documentation = React.lazy(() => import('./components/Documentation.tsx'));
 const RecycleBin = React.lazy(() => import('./components/RecycleBin.tsx'));
+const TracerLog = React.lazy(() => import('./components/TracerLog.tsx'));
 const MigrationCenter = React.lazy(() => import('./components/MigrationCenter.tsx'));
 const UserProfileSettings = React.lazy(() => import('./components/UserProfileSettings.tsx'));
 const LoansMaturityChecker = React.lazy(() => import('./components/LoansMaturityChecker.tsx'));
@@ -219,7 +220,7 @@ const getModuleLegend = (activeTab: string): LegendItem[] => {
   return [];
 };
 
-const AbbreviationLegend: React.FC<{ items: LegendItem[] }> = ({ items }) => {
+const AbbreviationLegend: React.FC<{ items: LegendItem[]; compact?: boolean }> = ({ items, compact = false }) => {
   if (items.length === 0) return null;
 
   const uniqueItems: LegendItem[] = Array.from(
@@ -227,7 +228,7 @@ const AbbreviationLegend: React.FC<{ items: LegendItem[] }> = ({ items }) => {
   );
 
   return (
-    <div className="no-print mb-4 rounded-xl border border-slate-200/80 bg-white/75 px-4 py-2.5 text-[10px] font-semibold text-slate-500 shadow-sm backdrop-blur transition-colors duration-300 dark:border-slate-700 dark:bg-slate-800/75 dark:text-slate-400">
+    <div className={`no-print rounded-xl border border-slate-200/80 bg-white/75 px-4 text-[10px] font-semibold text-slate-500 shadow-sm backdrop-blur transition-colors duration-300 dark:border-slate-700 dark:bg-slate-800/75 dark:text-slate-400 ${compact ? 'mb-2 py-2' : 'mb-4 py-2.5'}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <span className="font-black uppercase tracking-widest text-emerald-700 dark:text-emerald-400">Legend</span>
         {uniqueItems.map(item => (
@@ -248,6 +249,21 @@ const getInitialBranchForUser = (user: User): Branch => {
   }
 
   return user.branch === Branch.ALL ? Branch.ORMOC : user.branch;
+};
+
+const getAuditModuleName = (tab: string): string => {
+  const names: Record<string, string> = {
+    dashboard: 'Dashboard', loans: 'Loan Grid', 'client-update': 'Client Update',
+    'ptp-escalation': 'PTP Escalation', 'receive-payment': 'Payments', dcr: 'DCR',
+    'collection-sheet': 'Collection Sheet', reports: 'Reports',
+    'maturity-checker': 'Loans Maturity Checker', 'demand-letters': 'Demand Letters',
+    'action-tracker': 'Action Tracker', 'write-off': 'Write-Off', collectors: 'Personnel Management',
+    documentation: 'Documentation', migration: 'Migration', users: 'Manage Users',
+    database: 'Backup & Restore', 'recycle-bin': 'Recycle Bin', 'tracer-log': 'Tracer Log',
+    'profile-settings': 'Profile Settings'
+  };
+  const parent = Object.keys(names).find(key => tab === key || tab.startsWith(`${key}-`));
+  return parent ? `${names[parent]}${tab === parent ? '' : ` / ${tab.slice(parent.length + 1).replaceAll('-', ' ')}`}` : tab;
 };
 
 const App: React.FC = () => {
@@ -283,6 +299,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleLogin = (user: User) => {
+    void store.recordTracerEvent(user, 'LOGIN', 'Account').catch(error => console.error('Login tracer failed:', error));
     setCurrentUser(user);
     localStorage.setItem('melann_user', JSON.stringify(user));
     setSelectedBranch(getInitialBranchForUser(user));
@@ -296,6 +313,7 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
+    if (currentUser) void store.recordTracerEvent(currentUser, 'LOGOUT', 'Account').catch(error => console.error('Logout tracer failed:', error));
     localStorage.removeItem('melann_user');
     setCurrentUser(null);
     setMigrationBadgeCount(0);
@@ -306,6 +324,11 @@ const App: React.FC = () => {
     setCurrentUser(user);
     localStorage.setItem('melann_user', JSON.stringify(user));
   };
+
+  useEffect(() => {
+    if (!currentUser || isAppLoading) return;
+    void store.recordTracerEvent(currentUser, 'VIEW', getAuditModuleName(activeTab)).catch(error => console.error('View tracer failed:', error));
+  }, [currentUser?.id, activeTab, isAppLoading]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -544,8 +567,10 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <div className="p-4 sm:p-6 lg:p-8">
-          <AbbreviationLegend items={moduleLegend} />
+        <div className={activeTab.startsWith('reports')
+          ? 'px-4 pb-4 pt-2 sm:px-6 sm:pb-6 sm:pt-3 lg:px-8 lg:pb-8 lg:pt-4'
+          : 'p-4 sm:p-6 lg:p-8'}>
+          <AbbreviationLegend items={moduleLegend} compact={activeTab.startsWith('reports')} />
           <ErrorBoundary>
             <Suspense fallback={<div className="p-8 text-center text-xs font-black uppercase tracking-widest text-slate-400">Loading module...</div>}>
               {activeTab.startsWith('dashboard') && <Dashboard selectedBranch={selectedBranch} />}
@@ -570,6 +595,7 @@ const App: React.FC = () => {
               {activeTab === 'users' && canManageUsers(currentUser.role) && <UserManagement currentUser={currentUser} />}
               {activeTab === 'database' && <BackupRestore currentUser={currentUser} selectedBranch={selectedBranch} />}
               {activeTab === 'recycle-bin' && <RecycleBin currentUser={currentUser} selectedBranch={selectedBranch} />}
+              {activeTab === 'tracer-log' && canManageUsers(currentUser.role) && <TracerLog />}
               {activeTab === 'profile-settings' && <UserProfileSettings currentUser={currentUser} selectedBranch={selectedBranch} onUserUpdate={handleUserUpdate} onNavigate={setActiveTab} />}
             </Suspense>
           </ErrorBoundary>
