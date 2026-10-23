@@ -36,6 +36,34 @@ const getLastPayment = (loan: Loan) =>
 type CollectionOrderMode = 'alphabetical' | 'route';
 type GroupedLoans = Record<string, Record<string, Loan[]>>;
 
+interface LocationMultiSelectProps {
+  label: string;
+  allLabel: string;
+  options: string[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClear: () => void;
+}
+
+const LocationMultiSelect: React.FC<LocationMultiSelectProps> = ({ label, allLabel, options, selected, onToggle, onClear }) => (
+  <details className="group relative">
+    <summary aria-label={label} className="flex min-w-32 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
+      <span className="max-w-48 truncate">{selected.length ? selected.join(', ') : allLabel}</span>
+      <svg className="h-3 w-3 shrink-0 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m6 9 6 6 6-6" /></svg>
+    </summary>
+    <div className="absolute left-0 top-full z-40 mt-1 max-h-64 min-w-52 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+      <label className="flex cursor-pointer items-center gap-2 rounded px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-emerald-50 dark:text-slate-200 dark:hover:bg-slate-800">
+        <input type="checkbox" checked={selected.length === 0} onChange={onClear} className="accent-emerald-600" />{allLabel}
+      </label>
+      {options.map(option => (
+        <label key={option} className="flex cursor-pointer items-center gap-2 rounded px-3 py-2 text-sm text-slate-700 hover:bg-emerald-50 dark:text-slate-200 dark:hover:bg-slate-800">
+          <input type="checkbox" checked={selected.includes(option)} onChange={() => onToggle(option)} className="accent-emerald-600" />{option}
+        </label>
+      ))}
+    </div>
+  </details>
+);
+
 const locationCollator = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
 
 const getDefaultRouteOrigin = (_branch?: Branch, _collectorArea?: string) =>
@@ -121,8 +149,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
 
   const [filterFromDate, setFilterFromDate] = useState<string>('');
   const [filterToDate, setFilterToDate] = useState<string>('');
-  const [filterCity, setFilterCity] = useState<string>('');
-  const [filterBarangay, setFilterBarangay] = useState<string>('');
+  const [filterCities, setFilterCities] = useState<string[]>([]);
+  const [filterBarangays, setFilterBarangays] = useState<string[]>([]);
   const [orderMode, setOrderMode] = useState<CollectionOrderMode>('alphabetical');
   const [routePlan, setRoutePlan] = useState<CollectionRoutePlan | null>(null);
   const [routeOrigin, setRouteOrigin] = useState(getDefaultRouteOrigin(selectedBranch));
@@ -183,19 +211,34 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
 
   const availableBarangays = useMemo(
     () => [...new Set(collectorLoansBeforeLocationFilter
-      .filter(loan => !filterCity || loan.city === filterCity)
+      .filter(loan => filterCities.length === 0 || filterCities.includes(loan.city))
       .map(loan => loan.barangay)
       .filter(Boolean))].sort(),
-    [collectorLoansBeforeLocationFilter, filterCity]
+    [collectorLoansBeforeLocationFilter, filterCities]
   );
 
   const collectorLoans = useMemo(
     () => collectorLoansBeforeLocationFilter.filter(loan =>
-      (!filterCity || loan.city === filterCity) &&
-      (!filterBarangay || loan.barangay === filterBarangay)
+      (filterCities.length === 0 || filterCities.includes(loan.city)) &&
+      (filterBarangays.length === 0 || filterBarangays.includes(loan.barangay))
     ),
-    [collectorLoansBeforeLocationFilter, filterCity, filterBarangay]
+    [collectorLoansBeforeLocationFilter, filterCities, filterBarangays]
   );
+
+  const toggleCity = (city: string) => {
+    const nextCities = filterCities.includes(city) ? filterCities.filter(value => value !== city) : [...filterCities, city];
+    const nextBarangays = new Set(collectorLoansBeforeLocationFilter
+      .filter(loan => nextCities.length === 0 || nextCities.includes(loan.city))
+      .map(loan => loan.barangay));
+    setFilterCities(nextCities);
+    setFilterBarangays(current => current.filter(value => nextBarangays.has(value)));
+  };
+
+  const toggleBarangay = (barangay: string) =>
+    setFilterBarangays(current => current.includes(barangay) ? current.filter(value => value !== barangay) : [...current, barangay]);
+
+  const cityFilterLabel = filterCities.length ? filterCities.join(', ') : 'All cities';
+  const barangayFilterLabel = filterBarangays.length ? filterBarangays.join(', ') : 'All barangays';
 
   const groupedLoans = useMemo(() => {
     return groupAndOrderLoans(collectorLoans, orderMode, routePlan);
@@ -520,8 +563,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                   setSelectedCollector(c);
                   setFilterFromDate('');
                   setFilterToDate('');
-                  setFilterCity('');
-                  setFilterBarangay('');
+                  setFilterCities([]);
+                  setFilterBarangays([]);
                   resetRouteOrder(c.branch, c.address);
                 }}
                 className="group relative overflow-hidden rounded-lg border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/10 active:translate-y-0 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-emerald-700 dark:hover:shadow-emerald-950/30"
@@ -594,8 +637,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
       ['Generated', new Date().toLocaleString('en-PH')],
       ['Order', getOrderDescription(orderMode, routePlan, routeOrigin)],
       ['Due Date Range', `${filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} to ${filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}`],
-      ['City', filterCity || 'All cities'],
-      ['Barangay', filterBarangay || 'All barangays'],
+      ['City', cityFilterLabel],
+      ['Barangay', barangayFilterLabel],
       ['Accounts', collectorLoans.length],
       ['Cities', cityCount],
       ['Barangays', barangayCount],
@@ -647,8 +690,8 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                   setSelectedCollector(null);
                   setFilterFromDate('');
                   setFilterToDate('');
-                  setFilterCity('');
-                  setFilterBarangay('');
+                  setFilterCities([]);
+                  setFilterBarangays([]);
                   resetRouteOrder();
                 }}
                 className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition-all hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-emerald-800 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-300"
@@ -743,16 +786,10 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
               Filter by Location:
             </span>
             <div className="flex flex-wrap items-center gap-2">
-              <select aria-label="Filter by city" value={filterCity} onChange={(e) => { setFilterCity(e.target.value); setFilterBarangay(''); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none transition-colors focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
-                <option value="">All cities</option>
-                {availableCities.map(city => <option key={city} value={city}>{city}</option>)}
-              </select>
-              <select aria-label="Filter by barangay" value={filterBarangay} onChange={(e) => setFilterBarangay(e.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none transition-colors focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300" disabled={availableBarangays.length === 0}>
-                <option value="">All barangays</option>
-                {availableBarangays.map(barangay => <option key={barangay} value={barangay}>{barangay}</option>)}
-              </select>
-              {(filterFromDate || filterToDate || filterCity || filterBarangay) && (
-                <button onClick={() => { setFilterFromDate(''); setFilterToDate(''); setFilterCity(''); setFilterBarangay(''); }} className="whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-red-500 transition-all hover:border-red-500 hover:bg-red-500 hover:text-white">
+              <LocationMultiSelect label="Filter by city" allLabel="All cities" options={availableCities} selected={filterCities} onToggle={toggleCity} onClear={() => { setFilterCities([]); setFilterBarangays([]); }} />
+              <LocationMultiSelect label="Filter by barangay" allLabel="All barangays" options={availableBarangays} selected={filterBarangays} onToggle={toggleBarangay} onClear={() => setFilterBarangays([])} />
+              {(filterFromDate || filterToDate || filterCities.length > 0 || filterBarangays.length > 0) && (
+                <button onClick={() => { setFilterFromDate(''); setFilterToDate(''); setFilterCities([]); setFilterBarangays([]); }} className="whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-red-500 transition-all hover:border-red-500 hover:bg-red-500 hover:text-white">
                   Clear Filters
                 </button>
               )}
@@ -820,10 +857,10 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
             </div>
           )}
 
-          {(filterFromDate || filterToDate || filterCity || filterBarangay) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
+          {(filterFromDate || filterToDate || filterCities.length > 0 || filterBarangays.length > 0) && !(filterFromDate && filterToDate && filterFromDate > filterToDate) && (
             <div className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-900/20 dark:text-emerald-300">
                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
-               Showing: {filterCity || 'All cities'} · {filterBarangay || 'All barangays'} · Due Date {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
+               Showing: {cityFilterLabel} · {barangayFilterLabel} · Due Date {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
             </div>
           )}
         </div>
@@ -909,9 +946,9 @@ const CollectionSheet: React.FC<CollectionSheetProps> = ({ selectedBranch }) => 
                 Due Date Range: {filterFromDate ? formatDateForDisplay(filterFromDate) : 'Any'} – {filterToDate ? formatDateForDisplay(filterToDate) : 'Any'}
               </div>
             )}
-            {(filterCity || filterBarangay) && (
+            {(filterCities.length > 0 || filterBarangays.length > 0) && (
               <div style={{ fontSize: '10pt', fontWeight: '800', marginTop: '4px' }}>
-                Location: {filterCity || 'All cities'}{filterBarangay ? ` — ${filterBarangay}` : ''}
+                Location: {cityFilterLabel}{filterBarangays.length > 0 ? ` — ${barangayFilterLabel}` : ''}
               </div>
             )}
           </div>

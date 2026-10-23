@@ -141,7 +141,8 @@ describe('CollectionSheet', () => {
     render(<CollectionSheet currentUser={currentUser} selectedBranch={Branch.NAVAL} />);
 
     fireEvent.click(screen.getByText('JOHN'));
-    fireEvent.change(screen.getByLabelText('Filter by barangay'), { target: { value: 'Caraycaray' } });
+    fireEvent.click(screen.getByLabelText('Filter by barangay'));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Caraycaray' }));
 
     expect(screen.queryByText('SANTOS, MARIA')).not.toBeInTheDocument();
     expect(screen.getAllByText('REYES, ANA').length).toBeGreaterThan(0);
@@ -152,6 +153,40 @@ describe('CollectionSheet', () => {
       ['Barangay', 'Caraycaray'],
       expect.arrayContaining(['C-002', 'REYES, ANA'])
     ]));
+  });
+
+  it('filters by multiple cities and barangays and exports the combined selection', () => {
+    (store.getLoans as any).mockReturnValue([
+      makeLoan(),
+      makeLoan({ id: 'l2', code: 'C-002', city: 'Naval', barangay: 'Caraycaray' }),
+      makeLoan({ id: 'l3', code: 'C-003', city: 'Ormoc', barangay: 'Linao' }),
+      makeLoan({ id: 'l4', code: 'C-004', city: 'Ormoc', barangay: 'Cogon' }),
+      makeLoan({ id: 'l5', code: 'C-005', city: 'Isabel', barangay: 'Marvel' })
+    ]);
+    render(<CollectionSheet currentUser={currentUser} selectedBranch={Branch.NAVAL} />);
+    fireEvent.click(screen.getByText('JOHN'));
+
+    fireEvent.click(screen.getByLabelText('Filter by city'));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Naval' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Ormoc' }));
+    fireEvent.click(screen.getByLabelText('Filter by barangay'));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Poblacion' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Linao' }));
+
+    expect(screen.getAllByText('SANTOS, MARIA').length).toBeGreaterThan(0);
+    expect(screen.queryByText('C-002')).not.toBeInTheDocument();
+    expect(screen.getAllByText('C-003').length).toBeGreaterThan(0);
+    expect(screen.queryByText('C-004')).not.toBeInTheDocument();
+    expect(screen.queryByText('C-005')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/^excel$/i));
+    expect(XLSX.utils.aoa_to_sheet).toHaveBeenCalledWith(expect.arrayContaining([
+      ['City', 'Naval, Ormoc'],
+      ['Barangay', 'Poblacion, Linao']
+    ]));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Naval' }));
+    expect(screen.queryByRole('checkbox', { name: 'Poblacion' })).not.toBeInTheDocument();
+    expect(screen.getAllByText('C-003').length).toBeGreaterThan(0);
   });
 
   it('calls browser print for the printable collection sheet', () => {
