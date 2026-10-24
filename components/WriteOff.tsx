@@ -4,6 +4,7 @@ import { store } from '../services/dataStore.ts';
 import { Branch, DispositionStatus, DispositionType, Loan, ManagementDisposition, User, canApproveWriteOff } from '../types.ts';
 import { isReportableCollectionPayment } from '../services/loanUtils.ts';
 import ConfirmationModal from './ConfirmationModal.tsx';
+import './WriteOff.css';
 
 interface WriteOffProps {
   currentUser: User;
@@ -1160,7 +1161,7 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="writeoff-comparison">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200/80 bg-slate-100/90 text-[10px] font-black uppercase tracking-wider text-slate-600 dark:border-slate-700/80 dark:bg-slate-950/80 dark:text-slate-300">
@@ -1261,7 +1262,14 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
 
   const RowTable = ({ rows }: { rows: WriteOffRow[] }) => (
     <div className="overflow-hidden rounded-3xl border border-slate-200/60 bg-white shadow-xl shadow-slate-200/20 dark:border-slate-700/60 dark:bg-slate-900 dark:shadow-none">
-      <div className="overflow-x-auto">
+      <div className="writeoff-records">
+        <div className="writeoff-sort-bar" aria-label="Sort write-off accounts">
+          <span>Sort by</span>
+          <SortButton columnKey="client" label="Client" />
+          <SortButton columnKey="maturityDate" label="Maturity" />
+          <SortButton columnKey="decisionDate" label={isDeceasedTab ? 'Reported Date' : 'Decision'} />
+          <SortButton columnKey="runningBalance" label="Balance" />
+        </div>
         <table className="w-full text-left">
           <thead className="bg-slate-50/90 text-[11px] font-bold uppercase tracking-wider text-slate-500 backdrop-blur-md dark:bg-slate-950/60 dark:text-slate-400 border-b border-slate-200/60 dark:border-slate-700/60">
             <tr>
@@ -1540,7 +1548,7 @@ const WriteOff: React.FC<WriteOffProps> = ({ currentUser, selectedBranch }) => {
 
       {/* CLASSIFICATION TABS */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-2 rounded-3xl bg-slate-100/90 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
-        <div className="flex items-center gap-1.5 overflow-x-auto p-1">
+        <div className="writeoff-classification-tabs flex flex-wrap items-center gap-1.5 p-1">
           <button
             type="button"
             onClick={() => setActiveClassification('dashboard')}
